@@ -1,0 +1,14 @@
+# Базовое ядро AItrade работает на чистом стандартном Python 3.9+ (Zero-Dependency Mode),
+# поэтому систему можно запускать сразу без установки внешних пакетов.
+# При развертывании в Docker или связке с Freqtrade + FreqAI установите пакеты ниже:
+
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+lightgbm>=4.0.0
+catboost>=1.2.0
+xgboost>=2.0.0
+requests>=2.31.0
+ccxt>=4.2.0
+freqtrade>=2024.1

@@ -1,0 +1,75 @@
+{
+  "exchange": {
+    "name": "bybit",
+    "category": "linear",
+    "mode": "demo",
+    "mainnet_url": "https://api.bybit.com",
+    "demo_url": "https://api-demo.bybit.com",
+    "maker_fee_rate": 0.0002,
+    "taker_fee_rate": 0.00055,
+    "recv_window": 5000
+  },
+  "universe": {
+    "core_pairs": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT",
+      "ADAUSDT",
+      "DOGEUSDT",
+      "AVAXUSDT",
+      "LINKUSDT",
+      "SUIUSDT",
+      "TONUSDT",
+      "DOTUSDT",
+      "NEARUSDT",
+      "APTUSDT",
+      "ARBUSDT",
+      "OPUSDT",
+      "LTCUSDT",
+      "ATOMUSDT",
+      "INJUSDT",
+      "FETUSDT"
+    ],
+    "primary_timeframe": "15",
+    "bias_timeframe": "60",
+    "structure_timeframe": "240",
+    "trigger_timeframe": "5"
+  },
+  "screener": {
+    "min_rvol": 1.2,
+    "strict_scalp_rvol": 1.5,
+    "min_rvol_active_market": 0.6,
+    "max_spread_pct": 0.10,
+    "borderline_spread_pct": 0.30,
+    "max_atr_expansion_ratio": 1.5,
+    "min_24h_turnover_usd": 15000000
+  },
+  "sessions_utc": {
+    "asia": {"start_hour": 0, "end_hour": 8},
+    "europe": {"start_hour": 8, "end_hour": 13},
+    "us_overlap": {"start_hour": 13, "end_hour": 21}
+  },
+  "ml_filter": {
+    "cost_selectivity_lambda": 2.0,
+    "di_threshold": 1.0,
+    "min_win_probability": 0.62,
+    "sniper_win_probability": 0.68,
+    "label_horizon_bars": 8,
+    "train_window_bars": 300,
+    "savgol_window": 7,
+    "savgol_polyorder": 2
+  },
+  "risk": {
+    "initial_demo_equity_usdt": 10000.0,
+    "risk_per_trade_pct": 0.005,
+    "max_structural_risk_pct": 0.01,
+    "max_portfolio_leverage": 4.0,
+    "min_liquidation_to_stop_multiple": 5.0,
+    "min_reward_to_risk": 1.5,
+    "max_slippage_bps": 15.0,
+    "max_daily_trades": 10,
+    "max_concurrent_positions": 3
+  }
+}

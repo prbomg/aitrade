@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>AItrade — Аналитический терминал ИИ-комбайна (Bybit V5 Demo & Live)</title>
+  <style>
+    body { margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #e2e8f0; }
+    h1 { margin: 0; font-size: 22px; color: #fff; }
+    .muted { color: #94a3b8; font-size: 13px; }
+    .green { color: #10b981; }
+    .red { color: #ef4444; }
+    .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 20px 0; }
+    .metric-box { background: #131a2a; border: 1px solid #232f46; padding: 14px 16px; border-radius: 10px; }
+    .metric-val { font-size: 22px; font-weight: 700; margin-top: 4px; }
+    .grid-2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; }
+    @media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+    .panel { background: #131a2a; border: 1px solid #232f46; border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+    .panel h2 { margin-top: 0; font-size: 17px; border-bottom: 1px solid #232f46; padding-bottom: 10px; }
+    .signal-card { border: 1px solid #232f46; background: #0f1523; border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+    .sig-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .sig-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; font-size: 13px; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 700; margin: 0 4px; }
+    .badge.buy { background: rgba(16, 185, 129, 0.18); color: #10b981; }
+    .badge.sell { background: rgba(239, 68, 68, 0.18); color: #ef4444; }
+    .badge.win { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #232f46; }
+    th { color: #94a3b8; }
+    .rationale-list { margin: 8px 0; padding-left: 18px; color: #cbd5e1; font-size: 13px; }
+    .debate-box { background: rgba(59, 130, 246, 0.09); border-left: 3px solid #3b82f6; padding: 8px 10px; font-size: 12px; color: #cbd5e1; margin-top: 8px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>AItrade — Снайперский ИИ-комбайн для Bybit V5 (Demo & Live)</h1>
+  <div class="muted">Воронка: Coins in Play Screener &rarr; 5 Интрадей-Архетипов &rarr; ML Meta-Labeling (&lambda;=2.0, DI&le;1.0) &rarr; Multi-Agent Debate &rarr; RiskEngine (5x Liq Rule)</div>
+
+  <div class="metrics-row">
+    <div class="metric-box"><div class="muted">Источник данных</div><div class="metric-val" style="color:#f59e0b;font-size:17px;">deterministic_market_replay</div></div>
+    <div class="metric-box"><div class="muted">Демо-депозит (USDT)</div><div class="metric-val">$10,000.00</div></div>
+    <div class="metric-box"><div class="muted">Монет в игре (Screener)</div><div class="metric-val">20 / 20</div></div>
+    <div class="metric-box"><div class="muted">Сырых сетапов &rarr; Одобрено ИИ</div><div class="metric-val green">32 &rarr; 8</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div>
+      <div class="panel">
+        <h2>Одобренные снайперские сигналы (Высокий Winrate 65%–75%+)</h2>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">ADAUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 85.0% | E[R]: +0.578%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>0.369015</strong></div>
+            <div>Stop-Loss: <strong class="red">0.367558</strong></div>
+            <div>Take-Profit 1: <strong class="green">0.371638</strong></div>
+            <div>Take-Profit 2: <strong class="green">0.373095</strong></div>
+            <div>Позиция: <strong>$11498.62 (1.15x)</strong></div>
+            <div>Дист. до ликв.: <strong>219.0x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.49 bps</strong></div>
+            <div>Индекс DI: <strong>0.281 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 0.3688 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.78%), потенциал догоняющего движения -0.82%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.09σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=85.0%, E[R]=+0.58% > 2xИздержек=0.14%, DI=0.28).</div>
+        </div>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">LINKUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 84.4% | E[R]: +0.572%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>14.9628</strong></div>
+            <div>Stop-Loss: <strong class="red">14.903721</strong></div>
+            <div>Take-Profit 1: <strong class="green">15.069142</strong></div>
+            <div>Take-Profit 2: <strong class="green">15.128221</strong></div>
+            <div>Позиция: <strong>$11498.5 (1.15x)</strong></div>
+            <div>Дист. до ликв.: <strong>219.0x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.5 bps</strong></div>
+            <div>Индекс DI: <strong>0.314 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 14.9561 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.86%), потенциал догоняющего движения -0.89%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.10σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=84.4%, E[R]=+0.57% > 2xИздержек=0.14%, DI=0.31).</div>
+        </div>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">XRPUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 83.7% | E[R]: +0.566%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>0.554028</strong></div>
+            <div>Stop-Loss: <strong class="red">0.551841</strong></div>
+            <div>Take-Profit 1: <strong class="green">0.557965</strong></div>
+            <div>Take-Profit 2: <strong class="green">0.560152</strong></div>
+            <div>Позиция: <strong>$11500.98 (1.15x)</strong></div>
+            <div>Дист. до ликв.: <strong>219.0x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.498 bps</strong></div>
+            <div>Индекс DI: <strong>0.28 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 0.5538 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.80%), потенциал догоняющего движения -0.84%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Отрицательный фандинг (-3.80 б.п.) создает топливо для шорт-сквиза вверх. Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.18σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=83.7%, E[R]=+0.57% > 2xИздержек=0.14%, DI=0.28).</div>
+        </div>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">NEARUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 83.4% | E[R]: +0.563%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>4.90335</strong></div>
+            <div>Stop-Loss: <strong class="red">4.883989</strong></div>
+            <div>Take-Profit 1: <strong class="green">4.9382</strong></div>
+            <div>Take-Profit 2: <strong class="green">4.957561</strong></div>
+            <div>Позиция: <strong>$11498.15 (1.15x)</strong></div>
+            <div>Дист. до ликв.: <strong>218.99x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.501 bps</strong></div>
+            <div>Индекс DI: <strong>0.281 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 4.9011 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.86%), потенциал догоняющего движения -0.90%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.12σ); Перегретый положительный фандинг (+4.50 б.п.) повышает риск каскада лонгов. Вердикт судьи: ОДОБРЕНО (ML Winrate=83.4%, E[R]=+0.56% > 2xИздержек=0.14%, DI=0.28).</div>
+        </div>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">ADAUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Пробой диапазона сессии US_OVERLAP (Session ORB) (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 82.3% | E[R]: +0.605%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>0.369015</strong></div>
+            <div>Stop-Loss: <strong class="red">0.367209</strong></div>
+            <div>Take-Profit 1: <strong class="green">0.371905</strong></div>
+            <div>Take-Profit 2: <strong class="green">0.37353</strong></div>
+            <div>Позиция: <strong>$9444.46 (0.94x)</strong></div>
+            <div>Дист. до ликв.: <strong>203.31x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.49 bps</strong></div>
+            <div>Индекс DI: <strong>0.281 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>Импульсный пробой верхней границы стартового диапазона сессии 0.3670 (ширина диапазона 0.63%)</li><li>Монета «в игре»: относительный объем RVOL=2.65x в окне US_OVERLAP</li><li>Поддержка потока ордеров в стакане Level-2 (OBI=+0.66, VAMP div=+3.2 bps)</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.09σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=82.3%, E[R]=+0.60% > 2xИздержек=0.14%, DI=0.28).</div>
+        </div>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">BNBUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 82.3% | E[R]: +0.553%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>601.545</strong></div>
+            <div>Stop-Loss: <strong class="red">599.169845</strong></div>
+            <div>Take-Profit 1: <strong class="green">605.820279</strong></div>
+            <div>Take-Profit 2: <strong class="green">608.195434</strong></div>
+            <div>Позиция: <strong>$11498.42 (1.15x)</strong></div>
+            <div>Дист. до ликв.: <strong>218.99x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.5 bps</strong></div>
+            <div>Индекс DI: <strong>0.292 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 601.2743 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.85%), потенциал догоняющего движения -0.88%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.18σ); Перегретый положительный фандинг (+4.50 б.п.) повышает риск каскада лонгов. Вердикт судьи: ОДОБРЕНО (ML Winrate=82.3%, E[R]=+0.55% > 2xИздержек=0.14%, DI=0.29).</div>
+        </div>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">SOLUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 82.1% | E[R]: +0.552%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>180.4635</strong></div>
+            <div>Stop-Loss: <strong class="red">179.750953</strong></div>
+            <div>Take-Profit 1: <strong class="green">181.746085</strong></div>
+            <div>Take-Profit 2: <strong class="green">182.458632</strong></div>
+            <div>Позиция: <strong>$11498.41 (1.15x)</strong></div>
+            <div>Дист. до ликв.: <strong>218.99x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.5 bps</strong></div>
+            <div>Индекс DI: <strong>0.27 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 180.3823 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.89%), потенциал догоняющего движения -0.93%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.12σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=82.1%, E[R]=+0.55% > 2xИздержек=0.14%, DI=0.27).</div>
+        </div>
+        
+        <div class="signal-card">
+          <div class="sig-header">
+            <div>
+              <strong style="font-size:16px;">XRPUSDT</strong>
+              <span class="badge buy">LONG (Limit Maker)</span>
+              <span class="muted">Пробой диапазона сессии US_OVERLAP (Session ORB) (15m)</span>
+            </div>
+            <span class="badge win">ML Winrate: 81.0% | E[R]: +0.6%</span>
+          </div>
+          <div class="sig-grid">
+            <div>Вход: <strong>0.554028</strong></div>
+            <div>Stop-Loss: <strong class="red">0.551283</strong></div>
+            <div>Take-Profit 1: <strong class="green">0.55842</strong></div>
+            <div>Take-Profit 2: <strong class="green">0.56089</strong></div>
+            <div>Позиция: <strong>$9337.73 (0.93x)</strong></div>
+            <div>Дист. до ликв.: <strong>200.82x стопа</strong></div>
+            <div>L2 Slippage: <strong>1.498 bps</strong></div>
+            <div>Индекс DI: <strong>0.28 &le; 1.0</strong></div>
+          </div>
+          <ul class="rationale-list"><li>Импульсный пробой верхней границы стартового диапазона сессии 0.5511 (ширина диапазона 0.76%)</li><li>Монета «в игре»: относительный объем RVOL=2.60x в окне US_OVERLAP</li><li>Поддержка потока ордеров в стакане Level-2 (OBI=+0.66, VAMP div=+3.2 bps)</li></ul>
+          <div class="debate-box">[Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Отрицательный фандинг (-3.80 б.п.) создает топливо для шорт-сквиза вверх. Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.18σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=81.0%, E[R]=+0.60% > 2xИздержек=0.14%, DI=0.28).</div>
+        </div>
+        
+      </div>
+      <div class="panel">
+        <h2>Журнал демо-сделок (Bybit Unified Demo / Local SQLite)</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Время</th><th>Пара</th><th>Сторона</th><th>Вход</th><th>SL / TP1</th><th>Объем ($)</th><th>WinProb</th><th>Статус</th></tr></thead>
+          <tbody>
+        <tr>
+          <td>#3</td>
+          <td>2026-11-10 10:18:15 UTC</td>
+          <td><strong>XRPUSDT</strong></td>
+          <td>Buy</td>
+          <td>0.554028</td>
+          <td>0.551841 / 0.557965</td>
+          <td>$11500.98 (1.15x)</td>
+          <td>83.7%</td>
+          <td>LOCAL_BYBIT_DEMO_SIM</td>
+        </tr>
+        
+        <tr>
+          <td>#2</td>
+          <td>2026-11-10 10:18:15 UTC</td>
+          <td><strong>LINKUSDT</strong></td>
+          <td>Buy</td>
+          <td>14.9628</td>
+          <td>14.903721 / 15.069142</td>
+          <td>$11498.5 (1.15x)</td>
+          <td>84.4%</td>
+          <td>LOCAL_BYBIT_DEMO_SIM</td>
+        </tr>
+        
+        <tr>
+          <td>#1</td>
+          <td>2026-11-10 10:18:15 UTC</td>
+          <td><strong>ADAUSDT</strong></td>
+          <td>Buy</td>
+          <td>0.369015</td>
+          <td>0.367558 / 0.371638</td>
+          <td>$11498.62 (1.15x)</td>
+          <td>85.0%</td>
+          <td>LOCAL_BYBIT_DEMO_SIM</td>
+        </tr>
+        </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div class="panel">
+        <h2>Пре-скринер «Монеты в игре» (Coins in Play — Bybit V5)</h2>
+        <table>
+          <thead><tr><th>Пара</th><th>Score</th><th>RVOL</th><th>NATR</th><th>Спред</th><th>1H Режим</th><th>Статус</th></tr></thead>
+          <tbody>
+        <tr>
+          <td><strong>DOGEUSDT</strong></td>
+          <td>78.0</td>
+          <td>2.67x</td>
+          <td>0.601%</td>
+          <td>0.0299%</td>
+          <td>RANGE (ADX 50.7)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>LTCUSDT</strong></td>
+          <td>77.9</td>
+          <td>2.54x</td>
+          <td>0.59%</td>
+          <td>0.03%</td>
+          <td>RANGE (ADX 32.9)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>FETUSDT</strong></td>
+          <td>77.4</td>
+          <td>2.64x</td>
+          <td>0.562%</td>
+          <td>0.03%</td>
+          <td>RANGE (ADX 25.2)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>OPUSDT</strong></td>
+          <td>77.3</td>
+          <td>2.62x</td>
+          <td>0.554%</td>
+          <td>0.03%</td>
+          <td>RANGE (ADX 34.6)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>BNBUSDT</strong></td>
+          <td>75.9</td>
+          <td>2.89x</td>
+          <td>0.461%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 44.4)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>NEARUSDT</strong></td>
+          <td>75.9</td>
+          <td>2.83x</td>
+          <td>0.458%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 33.6)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>XRPUSDT</strong></td>
+          <td>75.8</td>
+          <td>2.6x</td>
+          <td>0.45%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 31.0)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>AVAXUSDT</strong></td>
+          <td>74.8</td>
+          <td>2.27x</td>
+          <td>0.599%</td>
+          <td>0.03%</td>
+          <td>RANGE (ADX 46.4)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>DOTUSDT</strong></td>
+          <td>71.7</td>
+          <td>2.73x</td>
+          <td>0.58%</td>
+          <td>0.03%</td>
+          <td>RANGE (ADX 29.6)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>ETHUSDT</strong></td>
+          <td>70.8</td>
+          <td>2.31x</td>
+          <td>0.631%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 58.4)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>BTCUSDT</strong></td>
+          <td>70.1</td>
+          <td>2.26x</td>
+          <td>0.631%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 44.4)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>LINKUSDT</strong></td>
+          <td>69.8</td>
+          <td>2.53x</td>
+          <td>0.451%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 31.7)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>ADAUSDT</strong></td>
+          <td>69.7</td>
+          <td>2.65x</td>
+          <td>0.445%</td>
+          <td>0.0298%</td>
+          <td>BULLISH_TREND (ADX 53.9)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>SOLUSDT</strong></td>
+          <td>69.4</td>
+          <td>2.75x</td>
+          <td>0.43%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 33.8)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        
+        <tr>
+          <td><strong>APTUSDT</strong></td>
+          <td>69.3</td>
+          <td>2.23x</td>
+          <td>0.61%</td>
+          <td>0.03%</td>
+          <td>BULLISH_TREND (ADX 34.0)</td>
+          <td><span class='green'>В игре</span></td>
+        </tr>
+        </tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Walk-Forward Бэктест (Наивный режим vs Снайперский ИИ-комбайн)</h2>
+        <table>
+          <thead><tr><th>Метрика</th><th>Наивный режим (Taker)</th><th>AItrade Комбайн (Maker + ML)</th></tr></thead>
+          <tbody>
+            <tr><td>Всего сделок (Turnover)</td><td>448</td><td><strong>165</strong></td></tr>
+            <tr><td>Win Rate (%)</td><td>17.41%</td><td><strong class="green">59.39%</strong></td></tr>
+            <tr><td>Profit Factor</td><td>0.07</td><td><strong class="green">1.68</strong></td></tr>
+            <tr><td>Чистая доходность (%)</td><td>-84.97%</td><td><strong class="green">+14.53%</strong></td></tr>
+            <tr><td>Среднее ожидание (R)</td><td>-0.912R</td><td><strong class="green">0.092R</strong></td></tr>
+            <tr><td>Макс. просадка (Max DD)</td><td>84.97%</td><td><strong>1.91%</strong></td></tr>
+            <tr><td>Sharpe / Deflated Sharpe</td><td>-18.1 / -18.1</td><td><strong>3.13 / 2.78</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
