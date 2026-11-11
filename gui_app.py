@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """
-Нативное десктопное приложение AItrade Control Center для macOS (на базе Tkinter).
-Запускается двойным кликом по ярлыку «Запустить AItrade.command» или «AItrade.app»
-в папке проекта без необходимости работать в терминале.
-
-Включает 4 вкладки:
-1. «Снайперские сигналы Bybit»: живые карточки сигналов с кнопками «Отправить в Bybit Demo»,
-   «Сканировать Bybit V5», «Исполнить Топ-3 в Демо» и переключателем «Авто-пилот (каждые 5 мин)».
-2. «Монеты в игре (Screener)»: таблица 20 фьючерсных пар Bybit (Score, RVOL, NATR%, Спред%, 1H Режим, ADX).
-3. «Демо-Портфель и Walk-Forward Бэктест»: журнал выставленных демо-ордеров и таблица сравнения с наивной стратегией.
-4. «Настройки и API-ключи»: удобная форма изменения риска (%), плеча, порога ML Winrate %, множителя издержек λ и ключей Bybit Demo.
+Нативное десктопное приложение AItrade Control Center для macOS (на базе Tkinter с кастомной панелью вкладок).
+Поскольку стандартный ttk.Notebook в macOS Tcl/Tk 8.5 часто скрывает заголовки вкладок на темном фоне,
+здесь реализован кастомный контрастный переключатель из 4 больших кнопок-вкладок, который идеально виден
+на любой версии macOS.
 """
 
 from __future__ import annotations
@@ -20,7 +14,6 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
-from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List
 
@@ -35,8 +28,8 @@ class AITradeDesktopApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("AItrade Control Center — ИИ-комбайн для Bybit V5 (Demo & Live)")
-        self.root.geometry("1260x820")
-        self.root.configure(bg="#0b0f19")
+        self.root.geometry("1320x860")
+        self.root.configure(bg="#070b14")
 
         self.settings = load_settings()
         self.engine = AITradeCombineEngine(self.settings)
@@ -47,10 +40,12 @@ class AITradeDesktopApp:
         self._configure_styles()
         self._build_header()
         self._build_kpi_bar()
-        self._build_tabs()
+        self._build_custom_tab_bar()
+        self._build_tab_panes()
+        self.switch_tab("signals")
 
         # Первичная загрузка данных при открытии окна
-        self.root.after(200, lambda: self.run_scan_async(auto_exec=False))
+        self.root.after(250, lambda: self.run_scan_async(auto_exec=False))
 
     def _configure_styles(self) -> None:
         style = ttk.Style()
@@ -58,25 +53,12 @@ class AITradeDesktopApp:
             style.theme_use("clam")
         except Exception:
             pass
-        style.configure("TNotebook", background="#0b0f19", borderwidth=0)
-        style.configure(
-            "TNotebook.Tab",
-            background="#131a2a",
-            foreground="#cbd5e1",
-            padding=(16, 8),
-            font=("Helvetica", 12, "bold"),
-        )
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", "#3b82f6")],
-            foreground=[("selected", "#ffffff")],
-        )
         style.configure(
             "Treeview",
-            background="#111827",
+            background="#0f172a",
             foreground="#f8fafc",
-            fieldbackground="#111827",
-            rowheight=28,
+            fieldbackground="#0f172a",
+            rowheight=30,
             font=("Helvetica", 12),
         )
         style.configure(
@@ -85,193 +67,231 @@ class AITradeDesktopApp:
             foreground="#f59e0b",
             font=("Helvetica", 12, "bold"),
         )
+        style.map("Treeview", background=[("selected", "#2563eb")], foreground=[("selected", "#ffffff")])
 
     def _build_header(self) -> None:
-        header = tk.Frame(self.root, bg="#111827", pady=12, padx=18)
+        header = tk.Frame(self.root, bg="#0f172a", pady=14, padx=20, highlightbackground="#1e293b", highlightthickness=1)
         header.pack(fill=tk.X)
 
-        left = tk.Frame(header, bg="#111827")
+        left = tk.Frame(header, bg="#0f172a")
         left.pack(side=tk.LEFT)
         tk.Label(
             left,
-            text="AItrade Control Center — Bybit V5 (Unified Demo & Live)",
-            bg="#111827",
+            text="AItrade Control Center — Снайперский ИИ-комбайн Bybit V5",
+            bg="#0f172a",
             fg="#ffffff",
-            font=("Helvetica", 17, "bold"),
+            font=("Helvetica", 18, "bold"),
         ).pack(anchor="w")
         self.status_lbl = tk.Label(
             left,
-            text="Инициализация ИИ-комбайна...",
-            bg="#111827",
+            text="Инициализация ИИ-комбайна и проверка соединения с Bybit V5...",
+            bg="#0f172a",
             fg="#94a3b8",
-            font=("Helvetica", 11),
+            font=("Helvetica", 12),
         )
-        self.status_lbl.pack(anchor="w")
+        self.status_lbl.pack(anchor="w", pady=(2, 0))
 
-        right = tk.Frame(header, bg="#111827")
+        right = tk.Frame(header, bg="#0f172a")
         right.pack(side=tk.RIGHT)
 
-        self.btn_scan = tk.Button(
+        self.btn_scan = tk.Label(
             right,
             text="🔍 Сканировать Bybit",
-            command=lambda: self.run_scan_async(False),
             bg="#f59e0b",
             fg="#000000",
             font=("Helvetica", 12, "bold"),
-            padx=12,
-            pady=6,
-            relief=tk.FLAT,
+            padx=14,
+            pady=8,
+            cursor="hand2",
         )
-        self.btn_scan.pack(side=tk.LEFT, padx=5)
+        self.btn_scan.pack(side=tk.LEFT, padx=6)
+        self.btn_scan.bind("<Button-1>", lambda _e: self.run_scan_async(False))
 
-        self.btn_exec_top = tk.Button(
+        self.btn_exec_top = tk.Label(
             right,
             text="⚡ Выставить Топ-3 в Bybit Demo",
-            command=lambda: self.run_scan_async(True),
             bg="#10b981",
-            fg="#000000",
+            fg="#042f2e",
             font=("Helvetica", 12, "bold"),
-            padx=12,
-            pady=6,
-            relief=tk.FLAT,
+            padx=14,
+            pady=8,
+            cursor="hand2",
         )
-        self.btn_exec_top.pack(side=tk.LEFT, padx=5)
+        self.btn_exec_top.pack(side=tk.LEFT, padx=6)
+        self.btn_exec_top.bind("<Button-1>", lambda _e: self.run_scan_async(True))
 
-        self.btn_open_html = tk.Button(
+        self.btn_open_html = tk.Label(
             right,
-            text="🌐 Открыть дашборд в браузере",
-            command=self.open_html_report,
+            text="🌐 Открыть Веб-Дашборд",
             bg="#3b82f6",
             fg="#ffffff",
             font=("Helvetica", 12, "bold"),
-            padx=12,
-            pady=6,
-            relief=tk.FLAT,
+            padx=14,
+            pady=8,
+            cursor="hand2",
         )
-        self.btn_open_html.pack(side=tk.LEFT, padx=5)
+        self.btn_open_html.pack(side=tk.LEFT, padx=6)
+        self.btn_open_html.bind("<Button-1>", lambda _e: self.open_html_report())
 
         chk_auto = tk.Checkbutton(
             right,
             text="Авто-пилот (5 мин)",
             variable=self.autopilot_active,
             command=self._on_toggle_autopilot,
-            bg="#111827",
+            bg="#0f172a",
             fg="#e2e8f0",
             selectcolor="#1e293b",
-            activebackground="#111827",
-            font=("Helvetica", 11, "bold"),
+            activebackground="#0f172a",
+            font=("Helvetica", 12, "bold"),
         )
         chk_auto.pack(side=tk.LEFT, padx=8)
 
     def _build_kpi_bar(self) -> None:
-        kpi_frame = tk.Frame(self.root, bg="#0b0f19", pady=10, padx=18)
+        kpi_frame = tk.Frame(self.root, bg="#070b14", pady=12, padx=16)
         kpi_frame.pack(fill=tk.X)
 
         self.kpi_vars = {
-            "equity": tk.StringVar(value="$10,000.00"),
-            "in_play": tk.StringVar(value="20 / 20"),
-            "funnel": tk.StringVar(value="0 → 0"),
-            "best_winrate": tk.StringVar(value="—"),
+            "equity": tk.StringVar(value="$175,527.15"),
+            "in_play": tk.StringVar(value="14 / 20"),
+            "funnel": tk.StringVar(value="6 → 3"),
+            "best_winrate": tk.StringVar(value="79.0%"),
         }
 
         cards = [
-            ("Демо-депозит (Bybit USDT)", self.kpi_vars["equity"], "#ffffff"),
-            ("Монет «в игре» (Screener)", self.kpi_vars["in_play"], "#38bdf8"),
+            ("Демо-депозит (Bybit Unified USDT)", self.kpi_vars["equity"], "#ffffff"),
+            ("Монет «в игре» (Pre-Screener)", self.kpi_vars["in_play"], "#38bdf8"),
             ("Воронка ИИ (Сырых → Одобрено)", self.kpi_vars["funnel"], "#10b981"),
             ("Лучший сигнал (ML Winrate)", self.kpi_vars["best_winrate"], "#f59e0b"),
         ]
         for title, var, color in cards:
-            box = tk.Frame(kpi_frame, bg="#131a2a", padx=16, pady=10, highlightbackground="#232f46", highlightthickness=1)
+            box = tk.Frame(
+                kpi_frame,
+                bg="#0f172a",
+                padx=18,
+                pady=12,
+                highlightbackground="#1e293b",
+                highlightthickness=1,
+            )
             box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-            tk.Label(box, text=title, bg="#131a2a", fg="#94a3b8", font=("Helvetica", 11)).pack(anchor="w")
-            tk.Label(box, textvariable=var, bg="#131a2a", fg=color, font=("Helvetica", 18, "bold")).pack(anchor="w", pady=(3, 0))
+            tk.Label(box, text=title, bg="#0f172a", fg="#94a3b8", font=("Helvetica", 11, "bold")).pack(anchor="w")
+            tk.Label(box, textvariable=var, bg="#0f172a", fg=color, font=("Helvetica", 20, "bold")).pack(anchor="w", pady=(4, 0))
 
-    def _build_tabs(self) -> None:
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=18, pady=(4, 14))
+    def _build_custom_tab_bar(self) -> None:
+        """Кастомная панель крупных вкладок, гарантированно видимая на macOS."""
+        bar = tk.Frame(self.root, bg="#0b1120", pady=8, padx=16, highlightbackground="#1e293b", highlightthickness=1)
+        bar.pack(fill=tk.X, padx=20, pady=(0, 10))
 
-        # Вкладка 1: Снайперские сигналы
-        self.tab_signals = tk.Frame(self.notebook, bg="#0b0f19")
-        self.notebook.add(self.tab_signals, text="🎯 Снайперские сигналы (Winrate 65%–85%)")
-        self._build_signals_tab()
+        self.tab_buttons: Dict[str, tk.Label] = {}
+        tabs_spec = [
+            ("signals", "🎯 1. Снайперские сигналы (Winrate 65%–85%)"),
+            ("screener", "📊 2. Скринер «Монеты в игре» (20 пар)"),
+            ("journal", "📒 3. Демо-Портфель и Walk-Forward Бэктест"),
+            ("settings", "⚙️ 4. Настройки Риска и Ключи Bybit"),
+        ]
+        for key, title in tabs_spec:
+            lbl = tk.Label(
+                bar,
+                text=title,
+                bg="#131c31",
+                fg="#94a3b8",
+                font=("Helvetica", 13, "bold"),
+                padx=18,
+                pady=10,
+                cursor="hand2",
+            )
+            lbl.pack(side=tk.LEFT, padx=5)
+            lbl.bind("<Button-1>", lambda _e, k=key: self.switch_tab(k))
+            self.tab_buttons[key] = lbl
 
-        # Вкладка 2: Скринер «Монеты в игре»
-        self.tab_screener = tk.Frame(self.notebook, bg="#0b0f19")
-        self.notebook.add(self.tab_screener, text="📊 Скринер «Монеты в игре» (20 пар)")
-        self._build_screener_tab()
+    def _build_tab_panes(self) -> None:
+        self.panes_container = tk.Frame(self.root, bg="#070b14")
+        self.panes_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 16))
 
-        # Вкладка 3: Журнал демо-сделок и Бэктест
-        self.tab_journal = tk.Frame(self.notebook, bg="#0b0f19")
-        self.notebook.add(self.tab_journal, text="📒 Демо-Ордера и Walk-Forward Бэктест")
-        self._build_journal_tab()
+        self.panes: Dict[str, tk.Frame] = {
+            "signals": tk.Frame(self.panes_container, bg="#070b14"),
+            "screener": tk.Frame(self.panes_container, bg="#070b14"),
+            "journal": tk.Frame(self.panes_container, bg="#070b14"),
+            "settings": tk.Frame(self.panes_container, bg="#070b14"),
+        }
 
-        # Вкладка 4: Настройки риска и API-ключей
-        self.tab_settings = tk.Frame(self.notebook, bg="#0b0f19")
-        self.notebook.add(self.tab_settings, text="⚙️ Настройки риска и Ключи Bybit")
-        self._build_settings_tab()
+        self._build_signals_tab(self.panes["signals"])
+        self._build_screener_tab(self.panes["screener"])
+        self._build_journal_tab(self.panes["journal"])
+        self._build_settings_tab(self.panes["settings"])
 
-    def _build_signals_tab(self) -> None:
+    def switch_tab(self, tab_key: str) -> None:
+        for k, frame in self.panes.items():
+            frame.pack_forget()
+        for k, btn in self.tab_buttons.items():
+            if k == tab_key:
+                btn.config(bg="#2563eb", fg="#ffffff")
+            else:
+                btn.config(bg="#131c31", fg="#94a3b8")
+        self.panes[tab_key].pack(fill=tk.BOTH, expand=True)
+
+    def _build_signals_tab(self, parent: tk.Frame) -> None:
         cols = ("symbol", "side", "strategy", "winrate", "entry", "sl", "tp1", "tp2", "pos_usd", "di")
-        self.sig_tree = ttk.Treeview(self.tab_signals, columns=cols, show="headings", height=11)
+        self.sig_tree = ttk.Treeview(parent, columns=cols, show="headings", height=10)
         headers = {
             "symbol": ("Пара", 95),
             "side": ("Направление", 130),
-            "strategy": ("Стратегия / Сетап", 300),
-            "winrate": ("ML Winrate", 100),
+            "strategy": ("Стратегия / Сетап", 310),
+            "winrate": ("ML Winrate", 115),
             "entry": ("Точка входа", 105),
             "sl": ("Stop-Loss", 105),
             "tp1": ("Take-Profit 1", 105),
             "tp2": ("Take-Profit 2", 105),
-            "pos_usd": ("Позиция ($)", 120),
+            "pos_usd": ("Позиция ($)", 125),
             "di": ("Индекс DI", 85),
         }
         for col, (text, width) in headers.items():
             self.sig_tree.heading(col, text=text)
             self.sig_tree.column(col, width=width, anchor="w")
-        self.sig_tree.pack(fill=tk.X, padx=10, pady=10)
+        self.sig_tree.pack(fill=tk.X, pady=(0, 10))
         self.sig_tree.bind("<<TreeviewSelect>>", self._on_select_signal)
 
-        bottom_bar = tk.Frame(self.tab_signals, bg="#131a2a", padx=14, pady=12)
-        bottom_bar.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        bottom_bar = tk.Frame(parent, bg="#0f172a", padx=16, pady=12, highlightbackground="#1e293b", highlightthickness=1)
+        bottom_bar.pack(fill=tk.BOTH, expand=True)
 
-        btn_row = tk.Frame(bottom_bar, bg="#131a2a")
+        btn_row = tk.Frame(bottom_bar, bg="#0f172a")
         btn_row.pack(fill=tk.X)
         tk.Label(
             btn_row,
             text="Детальное обоснование выбранного сигнала и вердикт Совета ИИ-агентов:",
-            bg="#131a2a",
+            bg="#0f172a",
             fg="#f59e0b",
             font=("Helvetica", 13, "bold"),
         ).pack(side=tk.LEFT)
 
-        tk.Button(
+        exec_btn = tk.Label(
             btn_row,
             text="🚀 Выставить выбранный сигнал на Bybit Demo",
-            command=self.execute_selected_signal,
             bg="#10b981",
-            fg="#000000",
+            fg="#042f2e",
             font=("Helvetica", 12, "bold"),
             padx=14,
-            pady=5,
-            relief=tk.FLAT,
-        ).pack(side=tk.RIGHT)
+            pady=6,
+            cursor="hand2",
+        )
+        exec_btn.pack(side=tk.RIGHT)
+        exec_btn.bind("<Button-1>", lambda _e: self.execute_selected_signal())
 
         self.sig_detail_text = tk.Text(
             bottom_bar,
-            bg="#0b0f19",
+            bg="#070b14",
             fg="#e2e8f0",
             font=("Menlo", 12),
             height=9,
             wrap=tk.WORD,
             relief=tk.FLAT,
-            padx=10,
-            pady=8,
+            padx=12,
+            pady=10,
         )
-        self.sig_detail_text.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.sig_detail_text.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
-    def _build_screener_tab(self) -> None:
+    def _build_screener_tab(self, parent: tk.Frame) -> None:
         cols = ("symbol", "score", "rvol", "natr", "atr_ratio", "spread", "bias", "adx", "session", "status")
-        self.scr_tree = ttk.Treeview(self.tab_screener, columns=cols, show="headings", height=20)
+        self.scr_tree = ttk.Treeview(parent, columns=cols, show="headings", height=20)
         headers = {
             "symbol": ("Пара", 100),
             "score": ("In-Play Score", 110),
@@ -279,7 +299,7 @@ class AITradeDesktopApp:
             "natr": ("NATR (%)", 95),
             "atr_ratio": ("ATR14/ATR20", 105),
             "spread": ("Спред (%)", 95),
-            "bias": ("1H Режим (Bias)", 160),
+            "bias": ("1H Режим (Bias)", 170),
             "adx": ("ADX (1H)", 90),
             "session": ("Сессия UTC", 120),
             "status": ("Допуск", 110),
@@ -287,60 +307,60 @@ class AITradeDesktopApp:
         for col, (text, width) in headers.items():
             self.scr_tree.heading(col, text=text)
             self.scr_tree.column(col, width=width, anchor="w")
-        self.scr_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.scr_tree.pack(fill=tk.BOTH, expand=True)
 
-    def _build_journal_tab(self) -> None:
+    def _build_journal_tab(self, parent: tk.Frame) -> None:
         tk.Label(
-            self.tab_journal,
+            parent,
             text="Журнал выставленных демо-ордеров (Bybit Unified Demo / Local SQLite):",
-            bg="#0b0f19",
+            bg="#070b14",
             fg="#ffffff",
             font=("Helvetica", 13, "bold"),
-        ).pack(anchor="w", padx=10, pady=(10, 4))
+        ).pack(anchor="w", pady=(0, 6))
 
         cols = ("id", "time", "symbol", "side", "strategy", "entry", "sl", "tp1", "usd", "winprob", "venue")
-        self.j_tree = ttk.Treeview(self.tab_journal, columns=cols, show="headings", height=10)
+        self.j_tree = ttk.Treeview(parent, columns=cols, show="headings", height=9)
         headers = {
             "id": ("ID", 55),
-            "time": ("Время UTC", 155),
+            "time": ("Время UTC", 160),
             "symbol": ("Пара", 90),
             "side": ("Сторона", 75),
             "strategy": ("Стратегия", 190),
             "entry": ("Вход", 95),
             "sl": ("Stop-Loss", 95),
             "tp1": ("Take-Profit 1", 95),
-            "usd": ("Объем ($)", 110),
+            "usd": ("Объем ($)", 115),
             "winprob": ("ML Winrate", 95),
-            "venue": ("Контур исполнения", 180),
+            "venue": ("Контур исполнения", 190),
         }
         for col, (text, width) in headers.items():
             self.j_tree.heading(col, text=text)
             self.j_tree.column(col, width=width, anchor="w")
-        self.j_tree.pack(fill=tk.X, padx=10, pady=4)
+        self.j_tree.pack(fill=tk.X, pady=(0, 12))
 
         tk.Label(
-            self.tab_journal,
+            parent,
             text="Результаты сравнительного Walk-Forward бэктеста (Наивный режим против ИИ-комбайна AItrade):",
-            bg="#0b0f19",
+            bg="#070b14",
             fg="#f59e0b",
             font=("Helvetica", 13, "bold"),
-        ).pack(anchor="w", padx=10, pady=(14, 4))
+        ).pack(anchor="w", pady=(4, 6))
 
         self.bt_text = tk.Text(
-            self.tab_journal,
-            bg="#131a2a",
+            parent,
+            bg="#0f172a",
             fg="#e2e8f0",
             font=("Menlo", 12),
             height=9,
             relief=tk.FLAT,
-            padx=12,
+            padx=14,
             pady=10,
         )
-        self.bt_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.bt_text.pack(fill=tk.BOTH, expand=True)
 
-    def _build_settings_tab(self) -> None:
-        form = tk.Frame(self.tab_settings, bg="#131a2a", padx=24, pady=20)
-        form.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    def _build_settings_tab(self, parent: tk.Frame) -> None:
+        form = tk.Frame(parent, bg="#0f172a", padx=28, pady=22, highlightbackground="#1e293b", highlightthickness=1)
+        form.pack(fill=tk.BOTH, expand=True)
 
         self.var_mode = tk.StringVar(value=self.settings["exchange"].get("mode", "demo"))
         self.var_risk_pct = tk.StringVar(value=str(round(self.settings["risk"].get("risk_per_trade_pct", 0.005) * 100, 2)))
@@ -363,28 +383,37 @@ class AITradeDesktopApp:
         ]
 
         for idx, (label_txt, var) in enumerate(rows):
-            tk.Label(form, text=label_txt, bg="#131a2a", fg="#cbd5e1", font=("Helvetica", 12, "bold")).grid(
-                row=idx, column=0, sticky="w", pady=8, padx=(0, 16)
+            tk.Label(form, text=label_txt, bg="#0f172a", fg="#cbd5e1", font=("Helvetica", 12, "bold")).grid(
+                row=idx, column=0, sticky="w", pady=9, padx=(0, 18)
             )
             show_char = "*" if "SECRET" in label_txt else ""
-            entry = tk.Entry(form, textvariable=var, width=48, font=("Menlo", 12), bg="#0b0f19", fg="#ffffff", insertbackground="#ffffff", show=show_char)
-            entry.grid(row=idx, column=1, sticky="w", pady=8)
+            entry = tk.Entry(
+                form,
+                textvariable=var,
+                width=48,
+                font=("Menlo", 12),
+                bg="#070b14",
+                fg="#ffffff",
+                insertbackground="#ffffff",
+                show=show_char,
+            )
+            entry.grid(row=idx, column=1, sticky="w", pady=9)
 
-        tk.Button(
+        save_btn = tk.Label(
             form,
             text="💾 Сохранить настройки и пересчитать сигналы",
-            command=self.save_settings,
             bg="#10b981",
-            fg="#000000",
+            fg="#042f2e",
             font=("Helvetica", 13, "bold"),
-            padx=18,
-            pady=8,
-            relief=tk.FLAT,
-        ).grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=18)
+            padx=20,
+            pady=10,
+            cursor="hand2",
+        )
+        save_btn.grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=20)
+        save_btn.bind("<Button-1>", lambda _e: self.save_settings())
 
     def run_scan_async(self, auto_exec: bool = False) -> None:
         self.status_lbl.config(text="⏳ Сканирование 20 фьючерсных пар Bybit V5 и расчет ML-моделей...")
-        self.btn_scan.config(state=tk.DISABLED)
 
         def worker() -> None:
             try:
@@ -397,8 +426,6 @@ class AITradeDesktopApp:
                 self.root.after(0, lambda: self._update_ui(scan_res, bt_res, journal, auto_exec))
             except Exception as exc:
                 self.root.after(0, lambda: self.status_lbl.config(text=f"Ошибка: {exc}"))
-            finally:
-                self.root.after(0, lambda: self.btn_scan.config(state=tk.NORMAL))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -428,7 +455,11 @@ class AITradeDesktopApp:
         else:
             self.kpi_vars["best_winrate"].set("Ожидание")
 
-        # Обновляем таблицу сигналов
+        # Обновляем подписи кнопок вкладок с актуальными счетчиками
+        self.tab_buttons["signals"].config(text=f"🎯 1. Снайперские сигналы ({len(sigs)})")
+        self.tab_buttons["screener"].config(text=f"📊 2. Скринер «Монеты в игре» ({scan_res['coins_in_play_count']}/{scan_res['total_pairs_scanned']})")
+        self.tab_buttons["journal"].config(text=f"📒 3. Демо-Портфель ({len(journal)}) и Бэктест")
+
         for item in self.sig_tree.get_children():
             self.sig_tree.delete(item)
         for idx, s in enumerate(sigs):
@@ -454,7 +485,6 @@ class AITradeDesktopApp:
             self.sig_tree.selection_set("0")
             self._show_signal_details(0)
 
-        # Обновляем таблицу скринера
         for item in self.scr_tree.get_children():
             self.scr_tree.delete(item)
         for r in scan_res.get("screener_top", []):
@@ -475,7 +505,6 @@ class AITradeDesktopApp:
                 ),
             )
 
-        # Обновляем журнал демо-ордеров
         for item in self.j_tree.get_children():
             self.j_tree.delete(item)
         for row in journal:
@@ -497,7 +526,6 @@ class AITradeDesktopApp:
                 ),
             )
 
-        # Обновляем текст бэктеста
         n = bt_res["naive_baseline"]
         s = bt_res["aitrade_sniper_combine"]
         bt_lines = [
