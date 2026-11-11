@@ -1,0 +1,3 @@
+#!/bin/bash
+cd "/Users/sergejrubcov/AItrade"
+exec /usr/bin/python3 "/Users/sergejrubcov/AItrade/gui_app.py"
