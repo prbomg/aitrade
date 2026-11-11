@@ -87,15 +87,6 @@ class AITradeCombineEngine:
         auto_execute_demo: bool = False,
         max_signals: int = 8,
     ) -> Dict[str, Any]:
-        """
-        Запускает полный конвейер сканирования пула монет Bybit:
-        1. Скринер «Монет в игре»
-        2. 5 генераторов стратегий
-        3. ML Meta-Labeler (Cost-Aware + DI)
-        4. Дебаты ИИ-агентов (Bull vs Bear + Risk Judge)
-        5. Расчет позиции и L2-проскальзывания в RiskEngine
-        6. Опциональное демо-исполнение лучших сигналов.
-        """
         core_pairs = symbols or self.settings["universe"]["core_pairs"]
         all_tickers = self.client.get_tickers()
         ticker_map = {t["symbol"]: t for t in all_tickers if "symbol" in t}
@@ -113,7 +104,6 @@ class AITradeCombineEngine:
             if not ctx.screener.passed:
                 continue
 
-            # Собираем сигналы от всех активных стратегий для данного актива
             sym_signals: List[TradeSignal] = []
             sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
             sym_signals.extend(evaluate_liquidity_sweep_fvg_strategy(ctx))
@@ -124,11 +114,8 @@ class AITradeCombineEngine:
 
             for sig in sym_signals:
                 raw_candidates.append(sig)
-                # Уровень 2: Табличный ML-валидатор + Cost-Aware Filter + Dissimilarity Index
                 sig = self.ml_labeler.evaluate_signal(sig, ctx)
-                # Уровень 3: Расчет позиции, 5x ликвидации и 10 уровней стакана L2
                 sig = self.risk_engine.size_and_validate_signal(sig, ctx.orderbook, equity_usd)
-                # Уровень 1: Мультиагентные дебаты (Bull vs Bear Researcher + Judge)
                 sig = self.debate_council.conduct_debate(sig, ctx)
 
                 if sig.debate_verdict == "APPROVED" and sig.passed_ml_filter:
@@ -136,7 +123,6 @@ class AITradeCombineEngine:
                 else:
                     rejected_signals.append(sig)
 
-        # Сортируем одобренные сигналы по вероятности выигрыша (Winrate) и ожидаемой доходности
         approved_signals.sort(
             key=lambda s: (s.ml_win_probability, s.expected_return_pct), reverse=True
         )
@@ -152,6 +138,7 @@ class AITradeCombineEngine:
 
         return {
             "data_source": self.client.last_data_source,
+            "network_note": self.client.last_network_error,
             "account_equity_usdt": equity_usd,
             "total_pairs_scanned": len(core_pairs),
             "coins_in_play_count": sum(1 for r in screener_results if r.passed),

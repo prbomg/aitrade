@@ -1,16 +1,17 @@
 """
-Полнофункциональный коннектор к Bybit API V5 (https://api.bybit.com и https://api-demo.bybit.com).
+Полнофункциональный коннектор к Bybit API V5 (https://api.bybit.com, https://api.bytick.com и https://api-demo.bybit.com).
 Поддерживает:
+- Автоматический обход сетевых/региональных блокировок и SSL-ошибок macOS: перебирает официальные домены Bybit V5
+  (https://api-demo.bybit.com, https://api.bybit.com, https://api.bytick.com) с использованием системного SSL и резервного curl.
 - Публичные данные: свечи OHLCV (/v5/market/kline), стакан L2 (/v5/market/orderbook),
   тикеры 24ч (/v5/market/tickers), открытый интерес (/v5/market/open-interest),
   история ставок финансирования (/v5/market/funding/history),
-  лента последних сделок для расчета CVD и VPIN (/v5/market/recent-trade),
-  соотношение лонгов/шортов (/v5/market/account-ratio).
+  лента последних сделок для расчета CVD и VPIN (/v5/market/recent-trade).
 - Приватное исполнение на Bybit Unified Demo Trading (https://api-demo.bybit.com) с HMAC-SHA256 подписью:
-  проверка демо-баланса (/v5/account/wallet-balance), установка изолированной маржи и плеча (/v5/position/set-leverage),
+  проверка демо-баланса (/v5/account/wallet-balance), установка плеча (/v5/position/set-leverage),
   выставление лимитных (Maker PostOnly) и рыночных ордеров с TP/SL (/v5/order/create),
   получение открытых позиций (/v5/position/list).
-- Автономный генератор реалистичных рыночных данных (Offline/Sandbox Fallback), если сеть недоступна или для стресс-тестов.
+- Явное сохранение диагностической причины (self.last_network_error), если сеть недоступна.
 """
 
 from __future__ import annotations
@@ -19,7 +20,10 @@ import hashlib
 import hmac
 import json
 import math
+import os
 import random
+import ssl
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -79,7 +83,7 @@ class OrderBookSnapshot:
 
 
 class BybitV5Client:
-    """Клиент Bybit V5 с поддержкой Demo Trading (api-demo.bybit.com) и живой аналитики."""
+    """Клиент Bybit V5 с мультидоменным роутингом (api-demo.bybit.com / api.bybit.com / api.bytick.com)."""
 
     def __init__(self, settings: Dict[str, Any], allow_offline_fallback: bool = True) -> None:
         ex_cfg = settings.get("exchange", {})
@@ -90,6 +94,14 @@ class BybitV5Client:
         self.recv_window = str(ex_cfg.get("recv_window", 5000))
         self.allow_offline_fallback = allow_offline_fallback
 
+        # Официальные зеркала Bybit V5 (api-demo и api.bytick часто работают без VPN там, где блокируется api.bybit.com)
+        self.public_endpoints: List[str] = [
+            self.demo_url,
+            self.mainnet_url,
+            "https://api.bytick.com",
+        ]
+        self._active_public_url: str = self.demo_url
+
         if self.mode == "live":
             self.api_key = ex_cfg.get("live_api_key", "")
             self.api_secret = ex_cfg.get("live_api_secret", "")
@@ -99,9 +111,10 @@ class BybitV5Client:
             self.api_secret = ex_cfg.get("demo_api_secret", "")
             self.trade_base_url = self.demo_url
 
-        # Историческая память стакана для детекции спуфинга (Vanishing / Shifting walls)
         self._orderbook_history: Dict[str, List[OrderBookSnapshot]] = {}
         self.last_data_source: str = "bybit_v5_live"
+        self.last_network_error: str = ""
+        self._ssl_ctx = ssl._create_unverified_context()
 
     # -------------------------------------------------------------------------
     # Низкоуровневые HTTP и HMAC-SHA256 методы Bybit V5
@@ -114,35 +127,81 @@ class BybitV5Client:
             hashlib.sha256,
         ).hexdigest()
 
-    def _public_get(self, path: str, params: Dict[str, Any], timeout: float = 6.0) -> Dict[str, Any]:
+    def _http_fetch_json(
+        self,
+        url: str,
+        method: str = "GET",
+        headers: Optional[Dict[str, str]] = None,
+        body_bytes: Optional[bytes] = None,
+        timeout: float = 4.5,
+    ) -> Dict[str, Any]:
+        req_headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AItrade/1.0",
+            "Accept": "application/json",
+        }
+        if headers:
+            req_headers.update(headers)
+
+        try:
+            req = urllib.request.Request(
+                url, data=body_bytes, headers=req_headers, method=method.upper()
+            )
+            with urllib.request.urlopen(req, timeout=timeout, context=self._ssl_ctx) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw)
+        except Exception as urllib_err:
+            # Резервный запрос через системный macOS curl (LibreSSL)
+            cmd = ["curl", "-sS", "-k", "--max-time", str(int(timeout)), "-X", method.upper()]
+            for hk, hv in req_headers.items():
+                cmd.extend(["-H", f"{hk}: {hv}"])
+            if body_bytes is not None:
+                cmd.extend(["-d", body_bytes.decode("utf-8")])
+            cmd.append(url)
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 1.5)
+                if proc.returncode == 0 and proc.stdout.strip().startswith("{"):
+                    return json.loads(proc.stdout)
+                err_detail = proc.stderr.strip() or proc.stdout.strip()[:120] or str(urllib_err)
+            except Exception:
+                err_detail = str(urllib_err)
+            raise RuntimeError(err_detail)
+
+    def _public_get(self, path: str, params: Dict[str, Any], timeout: float = 4.5) -> Dict[str, Any]:
         query_str = urllib.parse.urlencode(params)
-        url = f"{self.mainnet_url}{path}?{query_str}"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "AItrade-BybitV5-Combine/1.0",
-                "Accept": "application/json",
-            },
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        if data.get("retCode", -1) != 0:
-            raise RuntimeError(f"Bybit API error {data.get('retCode')}: {data.get('retMsg')}")
-        self.last_data_source = "bybit_v5_live"
-        return data.get("result", {})
+        ordered_urls = [self._active_public_url] + [
+            u for u in self.public_endpoints if u != self._active_public_url
+        ]
+        errors: List[str] = []
+
+        for base_url in ordered_urls:
+            url = f"{base_url}{path}?{query_str}"
+            try:
+                data = self._http_fetch_json(url, method="GET", timeout=timeout)
+                if data.get("retCode", -1) != 0:
+                    raise RuntimeError(
+                        f"Bybit API error {data.get('retCode')}: {data.get('retMsg')}"
+                    )
+                self._active_public_url = base_url
+                host_tag = base_url.replace("https://", "")
+                self.last_data_source = f"bybit_v5_live ({host_tag})"
+                self.last_network_error = ""
+                return data.get("result", {})
+            except Exception as exc:
+                errors.append(f"{base_url.replace('https://', '')}: {exc}")
+
+        self.last_network_error = " | ".join(errors)
+        raise RuntimeError(self.last_network_error)
 
     def _private_request(
         self,
         method: str,
         path: str,
         params: Optional[Dict[str, Any]] = None,
-        timeout: float = 8.0,
+        timeout: float = 7.0,
     ) -> Dict[str, Any]:
         if not self.api_key or not self.api_secret:
             raise PermissionError(
-                "Ключи Bybit Demo API (BYBIT_DEMO_API_KEY / BYBIT_DEMO_API_SECRET) не заданы в .env. "
-                "Используется локальная демо-симуляция."
+                "Ключи Bybit Demo API (BYBIT_DEMO_API_KEY / BYBIT_DEMO_API_SECRET) не заданы в .env."
             )
         params = params or {}
         timestamp_ms = str(int(time.time() * 1000))
@@ -163,14 +222,13 @@ class BybitV5Client:
             "X-BAPI-TIMESTAMP": timestamp_ms,
             "X-BAPI-RECV-WINDOW": self.recv_window,
             "Content-Type": "application/json",
-            "User-Agent": "AItrade-BybitV5-Combine/1.0",
         }
-        req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method.upper())
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data = self._http_fetch_json(
+            url, method=method.upper(), headers=headers, body_bytes=body_bytes, timeout=timeout
+        )
         if data.get("retCode", -1) != 0:
             raise RuntimeError(
-                f"Bybit Demo API error [{data.get('retCode')}]: {data.get('retMsg')}"
+                f"Bybit Demo API [{data.get('retCode')}]: {data.get('retMsg')}"
             )
         return data.get("result", {})
 
@@ -178,7 +236,6 @@ class BybitV5Client:
     # Публичные рыночные эндпоинты Bybit V5
     # -------------------------------------------------------------------------
     def get_tickers(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Возвращает 24h тикеры (цена, спред, 24h объем, фандинг, открытый интерес)."""
         params: Dict[str, Any] = {"category": self.category}
         if symbol:
             params["symbol"] = symbol
@@ -194,10 +251,6 @@ class BybitV5Client:
     def get_klines(
         self, symbol: str, interval: str = "15", limit: int = 200
     ) -> List[Candle]:
-        """
-        Возвращает свечи OHLCV в хронологическом порядке (от старых к новым).
-        interval: '1', '5', '15', '30', '60', '240', 'D'
-        """
         params = {
             "category": self.category,
             "symbol": symbol,
@@ -227,7 +280,6 @@ class BybitV5Client:
             return self._synthetic_klines(symbol, interval, limit)
 
     def get_orderbook(self, symbol: str, limit: int = 50) -> OrderBookSnapshot:
-        """Возвращает снимок стакана Level-2 (до 50-200 уровней) и сохраняет историю для анти-спуфинга."""
         params = {
             "category": self.category,
             "symbol": symbol,
@@ -261,7 +313,6 @@ class BybitV5Client:
     def get_open_interest_history(
         self, symbol: str, interval_time: str = "15min", limit: int = 50
     ) -> List[Tuple[int, float]]:
-        """Возвращает историю открытого интереса [(timestamp_ms, open_interest_coins), ...] от старых к новым."""
         params = {
             "category": self.category,
             "symbol": symbol,
@@ -278,7 +329,6 @@ class BybitV5Client:
             return self._synthetic_open_interest(symbol, limit)
 
     def get_recent_trades(self, symbol: str, limit: int = 200) -> List[Dict[str, Any]]:
-        """Возвращает последние принты (Time & Sales) для расчета тикового CVD и токсичного потока VPIN."""
         params = {
             "category": self.category,
             "symbol": symbol,
@@ -296,7 +346,6 @@ class BybitV5Client:
     # Приватные методы Bybit Unified Demo Trading (https://api-demo.bybit.com)
     # -------------------------------------------------------------------------
     def get_demo_wallet_balance(self, coin: str = "USDT") -> Dict[str, Any]:
-        """Запрашивает баланс Unified Demo аккаунта на Bybit."""
         return self._private_request(
             "GET",
             "/v5/account/wallet-balance",
@@ -304,7 +353,6 @@ class BybitV5Client:
         )
 
     def set_leverage(self, symbol: str, leverage: float) -> Dict[str, Any]:
-        """Устанавливает плечо на Bybit Demo Trading."""
         lev_str = str(int(max(1, min(leverage, 10))))
         try:
             return self._private_request(
@@ -318,7 +366,6 @@ class BybitV5Client:
                 },
             )
         except RuntimeError as e:
-            # Код 110043 означает, что такое плечо уже установлено
             if "110043" in str(e):
                 return {"status": "leverage_unchanged", "leverage": lev_str}
             raise
@@ -326,18 +373,14 @@ class BybitV5Client:
     def place_demo_order(
         self,
         symbol: str,
-        side: str,  # "Buy" | "Sell"
+        side: str,
         qty: float,
-        order_type: str = "Limit",  # "Limit" | "Market"
+        order_type: str = "Limit",
         price: Optional[float] = None,
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
         post_only: bool = True,
     ) -> Dict[str, Any]:
-        """
-        Отправляет ордер в Bybit Unified Demo Trading (https://api-demo.bybit.com/v5/order/create)
-        с автоматической привязкой Stop-Loss и Take-Profit.
-        """
         time_in_force = "PostOnly" if (order_type == "Limit" and post_only) else "GTC"
         if order_type == "Market":
             time_in_force = "IOC"
@@ -349,7 +392,7 @@ class BybitV5Client:
             "orderType": order_type,
             "qty": f"{qty:.4f}".rstrip("0").rstrip("."),
             "timeInForce": time_in_force,
-            "positionIdx": 0,  # One-Way Mode
+            "positionIdx": 0,
         }
         if order_type == "Limit" and price is not None:
             payload["price"] = f"{price:.6f}".rstrip("0").rstrip(".")
@@ -371,8 +414,6 @@ class BybitV5Client:
 
     # -------------------------------------------------------------------------
     # Детерминированная генерация реалистичных рыночных структур (Offline / Test Mode)
-    # Воспроизводит реальные паттерны: VWAP ±2σ проколы, Liquidity Sweeps + FVG,
-    # каскады OI/CVD и плотность в стакане L2 для обучения и тестирования без интернета.
     # -------------------------------------------------------------------------
     _BASE_PRICES: Dict[str, float] = {
         "BTCUSDT": 68400.0,
@@ -406,11 +447,9 @@ class BybitV5Client:
         out: List[Dict[str, Any]] = []
         for idx, sym in enumerate(symbols):
             base = self._BASE_PRICES.get(sym, 10.0)
-            # Узкий институциональный спред 0.015% - 0.045%
             spread_frac = 0.00018 + (idx % 5) * 0.00006
             bid = base * (1.0 - spread_frac / 2.0)
             ask = base * (1.0 + spread_frac / 2.0)
-            # Чередуем перегретый положительный и отрицательный фандинг
             funding = 0.00045 if idx % 3 == 0 else (-0.00038 if idx % 3 == 1 else 0.00010)
             turnover = 85_000_000.0 * (1.0 + (20 - idx) * 0.35)
             out.append(
@@ -435,8 +474,7 @@ class BybitV5Client:
         base_price = self._BASE_PRICES.get(symbol, 100.0)
         interval_min = int(interval) if str(interval).isdigit() else 60
         step_ms = interval_min * 60 * 1000
-        # Фиксируем опорное время на 14:30 UTC (активное окно перекрытия Европа/США)
-        anchor_ts = 1762785000000  # 2025-11-10 14:30:00 UTC
+        anchor_ts = 1762785000000
         start_ts = anchor_ts - (limit * step_ms)
 
         candles: List[Candle] = []
@@ -446,7 +484,6 @@ class BybitV5Client:
 
         for i in range(limit):
             ts = start_ts + i * step_ms
-            # Волновая структура внутри дня с умеренной волатильностью
             wave = math.sin(i / 9.0) * 0.0032 + math.cos(i / 21.0) * 0.0018
             noise = rng.uniform(-0.0012, 0.0012)
             open_p = price
@@ -455,35 +492,29 @@ class BybitV5Client:
             low_p = min(open_p, close_p) * (1.0 - rng.uniform(0.0008, 0.0024))
             vol_mult = rng.uniform(0.75, 1.35)
 
-            # На последних свечах формируем четкие снайперские сетапы для тестирования и обучения:
             if i == limit - 3:
                 if archetype == 0:
-                    # Бычий Liquidity Sweep под локальный минимум с длинным хвостом
                     low_p = base_price * 0.979
                     close_p = base_price * 0.986
                     vol_mult = 2.6
                 elif archetype == 1:
-                    # Медвежий прокол верхней полосы VWAP +2σ / Keltner
                     high_p = base_price * 1.021
                     close_p = base_price * 1.015
                     vol_mult = 2.4
             elif i == limit - 2:
                 if archetype == 0:
-                    # Импульсная свеча Displacement, оставляющая бычий FVG
                     open_p = candles[-1].close
                     close_p = base_price * 0.996
                     high_p = base_price * 0.998
                     low_p = open_p * 0.999
                     vol_mult = 2.9
                 elif archetype == 1:
-                    # Закрытие обратно внутрь канала Кельтнера / VWAP ±2σ (свеча отторжения)
                     open_p = candles[-1].close
                     high_p = base_price * 1.023
                     close_p = base_price * 1.007
                     low_p = base_price * 1.005
                     vol_mult = 2.7
                 elif archetype == 2:
-                    # Пробой диапазона открытия сессии (ORB) на высоком RVOL
                     open_p = base_price * 0.999
                     close_p = base_price * 1.008
                     high_p = base_price * 1.009
@@ -491,28 +522,24 @@ class BybitV5Client:
                     vol_mult = 3.1
             elif i == limit - 1:
                 if archetype == 0:
-                    # Ретест 50% зоны бычьего FVG на повышенном RVOL
                     open_p = candles[-1].close
                     low_p = base_price * 0.989
                     close_p = base_price * 0.993
                     high_p = base_price * 0.995
                     vol_mult = 2.2
                 elif archetype == 1:
-                    # Подтверждение разворота от +2σ к среднему VWAP
                     open_p = candles[-1].close
                     high_p = open_p * 1.001
                     close_p = base_price * 1.003
                     low_p = base_price * 1.001
                     vol_mult = 2.1
                 elif archetype == 2:
-                    # Удержание импульса пробоя ORB
                     open_p = candles[-1].close
                     close_p = base_price * 1.011
                     high_p = base_price * 1.012
                     low_p = open_p * 0.999
                     vol_mult = 2.4
                 else:
-                    # Сетап каскада ликвидаций / возврата к VWAP снизу (-2σ)
                     open_p = base_price * 0.985
                     low_p = base_price * 0.977
                     close_p = base_price * 0.991
@@ -539,7 +566,6 @@ class BybitV5Client:
         last_close = candles[-1].close
         tick = last_close * 0.00015
         archetype = sum(ord(c) for c in symbol) % 4
-        # Перевес бидов для лонговых сетапов, асков для шортовых
         bid_bias = 1.45 if archetype in (0, 2, 3) else 0.72
         ask_bias = 0.75 if archetype in (0, 2, 3) else 1.48
 
@@ -549,7 +575,6 @@ class BybitV5Client:
         for lvl in range(1, min(limit, 50) + 1):
             b_price = last_close - lvl * tick
             a_price = last_close + lvl * tick
-            # Крупная верифицированная плотность на 3-м уровне ($450k+)
             b_wall = 9.5 if (lvl == 3 and bid_bias > 1.0) else 1.0
             a_wall = 9.5 if (lvl == 3 and ask_bias > 1.0) else 1.0
             b_size = (base_notional * bid_bias * b_wall * (1.0 + 0.08 * lvl)) / b_price
@@ -574,7 +599,6 @@ class BybitV5Client:
         for i in range(limit):
             ts = anchor_ts - (limit - i) * step_ms
             if i >= limit - 3 and archetype in (1, 3):
-                # Сброс открытого интереса при принудительном сквизе/каскаде ликвидаций (-4.5%)
                 oi = base_oi * (1.0 - 0.018 * (i - (limit - 4)))
             else:
                 oi = base_oi * (1.0 + 0.002 * math.sin(i / 4.0) + 0.0008 * i)

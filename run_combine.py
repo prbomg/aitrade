@@ -25,6 +25,8 @@ def print_scan_report(report: Dict[str, Any]) -> None:
     print(
         f" AItrade — СНАЙПЕРСКИЙ ИИ-КОМБАЙН ДЛЯ BYBIT V5 | Источник: {report['data_source']}"
     )
+    if report.get("network_note") and report["data_source"] == "deterministic_market_replay":
+        print(f" [!] Причина оффлайн-режима: {report['network_note'][:140]}")
     print(
         f" Демо-депозит: ${report['account_equity_usdt']:,.2f} USDT | "
         f"Монет в игре: {report['coins_in_play_count']}/{report['total_pairs_scanned']} | "
