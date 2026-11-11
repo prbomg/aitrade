@@ -20,6 +20,54 @@ from aitrade.dashboard.report_generator import generate_html_dashboard
 from aitrade.engine import AITradeCombineEngine
 
 
+def run_connection_check() -> None:
+    from aitrade.config import load_settings
+    from aitrade.exchange.bybit_v5 import BybitV5Client
+    import time
+    settings = load_settings()
+    client = BybitV5Client(settings, allow_offline_fallback=False)
+    print("=" * 92)
+    print(" ДИАГНОСТИКА ПОДКЛЮЧЕНИЯ BYBIT V5 DEMO TRADING (api-demo.bybit.com / api.bytick.com)")
+    print("=" * 92)
+    print(f" • Режим работы (AITRADE_MODE):  {client.mode.upper()}")
+    masked_key = (
+        f"{client.api_key[:4]}...{client.api_key[-3:]} (длина {len(client.api_key)})"
+        if len(client.api_key) >= 8
+        else "НЕ ЗАДАН"
+    )
+    print(f" • Ключ BYBIT_DEMO_API_KEY:      {masked_key}")
+    print(
+        f" • Секрет BYBIT_DEMO_API_SECRET: {'ЗАДАН (длина ' + str(len(client.api_secret)) + ')' if client.api_secret else 'НЕ ЗАДАН'}"
+    )
+
+    t0 = time.time()
+    try:
+        tickers = client.get_tickers("BTCUSDT")
+        latency_ms = (time.time() - t0) * 1000.0
+        btc_px = tickers[0].get("lastPrice") if tickers else "N/A"
+        print(
+            f" • Публичный поток котировок:    OK ({client.last_data_source}, BTCUSDT = ${btc_px}, пинг {latency_ms:.1f} мс)"
+        )
+    except Exception as exc:
+        print(f" • Публичный поток котировок:    ОШИБКА СЕТИ ({exc})")
+
+    if client.api_key and client.api_secret:
+        try:
+            bal = client.get_demo_wallet_balance("USDT")
+            acct_list = bal.get("list", [])
+            equity = acct_list[0].get("totalEquity", "0") if acct_list else "0"
+            avail = acct_list[0].get("totalAvailableBalance", "0") if acct_list else "0"
+            print(
+                f" • Демо-кошелек Bybit Unified:   OK (Total Equity = {equity} USDT, Доступно = {avail} USDT)"
+            )
+            positions = client.get_open_positions()
+            active_pos = [pos for pos in positions if float(pos.get("size", 0) or 0) > 0]
+            print(f" • Открытых демо-позиций:        {len(active_pos)}")
+        except Exception as exc:
+            print(f" • Демо-кошелек Bybit Unified:   ОШИБКА АВТОРИЗАЦИИ / СЕТИ ({exc})")
+    print("=" * 92)
+
+
 def print_scan_report(report: Dict[str, Any]) -> None:
     print("=" * 92)
     print(
@@ -85,6 +133,7 @@ def run_cli() -> None:
         description="AItrade — ИИ-комбайн для внутридневных сигналов и демо-торговли на Bybit V5"
     )
     sub = parser.add_subparsers(dest="command")
+    sub.add_parser("check", help="Проверить подключение к Bybit Demo API")
 
     scan_p = sub.add_parser("scan", help="Просканировать пул пар Bybit и выдать снайперские сигналы")
     scan_p.add_argument("--json", action="store_true", help="Вывести результат в формате JSON")
@@ -101,7 +150,9 @@ def run_cli() -> None:
     args = parser.parse_args()
     cmd = args.command or "scan"
 
-    if cmd in ("scan", "demo-trade"):
+    if cmd == "check":
+        run_connection_check()
+    elif cmd in ("scan", "demo-trade"):
         engine = AITradeCombineEngine()
         res = engine.scan_market(auto_execute_demo=(cmd == "demo-trade"))
         bt = WalkForwardBacktester(engine.settings).run_comparison_backtest()

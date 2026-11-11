@@ -439,7 +439,7 @@ class AITradeDesktopApp:
         now_str = time.strftime("%H:%M:%S")
         key_status = "АКТИВНЫ" if self.engine.client.api_key else "ЛОКАЛЬНЫЙ РЕЖИМ"
         self.status_lbl.config(
-            text=f"Источник: {scan_res['data_source']} | Ключи Bybit Demo: {key_status} | Обновлено в {now_str}"
+            text=f"Источник: {scan_res['data_source']} | Ключи Bybit Demo: {key_status} | Обновлено в {now_str}" + (f" | Сеть: {scan_res.get('network_note', '')[:65]}" if scan_res.get('network_note') else "")
         )
 
         self.kpi_vars["equity"].set(f"${scan_res['account_equity_usdt']:,.2f}")
