@@ -312,7 +312,7 @@ class AITradeDesktopApp:
     def _build_journal_tab(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="Журнал выставленных демо-ордеров (Bybit Unified Demo / Local SQLite):",
+            text="Активные ордера и позиции на Bybit Unified Demo (/v5/order/realtime + /v5/position/list) и локальный журнал:",
             bg="#070b14",
             fg="#ffffff",
             font=("Helvetica", 13, "bold"),
@@ -321,17 +321,17 @@ class AITradeDesktopApp:
         cols = ("id", "time", "symbol", "side", "strategy", "entry", "sl", "tp1", "usd", "winprob", "venue")
         self.j_tree = ttk.Treeview(parent, columns=cols, show="headings", height=9)
         headers = {
-            "id": ("ID", 55),
-            "time": ("Время UTC", 160),
+            "id": ("ID", 65),
+            "time": ("Время / Статус", 160),
             "symbol": ("Пара", 90),
             "side": ("Сторона", 75),
-            "strategy": ("Стратегия", 190),
+            "strategy": ("Стратегия / Тип", 190),
             "entry": ("Вход", 95),
             "sl": ("Stop-Loss", 95),
             "tp1": ("Take-Profit 1", 95),
-            "usd": ("Объем ($)", 115),
-            "winprob": ("ML Winrate", 95),
-            "venue": ("Контур исполнения", 190),
+            "usd": ("Кол-во / Объем", 120),
+            "winprob": ("ML / PnL", 95),
+            "venue": ("Контур исполнения (Bybit V5)", 220),
         }
         for col, (text, width) in headers.items():
             self.j_tree.heading(col, text=text)
@@ -507,6 +507,48 @@ class AITradeDesktopApp:
 
         for item in self.j_tree.get_children():
             self.j_tree.delete(item)
+        # Сначала подтягиваем живые активные ордера и позиции с Bybit V5 (/v5/order/realtime и /v5/position/list)
+        if self.engine.client.api_key and self.engine.client.api_secret:
+            try:
+                for o in self.engine.client.get_open_orders():
+                    self.j_tree.insert(
+                        "",
+                        tk.END,
+                        values=(
+                            str(o.get("orderId", ""))[:8],
+                            f"ACTIVE ({o.get('orderStatus', 'New')})",
+                            o.get("symbol", ""),
+                            o.get("side", ""),
+                            f"{o.get('orderType', 'Limit')} ({o.get('timeInForce', 'GTC')})",
+                            o.get("price", ""),
+                            o.get("stopLoss", "—"),
+                            o.get("takeProfit", "—"),
+                            f"qty={o.get('qty', '')}",
+                            "OPEN ORDER",
+                            "BYBIT_V5_REALTIME_ORDER",
+                        ),
+                    )
+                for p_item in self.engine.client.get_open_positions():
+                    if float(p_item.get("size", 0) or 0) > 0:
+                        self.j_tree.insert(
+                            "",
+                            tk.END,
+                            values=(
+                                "POS",
+                                "OPEN POSITION",
+                                p_item.get("symbol", ""),
+                                p_item.get("side", ""),
+                                f"Leverage {p_item.get('leverage', '1')}x",
+                                p_item.get("avgPrice", ""),
+                                p_item.get("stopLoss", "—"),
+                                p_item.get("takeProfit", "—"),
+                                f"size={p_item.get('size', '')}",
+                                f"PnL=${p_item.get('unrealisedPnl', '0')}",
+                                "BYBIT_V5_POSITION_LIST",
+                            ),
+                        )
+            except Exception:
+                pass
         for row in journal:
             self.j_tree.insert(
                 "",

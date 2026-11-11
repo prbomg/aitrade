@@ -370,6 +370,64 @@ class BybitV5Client:
                 return {"status": "leverage_unchanged", "leverage": lev_str}
             raise
 
+    def get_instrument_lot_and_tick(self, symbol: str) -> Tuple[float, float, float]:
+        """
+        Запрашивает точную спецификацию контракта через /v5/market/instruments-info
+        (qtyStep, minOrderQty, tickSize) согласно стандарту Bybit OpenAPI V5.
+        """
+        cache = getattr(self, "_inst_cache", {})
+        if symbol in cache:
+            return cache[symbol]
+        try:
+            res = self._public_get("/v5/market/instruments-info", {"category": self.category, "symbol": symbol})
+            items = res.get("list", [])
+            if items:
+                info = items[0]
+                lot_f = info.get("lotSizeFilter", {})
+                px_f = info.get("priceFilter", {})
+                qty_step = float(lot_f.get("qtyStep", 0.01) or 0.01)
+                min_qty = float(lot_f.get("minOrderQty", qty_step) or qty_step)
+                tick_size = float(px_f.get("tickSize", 0.0001) or 0.0001)
+                cache[symbol] = (qty_step, min_qty, tick_size)
+                self._inst_cache = cache
+                return qty_step, min_qty, tick_size
+        except Exception:
+            pass
+        defaults = {
+            "BTCUSDT": (0.001, 0.001, 0.1),
+            "ETHUSDT": (0.01, 0.01, 0.01),
+            "SOLUSDT": (0.1, 0.1, 0.01),
+            "BNBUSDT": (0.01, 0.01, 0.1),
+            "XRPUSDT": (1.0, 1.0, 0.0001),
+            "ADAUSDT": (1.0, 1.0, 0.0001),
+            "DOGEUSDT": (1.0, 1.0, 0.00001),
+            "SUIUSDT": (1.0, 1.0, 0.0001),
+            "LINKUSDT": (0.1, 0.1, 0.001),
+            "AVAXUSDT": (0.1, 0.1, 0.01),
+            "NEARUSDT": (0.1, 0.1, 0.001),
+            "TONUSDT": (0.1, 0.1, 0.001),
+            "DOTUSDT": (0.1, 0.1, 0.001),
+            "APTUSDT": (0.01, 0.01, 0.001),
+            "ARBUSDT": (0.1, 0.1, 0.0001),
+            "OPUSDT": (0.1, 0.1, 0.0001),
+            "LTCUSDT": (0.1, 0.1, 0.01),
+            "ATOMUSDT": (0.1, 0.1, 0.001),
+            "INJUSDT": (0.1, 0.1, 0.001),
+            "FETUSDT": (1.0, 1.0, 0.0001),
+        }
+        return defaults.get(symbol, (0.1, 0.1, 0.0001))
+
+    @staticmethod
+    def _format_step(value: float, step: float) -> str:
+        from decimal import Decimal, ROUND_DOWN
+        d_val = Decimal(str(value))
+        d_step = Decimal(str(step))
+        quantized = (d_val / d_step).to_integral_value(rounding=ROUND_DOWN) * d_step
+        s = format(quantized, "f")
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
+        return s or "0"
+
     def place_demo_order(
         self,
         symbol: str,
@@ -379,8 +437,16 @@ class BybitV5Client:
         price: Optional[float] = None,
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
-        post_only: bool = True,
+        post_only: bool = False,
     ) -> Dict[str, Any]:
+        """
+        Отправляет ордер в Bybit Unified Demo Trading (POST /v5/order/create)
+        с автоматическим выравниванием qty по qtyStep и цен по tickSize.
+        """
+        qty_step, min_qty, tick_size = self.get_instrument_lot_and_tick(symbol)
+        safe_qty = max(qty, min_qty)
+        qty_str = self._format_step(safe_qty, qty_step)
+
         time_in_force = "PostOnly" if (order_type == "Limit" and post_only) else "GTC"
         if order_type == "Market":
             time_in_force = "IOC"
@@ -390,22 +456,33 @@ class BybitV5Client:
             "symbol": symbol,
             "side": side,
             "orderType": order_type,
-            "qty": f"{qty:.4f}".rstrip("0").rstrip("."),
+            "qty": qty_str,
             "timeInForce": time_in_force,
             "positionIdx": 0,
         }
         if order_type == "Limit" and price is not None:
-            payload["price"] = f"{price:.6f}".rstrip("0").rstrip(".")
+            payload["price"] = self._format_step(price, tick_size)
         if stop_loss is not None:
-            payload["stopLoss"] = f"{stop_loss:.6f}".rstrip("0").rstrip(".")
+            payload["stopLoss"] = self._format_step(stop_loss, tick_size)
             payload["slTriggerBy"] = "MarkPrice"
+            payload["tpslMode"] = "Full"
         if take_profit is not None:
-            payload["takeProfit"] = f"{take_profit:.6f}".rstrip("0").rstrip(".")
+            payload["takeProfit"] = self._format_step(take_profit, tick_size)
             payload["tpTriggerBy"] = "LastPrice"
+            payload["tpslMode"] = "Full"
 
         return self._private_request("POST", "/v5/order/create", payload)
 
+    def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Запрашивает активные неисполненные ордера на Bybit V5 (GET /v5/order/realtime)."""
+        params: Dict[str, Any] = {"category": self.category, "settleCoin": "USDT"}
+        if symbol:
+            params["symbol"] = symbol
+        res = self._private_request("GET", "/v5/order/realtime", params)
+        return res.get("list", [])
+
     def get_open_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Запрашивает открытые позиции на Bybit V5 (GET /v5/position/list)."""
         params: Dict[str, Any] = {"category": self.category, "settleCoin": "USDT"}
         if symbol:
             params["symbol"] = symbol

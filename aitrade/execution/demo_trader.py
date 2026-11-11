@@ -109,13 +109,13 @@ class BybitDemoExecutor:
                     price=signal.entry_price,
                     stop_loss=signal.stop_loss,
                     take_profit=signal.take_profit_1,
-                    post_only=(signal.order_type == "Limit"),
+                    post_only=False,
                 )
                 order_id = str(resp.get("orderId", order_id))
                 venue = "BYBIT_UNIFIED_DEMO_API"
                 status = "SUBMITTED_BYBIT_DEMO"
             except Exception as exc:
-                venue = f"LOCAL_FALLBACK ({type(exc).__name__})"
+                venue = f"LOCAL_FALLBACK ({str(exc)[:80]})"
 
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute(
