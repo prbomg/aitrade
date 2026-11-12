@@ -8,11 +8,13 @@
     <string>com.aitrade.controlcenter</string>
     <key>CFBundleName</key>
     <string>AItrade Control Center</string>
+    <key>CFBundleDisplayName</key>
+    <string>AItrade Control Center</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1</string>
     <key>LSUIElement</key>
-    <false/>
+    <true/>
 </dict>
 </plist>

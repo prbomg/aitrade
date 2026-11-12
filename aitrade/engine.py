@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
@@ -98,8 +99,16 @@ class AITradeCombineEngine:
         approved_signals: List[TradeSignal] = []
         rejected_signals: List[TradeSignal] = []
 
-        for sym in core_pairs:
-            ctx = self.build_market_context(sym, ticker_map, btc_15m)
+        max_workers = min(8, max(1, len(core_pairs)))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            contexts = list(
+                pool.map(
+                    lambda s: (s, self.build_market_context(s, ticker_map, btc_15m)),
+                    core_pairs,
+                )
+            )
+
+        for sym, ctx in contexts:
             screener_results.append(ctx.screener)
             if not ctx.screener.passed:
                 continue

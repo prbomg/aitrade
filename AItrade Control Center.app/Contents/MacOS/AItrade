@@ -1,4 +1,51 @@
 #!/bin/bash
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export TK_SILENCE_DEPRECATION=1
-cd "/Users/sergejrubcov/AItrade"
-/usr/bin/python3 "/Users/sergejrubcov/AItrade/gui_app.py" --demo-trade
+
+APP_DIR="/Users/sergejrubcov/AItrade"
+REPORT_FILE="$APP_DIR/dashboard_report.html"
+LOG_FILE="$APP_DIR/data/app_launch.log"
+
+mkdir -p "$APP_DIR/data"
+cd "$APP_DIR" || exit 1
+
+# 1. Мгновенно открываем существующий дашборд (за 0.1 сек, без ожидания сети)
+if [ -f "$REPORT_FILE" ]; then
+    /usr/bin/open "$REPORT_FILE"
+fi
+
+# 2. Показываем нативное окно выбора действия macOS (автовыбор через 6 сек — Скан + Bybit Demo)
+ACTION=$(/usr/bin/osascript -e '
+try
+    set dialogResult to display dialog "AItrade V5 Control Center запущен.\nДашборд открыт в браузере.\n\nВыберите режим обновления Bybit V5:" buttons {"Только Дашборд", "Обновить Скан", "Скан + Ордера Demo"} default button "Скан + Ордера Demo" with title "AItrade Control Center (Bybit V5)" giving up after 6
+    if gave up of dialogResult then
+        return "Скан + Ордера Demo"
+    else
+        return button returned of dialogResult
+    end if
+on error
+    return "Только Дашборд"
+end try
+' 2>/dev/null)
+
+if [ "$ACTION" = "Только Дашборд" ]; then
+    if [ ! -f "$REPORT_FILE" ]; then
+        /usr/bin/python3 "$APP_DIR/gui_app.py" >> "$LOG_FILE" 2>&1
+    fi
+    exit 0
+fi
+
+# 3. Запускаем параллельное сканирование Bybit V5 в фоне с уведомлениями macOS
+(
+    if [ "$ACTION" = "Скан + Ордера Demo" ]; then
+        /usr/bin/osascript -e 'display notification "Параллельное сканирование 20 пар и отправка топ-сигналов в Bybit Demo..." with title "AItrade Control Center"' 2>/dev/null
+        /usr/bin/python3 "$APP_DIR/gui_app.py" --demo-trade >> "$LOG_FILE" 2>&1
+        /usr/bin/osascript -e 'display notification "Дашборд и ордера Bybit V5 Demo успешно обновлены!" with title "AItrade Control Center"' 2>/dev/null
+    else
+        /usr/bin/osascript -e 'display notification "Параллельное сканирование 20 пар Bybit V5..." with title "AItrade Control Center"' 2>/dev/null
+        /usr/bin/python3 "$APP_DIR/gui_app.py" >> "$LOG_FILE" 2>&1
+        /usr/bin/osascript -e 'display notification "Скан рынка Bybit V5 завершен, дашборд обновлен!" with title "AItrade Control Center"' 2>/dev/null
+    fi
+) &
+
+exit 0
