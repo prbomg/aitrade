@@ -136,8 +136,20 @@ class AITradeCombineEngine:
 
         screener_results.sort(key=lambda r: r.in_play_score, reverse=True)
 
+        live_orders = []
+        live_positions = []
+        if self.client.api_key and self.client.api_secret:
+            try:
+                live_orders = self.client.get_open_orders()
+                raw_pos = self.client.get_open_positions()
+                live_positions = [p for p in raw_pos if float(p.get("size", 0) or 0) > 0]
+            except Exception:
+                pass
+
         return {
             "data_source": self.client.last_data_source,
+            "live_open_orders": live_orders,
+            "live_open_positions": live_positions,
             "network_note": self.client.last_network_error,
             "account_equity_usdt": equity_usd,
             "total_pairs_scanned": len(core_pairs),

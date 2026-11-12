@@ -1,3 +1,4 @@
 #!/bin/bash
+export TK_SILENCE_DEPRECATION=1
 cd "/Users/sergejrubcov/AItrade"
-exec /usr/bin/python3 "/Users/sergejrubcov/AItrade/gui_app.py"
+/usr/bin/python3 "/Users/sergejrubcov/AItrade/gui_app.py" --demo-trade

@@ -141,6 +141,40 @@ def generate_html_dashboard(
         """
 
     j_rows_html = ""
+    for o in scan_data.get("live_open_orders", []):
+        o_badge = "<span class='pill pill-long'>LONG (BYBIT LIVE ORDER)</span>" if o.get("side") == "Buy" else "<span class='pill pill-short'>SHORT (BYBIT LIVE ORDER)</span>"
+        j_rows_html += f"""
+        <tr style="background:rgba(16,185,129,0.06);">
+          <td><strong>{str(o.get('orderId', ''))[:8]}</strong></td>
+          <td>ACTIVE ({o.get('orderStatus', 'New')})</td>
+          <td><strong>{o.get('symbol', '')}</strong></td>
+          <td>{o_badge}</td>
+          <td>{o.get('orderType', 'Limit')} ({o.get('timeInForce', 'GTC')})</td>
+          <td>{o.get('price', '')}</td>
+          <td class="red">{o.get('stopLoss') or '—'}</td>
+          <td class="green">{o.get('takeProfit') or '—'}</td>
+          <td><strong>qty={o.get('qty', '')}</strong></td>
+          <td><span class="pill pill-win">В СТАКАНЕ BYBIT</span></td>
+          <td><code>/v5/order/realtime</code></td>
+        </tr>
+        """
+    for p in scan_data.get("live_open_positions", []):
+        p_badge = "<span class='pill pill-long'>LONG POSITION</span>" if p.get("side") == "Buy" else "<span class='pill pill-short'>SHORT POSITION</span>"
+        j_rows_html += f"""
+        <tr style="background:rgba(59,130,246,0.08);">
+          <td><strong>POS</strong></td>
+          <td>OPEN POSITION</td>
+          <td><strong>{p.get('symbol', '')}</strong></td>
+          <td>{p_badge}</td>
+          <td>Leverage {p.get('leverage', '1')}x</td>
+          <td>{p.get('avgPrice', '')}</td>
+          <td class="red">{p.get('stopLoss') or '—'}</td>
+          <td class="green">{p.get('takeProfit') or '—'}</td>
+          <td><strong>size={p.get('size', '')}</strong></td>
+          <td><span class="pill pill-edge">PnL: ${p.get('unrealisedPnl', '0')}</span></td>
+          <td><code>/v5/position/list</code></td>
+        </tr>
+        """
     for row in journal_rows[:30]:
         s_badge = (
             "<span class='pill pill-long'>LONG</span>"
