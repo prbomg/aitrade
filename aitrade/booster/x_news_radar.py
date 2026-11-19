@@ -66,7 +66,8 @@ class XNewsSentimentRadar:
         "liquidated": -20, "phishing": -35, "stolen": -45,
     }
 
-    PANIC_TRIGGERS = ["hack", "hacked", "exploit", "drained", "insolvency", "bankrupt", "binance halt", "bybit halt"]
+    # Глобальный PANIC только по системным биржевым инцидентам; монетные hack/exploit привязаны к тикеру
+    PANIC_TRIGGERS = ["insolvency", "bankrupt", "bankruptcy", "binance halt", "bybit halt", "exchange halt"]
 
     def __init__(self) -> None:
         self.enabled: bool = True
@@ -154,7 +155,7 @@ class XNewsSentimentRadar:
                 active_bear_words.append(w)
 
         for pw in self.PANIC_TRIGGERS:
-            if pw in active_bear_words and score <= -35:
+            if (pw in active_bear_words or re.search(r"\b" + re.escape(pw) + r"\b", t_low)) and score <= -35:
                 is_panic = True
                 break
 

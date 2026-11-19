@@ -301,7 +301,9 @@ class BybitV5DirectController:
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
             hold_min=480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (360 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))
-            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.7','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
+            _rm=getattr(owner,'release_manifest',None)
+            rel_ver=_rm.get('version','2026.11.19-intraday.8') if isinstance(_rm,dict) else '2026.11.19-intraday.8'
+            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
             if hasattr(self.spm,'ensure_isolated_margin') and 'FUNDING_CARRY' not in str(strategy_id):
                 iso_res=self.spm.ensure_isolated_margin(symbol,int(leverage))
                 if isinstance(iso_res,dict) and iso_res.get('ok') is False:
@@ -364,6 +366,7 @@ class ControlCenterState:
         if a_creds.get("isolated") and a_creds.get("api_key"):
             self.bybit.ledger = self.autotrade_ledger
             self.bybit.spm.ledger = self.autotrade_ledger
+            self.bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_autotrade.json"
             self.bybit.apply_credentials(a_creds["api_key"], a_creds["api_secret"], a_creds["base_url"])
         elif active_creds.get("api_key"):
             self.bybit.apply_credentials(active_creds["api_key"], active_creds["api_secret"], active_creds["base_url"])
@@ -371,6 +374,7 @@ class ControlCenterState:
             self.booster_bybit = BybitV5DirectController(self.engine)
             self.booster_bybit.ledger = self.booster_ledger
             self.booster_bybit.spm.ledger = self.booster_ledger
+            self.booster_bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_booster.json"
             self.booster_bybit.owner = self
             self.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
         else:
@@ -421,7 +425,11 @@ class ControlCenterState:
         self._snapshot_error = "Первый снимок загружается"
         self._snapshot_lock = threading.Lock()
         self.entry_paused = threading.Event()
-        if not (self.autopilot_core_enabled or self.autopilot_booster_enabled): self.entry_paused.set()
+        self.entry_pause_reason = ""
+        self.entry_paused_at = 0.0
+        if not (self.autopilot_core_enabled or self.autopilot_booster_enabled):
+            self.entry_paused.set()
+            self.entry_pause_reason = "Автопилоты выключены при старте"
         self.scan_status = {"running":False,"last_error":"","last_success":0.,"last_attempt":0.,"heartbeat":time.time(),"failed_cycles":0}
         self._scan_executor = ThreadPoolExecutor(max_workers=1)
         self._manual_future = None
@@ -590,13 +598,14 @@ class ControlCenterState:
         return True
 
     def _run_guard_cycle_for_controller(self, ctrl: BybitV5DirectController) -> set:
-        ctrl.get_closed_pnl()
         ctrl.spm.split_tp_enabled = self.split_tp_enabled
         actions = ctrl.spm.audit_and_protect_open_positions()
         for act in actions:
             if not act.get("ok"):
                 self.add_log("ОШИБКА ЗАЩИТЫ: " + str(act))
                 self.entry_paused.set()
+                self.entry_pause_reason = "Ошибка защиты позиции: " + str(act.get("action", "UNKNOWN"))
+                self.entry_paused_at = time.time()
             if act.get("ok"):
                 self.add_log("🛡 Smart Guard (фон): " + str(act.get("action")) + " для " + str(act.get("symbol")))
 
@@ -681,6 +690,11 @@ class ControlCenterState:
                             "⏱ Time-Stop сработал для " + sym + ": сделка висела " + str(age_min)
                             + " мин без импульса (" + "{:+.2f}%".format(move_pct) + ") — отправлена заявка на закрытие."
                         )
+        # Синхронизация истории вынесена ПОСЛЕ защиты позиций и не блокирует критический цикл
+        try:
+            ctrl.get_closed_pnl()
+        except Exception as h_exc:
+            self.add_log("⚠️ [Guard History] Не удалось обновить историю сделок (защита позиций выполнена): " + str(h_exc)[:150])
         return active_syms
 
     def _smart_guard_loop(self) -> None:
@@ -692,15 +706,29 @@ class ControlCenterState:
             try:
                 self._check_dead_mans_switch()
                 active_syms: set = set()
+                ctrl_errors: List[str] = []
                 for ctrl in self._active_controllers():
-                    active_syms |= self._run_guard_cycle_for_controller(ctrl)
+                    try:
+                        active_syms |= self._run_guard_cycle_for_controller(ctrl)
+                    except Exception as c_exc:
+                        err_txt = str(c_exc)[:180]
+                        ctrl_errors.append(err_txt)
+                        self.add_log("Ошибка Smart Guard (контур): " + err_txt)
                 for old_s in list(self.position_opened_ts.keys()):
                     if old_s not in active_syms:
                         del self.position_opened_ts[old_s]
-                self.guard_status.update(last_success=time.time(),last_error='')
+                if ctrl_errors:
+                    self.guard_status['last_error'] = " | ".join(ctrl_errors)[:200]
+                    self.entry_paused.set()
+                    self.entry_pause_reason = "Ошибка Smart Guard: " + ctrl_errors[0][:120]
+                    self.entry_paused_at = time.time()
+                else:
+                    self.guard_status.update(last_success=time.time(),last_error='')
             except Exception as exc:
                 self.guard_status['last_error']=str(exc)[:200]
                 self.entry_paused.set()
+                self.entry_pause_reason = "Ошибка Smart Guard: " + str(exc)[:120]
+                self.entry_paused_at = time.time()
                 self.add_log("Ошибка Smart Guard: " + str(exc)[:200])
             finally:self.guard_status['heartbeat']=time.time()
 
@@ -759,7 +787,7 @@ class ControlCenterState:
         if not liveness:reasons.append('Остановлен или завис рабочий поток')
         return {"ok":liveness and not reasons,"liveness_ok":liveness,"version":getattr(self,"release_manifest",{}).get("version","2026.11.19-intraday.5"),
                 "build_sha256":getattr(self,"release_manifest",{}).get("build_sha256"),
-                "autopilot_alive":alive,"entry_paused":self.entry_paused.is_set(),"scan":scan,
+                "autopilot_alive":alive,"entry_paused":self.entry_paused.is_set(),"entry_pause_reason":getattr(self,"entry_pause_reason",""),"entry_paused_at":getattr(self,"entry_paused_at",0.0),"scan":scan,
                 "guard":guard,"snapshot_age_sec":round(age,1) if age is not None else None,
                 "snapshot_error":self._snapshot_error,"readiness_errors":reasons}
 
@@ -907,7 +935,7 @@ class ControlCenterState:
                                 s1["symbol"], side, "Limit", adj_qty,
                                 float(s1["entry_price"]), float(s1.get("take_profit") or s1["take_profit_2"]), float(s1["stop_loss"]),
                                 sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,
-                                signal_context={"features": s1.get("features", {}), "ml_score": s1.get("ml_win_probability"), "cal_weight": w_mult, "version": "intraday.2"}
+                                signal_context={"features": s1.get("features", {}), "ml_score": s1.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", "2026.11.19-intraday.8")}
                             )
                             if r.get("ok"):
                                 booster_slots -= 1
@@ -951,7 +979,7 @@ class ControlCenterState:
                     r = self.bybit.place_order(
                         sig["symbol"], side, sig_otype, float(sig.get("position_size_coins", 0) or 0),
                         float(sig.get("entry_price", 0) or 0), float(sig.get("take_profit", 0) or 0),
-                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + str(sig.get("strategy_id", "UNKNOWN")),signal_context={"features":sig.get("features",{}),"ml_score":sig.get("ml_win_probability"),"cal_weight":sig.get("cal_weight",1.0),"version":"intraday.2"}
+                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + str(sig.get("strategy_id", "UNKNOWN")),signal_context={"features":sig.get("features",{}),"ml_score":sig.get("ml_win_probability"),"cal_weight":sig.get("cal_weight",1.0),"version":getattr(self, "release_manifest", {}).get("version", "2026.11.19-intraday.8")}
                     )
                     if not r.get("ok"): self.add_log("Вход Core отклонён: " + str(r.get("retMsg")))
                     if r.get("ok"):
@@ -1130,8 +1158,15 @@ def create_wsgi_app(state: ControlCenterState):
                             state.booster_bybit = BybitV5DirectController(state.engine)
                             state.booster_bybit.ledger = state.booster_ledger
                             state.booster_bybit.spm.ledger = state.booster_ledger
+                            state.booster_bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_booster.json"
                             state.booster_bybit.owner = state
                         state.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
+                    a_creds = state.env_manager.get_account_credentials("autotrade")
+                    if a_creds.get("isolated") and a_creds.get("api_key"):
+                        state.bybit.ledger = state.autotrade_ledger
+                        state.bybit.spm.ledger = state.autotrade_ledger
+                        state.bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_autotrade.json"
+                        state.bybit.apply_credentials(a_creds["api_key"], a_creds["api_secret"], a_creds["base_url"])
                     state.add_log("🔐 Ключи субаккаунта [" + acc.upper() + "/" + t_mode.upper() + "] сохранены (" + str(resp.get("masked_key")) + ").")
                 elif act == "run_checklist":
                     t_mode = data.get("target_mode", "mainnet")

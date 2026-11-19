@@ -10,7 +10,8 @@ from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
 class SmartPositionManager:
     def __init__(self, api_key: str, api_secret: str, base_url: str = "https://api-demo.bybit.com",
-                 breakeven_trigger_pct: float = 0.55, trailing_step_pct: float = 0.40, fee_buffer_pct: float = 0.0012) -> None:
+                 breakeven_trigger_pct: float = 0.55, trailing_step_pct: float = 0.40, fee_buffer_pct: float = 0.0012,
+                 guard_path: Any = None) -> None:
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = base_url.rstrip("/")
@@ -18,7 +19,7 @@ class SmartPositionManager:
         self.trailing_step_pct = trailing_step_pct
         self.fee_buffer_pct = fee_buffer_pct
         self.guard_lock = threading.RLock()
-        self.guard_path = BASE_DIR / "data" / "position_guard.json"
+        self.guard_path = guard_path if guard_path is not None else (BASE_DIR / "data" / "position_guard.json")
         self.split_tp_enabled = True
         self.ledger = None
         self._spec_cache: Dict[str, Dict[str, float]] = {}
@@ -130,8 +131,8 @@ class SmartPositionManager:
             # 110026: уже Isolated
             if exc.code == 110026 or "110026" in str(exc):
                 return {"ok": True, "symbol": symbol, "mode": "ISOLATED", "retMsg": "Already isolated"}
-            # UTA 2.0 не поддерживает /v5/position/switch-isolated -> используем account-level /v5/account/set-margin-mode
-            if exc.code in (100028, 110044) or "uta" in str(exc).lower() or "unified" in str(exc).lower():
+            # Только явная ошибка UTA 2.0 (100028); 110044 (нехватка маржи) не должна менять режим всего аккаунта
+            if exc.code == 100028 or "uta" in str(exc).lower() or "unified" in str(exc).lower():
                 try:
                     u_resp = self.signed_post("/v5/account/set-margin-mode", {"setMarginMode": "ISOLATED_MARGIN"})
                     if u_resp.get("retCode") == 0:
