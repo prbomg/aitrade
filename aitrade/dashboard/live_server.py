@@ -206,15 +206,18 @@ class BybitV5DirectController:
             if price is not None and (not math.isfinite(float(price)) or float(price)<=0):raise ValueError('Некорректная цена')
             vals=[qty,tp,sl]
             if any(v is None or not math.isfinite(float(v)) or float(v)<=0 for v in vals):raise ValueError('Обязательны положительные qty, TP и SL')
-            if not 1<=int(leverage)<=3:raise ValueError('Плечо ограничено 3x')
+            booster_obj=getattr(owner,'booster',None) if owner else None
+            b_state=getattr(booster_obj,'state',None)
+            is_isolated_booster=bool(strategy_id.startswith('BOOSTER') and isinstance(b_state,dict) and b_state.get('isolated_subaccount'))
+            max_lev_allowed=5 if is_isolated_booster else 3
+            if not 1<=int(leverage)<=max_lev_allowed:raise ValueError(f'Плечо ограничено {max_lev_allowed}x')
             self.reconcile_pending()
             if self.ledger.unresolved(symbol):raise ValueError('Есть неподтверждённая заявка; требуется сверка')
             positions=self.get_positions();orders=[o for o in self.get_open_orders() if not o.get('reduceOnly')]
             busy={p['symbol'] for p in positions}|{o['symbol'] for o in orders}
-            if symbol in busy or len(busy)>=3:raise ValueError('Лимит позиций/заявок или повторный символ')
+            max_busy=2 if is_isolated_booster else 3
+            if symbol in busy or len(busy)>=max_busy:raise ValueError('Лимит позиций/заявок или повторный символ')
             midnight=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()*1000
-            booster_obj=getattr(owner,'booster',None) if owner else None
-            b_state=getattr(booster_obj,'state',None)
             if isinstance(b_state,dict):
                 reset_ms=max(int(b_state.get('limits_reset_at_ms',0) or 0),int(b_state.get('started_at_ms',0) or 0))
                 cutoff_ms=max(midnight,float(reset_ms))
@@ -223,16 +226,20 @@ class BybitV5DirectController:
                 cutoff_ms=midnight
                 training_mode=False
             if not training_mode and self.ledger.today_count(since_ts=cutoff_ms/1000.0)>=10:raise ValueError('Лимит 10 входов в день')
-            capital=min(1000.,self.get_account_summary()['usdt_balance'])
+            acct_bal=self.get_account_summary()['usdt_balance']
+            capital=acct_bal if is_isolated_booster else min(1000.,acct_bal)
+            b_metrics_live=None
             if strategy_id.startswith('BOOSTER') and booster_obj:
-                metrics=booster_obj.compute_metrics(self.get_closed_pnl(),positions)
-                if metrics.get('goal_reached'):raise ValueError('Цель кампании достигнута; новые входы остановлены')
-                capital=min(capital,metrics['risk_capital_usd'])
+                b_metrics_live=booster_obj.compute_metrics(self.get_closed_pnl(),positions)
+                if b_metrics_live.get('goal_reached'):raise ValueError('Цель кампании достигнута; новые входы остановлены')
+                capital=min(capital,b_metrics_live['risk_capital_usd'])
             if capital<=0:raise ValueError('Нет подтверждённого капитала')
             daily=sum(float(c['closedPnl']) for c in self.get_closed_pnl() if int(c['updatedTime'])>=cutoff_ms)
             upnl=sum(float(p.get('unrealisedPnl') or 0) for p in positions)
-            if not training_mode and upnl<=-capital*.01:raise ValueError('Плавающий убыток > 1%: новые входы заблокированы')
-            if not training_mode and daily+min(upnl,0)<=-capital*.03:raise ValueError('Дневной лимит -3%: новые входы заблокированы')
+            daily_cap_frac=0.08 if is_isolated_booster else 0.03
+            upnl_cap_frac=0.04 if is_isolated_booster else 0.01
+            if not training_mode and upnl<=-capital*upnl_cap_frac:raise ValueError(f'Плавающий убыток > {int(upnl_cap_frac*100)}%: новые входы заблокированы')
+            if not training_mode and daily+min(upnl,0)<=-capital*daily_cap_frac:raise ValueError(f'Дневной лимит -{int(daily_cap_frac*100)}%: новые входы заблокированы')
             if owner:
                 bid,ask=owner.ws_hub.get_bbo(symbol,5);ref=ask if side=='Buy' else bid
                 spread_bps=((ask-bid)/((ask+bid)*0.5))*10000.0 if (bid>0 and ask>0) else 0.0
@@ -253,18 +260,23 @@ class BybitV5DirectController:
             if price and abs(float(price)/ref-1)>max_dev:raise ValueError('Сигнал устарел: цена изменилась')
             ref=float(price) if order_type=='Limit' and price else ref
             if not (sl<ref<tp if side=='Buy' else tp<ref<sl):raise ValueError('Неверное расположение SL/TP')
-            if abs(ref-sl)/ref<0.0055:raise ValueError('Стоп-лосс уже 0.55%: издержки съедают R:R')
-            min_rr_req=0.50 if 'S3_VWAP_RANGE' in str(strategy_id) else 1.5
+            min_sl_req=0.0080 if 'S3_VWAP_RANGE' in str(strategy_id) else 0.0055
+            if abs(ref-sl)/ref<min_sl_req:raise ValueError(f'Стоп-лосс уже {min_sl_req*100:.2f}%: издержки съедают R:R')
+            min_rr_req=1.15 if 'S3_VWAP_RANGE' in str(strategy_id) else 1.5
             if abs(tp-ref)/abs(ref-sl)<min_rr_req:raise ValueError(f'R:R ниже {min_rr_req}')
             spec=self.spm.get_spec(symbol)
             sl=float(self.spm.fmt_step(sl,spec['tick_size'],False));tp=float(self.spm.fmt_step(tp,spec['tick_size'],False))
             if not (sl<ref<tp if side=='Buy' else tp<ref<sl):raise ValueError('SL/TP после округления невалидны')
             risk_per_coin=abs(ref-sl)+ref*(.0011+.0015+.0028)
             c_w=float((signal_context or {}).get('cal_weight',1.0) or 1.0)
-            risk_frac=max(0.0035,min(0.0070,0.005*c_w)) if (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) else 0.005
+            if is_isolated_booster and b_metrics_live:
+                risk_frac=max(0.01,min(0.045,(float(b_metrics_live.get('effective_risk_pct',4.0))/100.0)*min(1.0,c_w)))
+            else:
+                risk_frac=max(0.0035,min(0.0070,0.005*c_w)) if (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) else 0.005
             maxqty=capital*risk_frac/risk_per_coin
             used_notional=sum(float(p['size'])*float(p.get('markPrice') or p['avgPrice']) for p in positions)+sum(float(o.get('leavesQty') or o['qty'])*float(o.get('price') or 0) for o in orders)
-            available_notional=max(0.,capital*3-used_notional)
+            notional_mult=5.0 if is_isolated_booster else 3.0
+            available_notional=max(0.,capital*notional_mult-used_notional)
             qty=float(self.spm.fmt_step(min(float(qty),maxqty,available_notional/ref,spec['max_qty']),spec['qty_step'],True))
             if qty<spec['min_qty'] or qty*ref<max(spec['min_notional'],24):raise ValueError('Размер после ограничения риска ниже минимума')
             totalrisk=qty*risk_per_coin
@@ -276,7 +288,8 @@ class BybitV5DirectController:
                 ep=float(o.get('price') or 0);osl=float(o.get('stopLoss') or 0)
                 if not ep or not osl:raise ValueError('Непроверенный риск активной заявки')
                 totalrisk+=float(o.get('leavesQty') or o['qty'])*(abs(ep-osl)+ep*.0054)
-            if totalrisk>capital*.02:raise ValueError('Совокупный риск выше 2%')
+            total_risk_cap=0.07 if is_isolated_booster else 0.02
+            if totalrisk>capital*total_risk_cap:raise ValueError(f'Совокупный риск выше {int(total_risk_cap*100)}%')
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
             self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.2','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':360 if 'S1_TREND_RETEST' in strategy_id else (240 if 'S3_VWAP_RANGE' in strategy_id else (180 if strategy_id.startswith('BOOSTER') else 0))}})
@@ -334,10 +347,19 @@ class ControlCenterState:
         self.ml_calibrator = AdaptiveMLCalibrator(BASE_DIR / "data")
         self.x_radar = XNewsSentimentRadar()
         self.env_manager = BybitEnvManager(BASE_DIR / "data", self.engine.client.api_key, self.engine.client.api_secret)
-        self.booster.state["isolated_subaccount"] = bool(self.env_manager.get_account_credentials("booster").get("isolated", False))
+        b_creds = self.env_manager.get_account_credentials("booster")
+        self.booster.state["isolated_subaccount"] = bool(b_creds.get("isolated", False))
         active_creds = self.env_manager.get_active_credentials()
         if active_creds.get("api_key"):
             self.bybit.apply_credentials(active_creds["api_key"], active_creds["api_secret"], active_creds["base_url"])
+        if b_creds.get("isolated") and b_creds.get("api_key"):
+            self.booster_bybit = BybitV5DirectController(self.engine)
+            self.booster_bybit.ledger = self.booster_ledger
+            self.booster_bybit.spm.ledger = self.booster_ledger
+            self.booster_bybit.owner = self
+            self.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
+        else:
+            self.booster_bybit = self.bybit
         self.backtest_cache: Dict[str, Any] = {}
         self.last_scan: Dict[str, Any] = {}
 
@@ -495,6 +517,26 @@ class ControlCenterState:
             except Exception as exc:self.add_log('Ошибка обновления новостей: '+str(exc)[:150])
             time.sleep(60)
 
+    def _check_dead_mans_switch(self) -> int:
+        """Dead-man's switch: при потере WS-связи > 30с отменяет все входные лимитные ордера (не reduceOnly)."""
+        if time.time() - getattr(self, "started_at", 0.0) < 30.0:
+            return 0
+        ws_sum = self.ws_hub.get_summary()
+        age = float(ws_sum.get("last_msg_age_sec", -1) or -1)
+        disconnected = (not bool(ws_sum.get("connected", False))) or (age > 30.0)
+        if not disconnected:
+            return 0
+        cancelled = 0
+        for o in self.bybit.get_open_orders():
+            if bool(o.get("reduceOnly")):
+                continue
+            res = self.bybit.cancel_order(str(o.get("symbol", "")), str(o.get("orderId", "")))
+            if res.get("ok"):
+                cancelled += 1
+        if cancelled > 0:
+            self.add_log(f"🚨 [Dead-Man Switch] Потеря WS ({age:.0f}с) — отменено {cancelled} входных лимитных ордеров!")
+        return cancelled
+
     def _smart_guard_loop(self) -> None:
         while True:
             time.sleep(5)
@@ -502,6 +544,7 @@ class ControlCenterState:
             if not self.smart_guard_enabled:
                 continue
             try:
+                self._check_dead_mans_switch()
                 self.bybit.get_closed_pnl()
                 self.bybit.spm.split_tp_enabled = self.split_tp_enabled
                 actions = self.bybit.spm.audit_and_protect_open_positions()
@@ -786,7 +829,8 @@ class ControlCenterState:
                             w_mult = float(s1.get("cal_weight", 1.0) or 1.0)
                             adj_qty = round(sizing["qty_coins"] * w_mult, 6)
                             strat_code = str(s1.get("strategy_id", "S1_TREND_RETEST"))
-                            r = self.bybit.place_order(
+                            b_ctrl = getattr(self, "booster_bybit", self.bybit)
+                            r = b_ctrl.place_order(
                                 s1["symbol"], side, "Limit", adj_qty,
                                 float(s1["entry_price"]), float(s1.get("take_profit") or s1["take_profit_2"]), float(s1["stop_loss"]),
                                 sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,

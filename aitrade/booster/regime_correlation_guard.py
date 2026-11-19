@@ -24,8 +24,8 @@ class RegimeAndCorrelationGuard:
         self.enabled: bool = True
         self.max_same_sector: int = 1
         self.max_same_direction_total: int = 2
-        self.btc_dump_threshold_5m_pct: float = -0.35
-        self.btc_pump_threshold_5m_pct: float = 0.35
+        self.btc_dump_threshold_5m_pct: float = -1.25
+        self.btc_pump_threshold_5m_pct: float = 1.25
         self.time_stop_enabled: bool = True
         self.time_stop_minutes: int = 45
         self.time_stop_band_pct: float = 0.25

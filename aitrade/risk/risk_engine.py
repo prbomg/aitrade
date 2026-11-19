@@ -130,7 +130,7 @@ class RiskEngine:
         signal.estimated_l2_slippage_bps = slippage_bps
         signal.risk_amount_usd = round(actual_risk_usd, 2)
 
-        req_rr = 0.50 if signal.strategy_id == "S3_VWAP_RANGE" else self.min_rr
+        req_rr = 1.15 if signal.strategy_id == "S3_VWAP_RANGE" else self.min_rr
         if signal.reward_to_risk_tp1 < req_rr:
             signal.debate_verdict = "REJECTED"
             signal.debate_summary += f" [RiskEngine: R:R={signal.reward_to_risk_tp1:.2f} < {req_rr:.2f}]"
