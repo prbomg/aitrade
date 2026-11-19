@@ -411,6 +411,22 @@ class BybitV5Client:
                 raise
             return self._synthetic_recent_trades(symbol, limit)
 
+    def get_funding_history(self, symbol: str, limit: int = 12) -> List[float]:
+        """Возвращает хронологический список последних 8h ставок финансирования (/v5/market/funding/history)."""
+        params = {
+            "category": self.category,
+            "symbol": symbol,
+            "limit": min(limit, 200),
+        }
+        try:
+            res = self._public_get("/v5/market/funding/history", params)
+            rows = res.get("list", [])
+            return [float(r.get("fundingRate", 0.0) or 0.0) for r in reversed(rows)]
+        except Exception:
+            if not self.allow_offline_fallback:
+                return []
+            return [0.0001] * min(limit, 9)
+
     # -------------------------------------------------------------------------
     # Приватные методы Bybit Unified Demo Trading (https://api-demo.bybit.com)
     # -------------------------------------------------------------------------

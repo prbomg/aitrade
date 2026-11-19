@@ -10,7 +10,7 @@ from wsgiref.simple_server import WSGIServer
 from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from wsgiref.simple_server import make_server, WSGIRequestHandler
 
 from aitrade.backtest.walk_forward import WalkForwardBacktester
@@ -271,8 +271,15 @@ class BybitV5DirectController:
             c_w=float((signal_context or {}).get('cal_weight',1.0) or 1.0)
             if is_isolated_booster and b_metrics_live:
                 risk_frac=max(0.01,min(0.045,(float(b_metrics_live.get('effective_risk_pct',4.0))/100.0)*min(1.0,c_w)))
+            elif strategy_id.startswith('CORE'):
+                base_core_r=float(self.engine.settings.get('risk',{}).get('risk_per_trade_pct',0.005) or 0.005)
+                dd_mult=1.0
+                if owner and hasattr(owner,'check_autotrade_drawdown'):
+                    dd_mult,dd_stop=owner.check_autotrade_drawdown(acct_bal)
+                    if dd_stop and not training_mode:raise ValueError('Просадка Автотрейдинга >= 15% от пика: новые входы остановлены')
+                risk_frac=max(0.0035,min(0.010,base_core_r*c_w*dd_mult))
             else:
-                risk_frac=max(0.0035,min(0.0070,0.005*c_w)) if (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) else 0.005
+                risk_frac=max(0.0035,min(0.0070,0.005*c_w)) if strategy_id.startswith('BOOSTER') else 0.005
             maxqty=capital*risk_frac/risk_per_coin
             used_notional=sum(float(p['size'])*float(p.get('markPrice') or p['avgPrice']) for p in positions)+sum(float(o.get('leavesQty') or o['qty'])*float(o.get('price') or 0) for o in orders)
             notional_mult=5.0 if is_isolated_booster else 3.0
@@ -292,7 +299,8 @@ class BybitV5DirectController:
             if totalrisk>capital*total_risk_cap:raise ValueError(f'Совокупный риск выше {int(total_risk_cap*100)}%')
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
-            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.2','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':360 if 'S1_TREND_RETEST' in strategy_id else (240 if 'S3_VWAP_RANGE' in strategy_id else (180 if strategy_id.startswith('BOOSTER') else 0))}})
+            hold_min=480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (360 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))
+            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.5','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
             if hasattr(self.spm,'ensure_isolated_margin') and 'FUNDING_CARRY' not in str(strategy_id):
                 try:self.spm.ensure_isolated_margin(symbol,int(leverage))
                 except Exception:pass
@@ -364,6 +372,7 @@ class ControlCenterState:
         self.last_scan: Dict[str, Any] = {}
 
         saved = self._load_persisted_state()
+        self.autotrade_hwm = float(saved.get("autotrade_hwm", 0.0) or 0.0)
         self.autopilot_booster_enabled = bool(saved.get("autopilot_booster_enabled", False))
         self.autopilot_core_enabled = bool(saved.get("autopilot_core_enabled", False))
         self.autopilot_interval_sec = int(saved.get("autopilot_interval_sec", 300) or 300)
@@ -434,6 +443,7 @@ class ControlCenterState:
 
     def save_persisted_state(self) -> None:
         payload = {
+            "autotrade_hwm": self.autotrade_hwm,
             "autopilot_booster_enabled": self.autopilot_booster_enabled,
             "autopilot_core_enabled": self.autopilot_core_enabled,
             "autopilot_interval_sec": self.autopilot_interval_sec,
@@ -517,8 +527,29 @@ class ControlCenterState:
             except Exception as exc:self.add_log('Ошибка обновления новостей: '+str(exc)[:150])
             time.sleep(60)
 
+    def _active_controllers(self) -> List[BybitV5DirectController]:
+        ctrls = [self.bybit]
+        b_ctrl = getattr(self, "booster_bybit", None)
+        if b_ctrl is not None and b_ctrl is not self.bybit:
+            ctrls.append(b_ctrl)
+        return ctrls
+
+    def check_autotrade_drawdown(self, equity_usd: float) -> Tuple[float, bool]:
+        """3-уровневый Kill-Switch Автотрейдинга: -8% от HWM -> риск 0.5x, -15% -> полная остановка."""
+        eq = float(equity_usd or 0.0)
+        if eq <= 0:
+            return 1.0, False
+        hwm = max(float(getattr(self, "autotrade_hwm", 0.0) or 0.0), eq)
+        self.autotrade_hwm = hwm
+        dd_pct = ((hwm - eq) / max(hwm, 1e-9)) * 100.0
+        if dd_pct >= 15.0:
+            return 0.0, True
+        if dd_pct >= 8.0:
+            return 0.5, False
+        return 1.0, False
+
     def _check_dead_mans_switch(self) -> int:
-        """Dead-man's switch: при потере WS-связи > 30с отменяет все входные лимитные ордера (не reduceOnly)."""
+        """Dead-man's switch: при потере WS-связи > 30с отменяет все входные лимитные ордера на всех контурах."""
         if time.time() - getattr(self, "started_at", 0.0) < 30.0:
             return 0
         ws_sum = self.ws_hub.get_summary()
@@ -527,12 +558,13 @@ class ControlCenterState:
         if not disconnected:
             return 0
         cancelled = 0
-        for o in self.bybit.get_open_orders():
-            if bool(o.get("reduceOnly")):
-                continue
-            res = self.bybit.cancel_order(str(o.get("symbol", "")), str(o.get("orderId", "")))
-            if res.get("ok"):
-                cancelled += 1
+        for ctrl in self._active_controllers():
+            for o in ctrl.get_open_orders():
+                if bool(o.get("reduceOnly")):
+                    continue
+                res = ctrl.cancel_order(str(o.get("symbol", "")), str(o.get("orderId", "")))
+                if res.get("ok"):
+                    cancelled += 1
         if cancelled > 0:
             self.add_log(f"🚨 [Dead-Man Switch] Потеря WS ({age:.0f}с) — отменено {cancelled} входных лимитных ордеров!")
         return cancelled
@@ -545,15 +577,16 @@ class ControlCenterState:
                 continue
             try:
                 self._check_dead_mans_switch()
-                self.bybit.get_closed_pnl()
-                self.bybit.spm.split_tp_enabled = self.split_tp_enabled
-                actions = self.bybit.spm.audit_and_protect_open_positions()
-                for act in actions:
-                    if not act.get("ok"):
-                        self.add_log("ОШИБКА ЗАЩИТЫ: " + str(act))
-                        self.entry_paused.set()
-                    if act.get("ok"):
-                        self.add_log("🛡 Smart Guard (фон): " + str(act.get("action")) + " для " + str(act.get("symbol")))
+                for ctrl in self._active_controllers():
+                    ctrl.get_closed_pnl()
+                    ctrl.spm.split_tp_enabled = self.split_tp_enabled
+                    actions = ctrl.spm.audit_and_protect_open_positions()
+                    for act in actions:
+                        if not act.get("ok"):
+                            self.add_log("ОШИБКА ЗАЩИТЫ: " + str(act))
+                            self.entry_paused.set()
+                        if act.get("ok"):
+                            self.add_log("🛡 Smart Guard (фон): " + str(act.get("action")) + " для " + str(act.get("symbol")))
 
                 now_ms = int(time.time() * 1000)
                 for o in self.bybit.get_open_orders():
@@ -687,7 +720,7 @@ class ControlCenterState:
         requested=getattr(self,'autopilot_core_enabled',False) or getattr(self,'autopilot_booster_enabled',False)
         if requested and not self.entry_paused.is_set() and now-(scan.get('last_success') or getattr(self,'started_at',now))>max(240,2*getattr(self,'autopilot_interval_sec',300)+60):reasons.append('Нет успешных циклов в допустимый срок')
         if not liveness:reasons.append('Остановлен или завис рабочий поток')
-        return {"ok":liveness and not reasons,"liveness_ok":liveness,"version":"2026.11.17-intraday.2",
+        return {"ok":liveness and not reasons,"liveness_ok":liveness,"version":getattr(self,"release_manifest",{}).get("version","2026.11.19-intraday.5"),
                 "build_sha256":getattr(self,"release_manifest",{}).get("build_sha256"),
                 "autopilot_alive":alive,"entry_paused":self.entry_paused.is_set(),"scan":scan,
                 "guard":guard,"snapshot_age_sec":round(age,1) if age is not None else None,
@@ -849,7 +882,18 @@ class ControlCenterState:
                 core_slots = max(0, self.core_max_positions - len(positions))
                 min_prob = self.core_min_prob_pct / 100.0
                 all_candidates = (scan_res.get("approved_signals", []) or [])
-                valid_core = [s for s in all_candidates if s.get("passed_ml_filter") and s.get("debate_verdict") == "APPROVED" and s.get("cal_status") != "QUARANTINE" and float(s.get("ml_win_probability", 0) or 0) >= (0.52 if s.get("strategy_id") == "S1_TREND_RETEST" else (0.56 if s.get("strategy_id") == "S3_VWAP_RANGE" else min_prob))]
+                booster_only_ids = {"B1_SQUEEZE_BREAKOUT", "S1_TREND_RETEST"}
+                valid_core = [
+                    s for s in all_candidates
+                    if s.get("strategy_id") not in booster_only_ids
+                    and s.get("passed_ml_filter")
+                    and s.get("debate_verdict") == "APPROVED"
+                    and s.get("cal_status") != "QUARANTINE"
+                    and (
+                        ((s.get("features") or {}).get("ml_calibration_status") == "WARMING_UP")
+                        or float(s.get("ml_win_probability", 0) or 0) >= (0.60 if s.get("strategy_id") in ("S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING") else min_prob)
+                    )
+                ]
                 valid_core.sort(key=lambda x: float(x.get("ml_win_probability", 0) or 0), reverse=True)
                 for sig in valid_core:
                     if core_slots <= 0:
@@ -863,7 +907,7 @@ class ControlCenterState:
                         self.add_log("🛡 [Основная ИИ Фильтр] Пропуск " + str(sig["symbol"]) + " (" + side + "): " + why)
                         continue
                     sig_otype = sig.get("order_type") if sig.get("order_type") in ("Market", "Limit") else order_type
-                    sig_split_tp = False if sig.get("strategy_id") in ("S1_TREND_RETEST", "S3_VWAP_RANGE") else self.split_tp_enabled
+                    sig_split_tp = False if sig.get("strategy_id") in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING", "B1_SQUEEZE_BREAKOUT") else self.split_tp_enabled
                     r = self.bybit.place_order(
                         sig["symbol"], side, sig_otype, float(sig.get("position_size_coins", 0) or 0),
                         float(sig.get("entry_price", 0) or 0), float(sig.get("take_profit", 0) or 0),
@@ -1027,6 +1071,22 @@ def create_wsgi_app(state: ControlCenterState):
                     if creds["mode"] == t_mode and creds["api_key"]:
                         state.bybit.apply_credentials(creds["api_key"], creds["api_secret"], creds["base_url"])
                     state.add_log("🔐 Ключи для контура [" + t_mode.upper() + "] сохранены в защищенное хранилище (" + str(resp.get("masked_key")) + ").")
+                elif act == "save_subaccount_keys":
+                    acc = str(data.get("account", "booster") or "booster").strip().lower()
+                    t_mode = data.get("target_mode", "demo")
+                    k_val = str(data.get("api_key", "") or "").strip()
+                    s_val = str(data.get("api_secret", "") or "").strip()
+                    resp = state.env_manager.save_subaccount_keys(acc, t_mode, k_val, s_val)
+                    b_creds = state.env_manager.get_account_credentials("booster")
+                    state.booster.state["isolated_subaccount"] = bool(b_creds.get("isolated", False))
+                    if b_creds.get("isolated") and b_creds.get("api_key"):
+                        if getattr(state, "booster_bybit", state.bybit) is state.bybit:
+                            state.booster_bybit = BybitV5DirectController(state.engine)
+                            state.booster_bybit.ledger = state.booster_ledger
+                            state.booster_bybit.spm.ledger = state.booster_ledger
+                            state.booster_bybit.owner = state
+                        state.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
+                    state.add_log("🔐 Ключи субаккаунта [" + acc.upper() + "/" + t_mode.upper() + "] сохранены (" + str(resp.get("masked_key")) + ").")
                 elif act == "run_checklist":
                     t_mode = data.get("target_mode", "mainnet")
                     chk = state.env_manager.run_preflight_checklist(t_mode)

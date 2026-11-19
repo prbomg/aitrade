@@ -30,6 +30,7 @@ from aitrade.risk.risk_engine import RiskEngine
 from aitrade.screener.coins_in_play import CoinsInPlayScreener, ScreenerResult
 from aitrade.strategies.base import MarketContext, TradeSignal
 from aitrade.strategies.booster_breakout import generate_booster_breakout_signal
+from aitrade.strategies.funding_carry import FundingCarryEngine
 from aitrade.strategies.lead_lag_density import evaluate_lead_lag_density_strategy
 from aitrade.strategies.liquidity_sweep_fvg import evaluate_liquidity_sweep_fvg_strategy
 from aitrade.strategies.momentum_funding import generate_momentum_funding_signals
@@ -69,6 +70,7 @@ class AITradeCombineEngine:
         self.ml_labeler = WalkForwardMetaLabeler(self.settings)
         self.debate_council = MultiAgentDebateCouncil(self.settings)
         self.risk_engine = RiskEngine(self.settings)
+        self.funding_carry = FundingCarryEngine()
         self.demo_executor = BybitDemoExecutor(self.client, self.settings)
 
     def build_market_context(
@@ -257,8 +259,24 @@ class AITradeCombineEngine:
             except Exception:
                 pass
 
+        carry_opportunities: List[Dict[str, Any]] = []
+        if self.settings.get("strategy_mode", "s1_s3") != "legacy" and hasattr(self.client, "get_funding_history"):
+            for sym in sorted(autotrade_set):
+                if sym not in ctx_by_sym:
+                    continue
+                try:
+                    f_hist = self.client.get_funding_history(sym, limit=12)
+                    tk = ticker_map.get(sym, {})
+                    perp_px = float(tk.get("lastPrice", 0) or 0)
+                    spot_px = float(tk.get("indexPrice", 0) or perp_px)
+                    opp = self.funding_carry.evaluate_pair(sym, f_hist, spot_px, perp_px)
+                    carry_opportunities.append(asdict(opp))
+                except Exception:
+                    pass
+
         return {
             "context_errors": context_errors,
+            "carry_opportunities": carry_opportunities,
             "data_source": self.client.last_data_source,
             "autotrade_liquid_window_active": in_liquid_hours,
             "live_open_orders": live_orders,
