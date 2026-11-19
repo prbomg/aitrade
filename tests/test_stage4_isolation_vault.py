@@ -47,8 +47,8 @@ class Stage4IsolationAndVaultTests(unittest.TestCase):
             # Потолок $1,000 снят -> риск считается от $1,390 * 4% = $55.60
             self.assertAlmostEqual(m1["effective_risk_usd"], 55.6, places=2)
 
-            # 3) Просадка >= 20% от HWM -> демпфер режет риск вдвое (2.0%)
-            b.state["high_water_mark"] = 2000.0
+            # 3) Просадка >= 20% от active HWM -> демпфер режет риск вдвое (2.0%)
+            b.state["active_high_water_mark"] = 2000.0
             b.state["manual_adjustment_usd"] = 400.0  # gross=1400, active=1190 (< 1600, DD > 20%)
             m2 = b.compute_metrics([], [])
             self.assertTrue(m2["near_floor_protection"])

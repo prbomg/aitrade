@@ -364,10 +364,11 @@ def calc_atr_percentile(
     return round((less_or_eq / len(window)) * 100.0, 2)
 
 
-def calc_hurst_exponent(closes: List[float], window: int = 100) -> float:
+def calc_hurst_exponent(closes: List[float], window: int = 160) -> float:
     """
-    Оценка показателя Хёрста H в диапазоне [0.0, 1.0] методом лог-регрессии
-    дисперсии приращений (Variance-Ratio / Aggregated Variance) на чистом Python.
+    Несмещённая оценка показателя Хёрста H в диапазоне [0.0, 1.0] по неперекрывающимся
+    агрегированным лог-доходностям (Aggregated Second Moment / Variance-Ratio без вычитания
+    выборочного дрейфа, устраняющая занижение H на конечных выборках и сильных трендах).
     H < 0.45: возврат к среднему (Range);
     H ~ 0.50: случайное блуждание;
     H > 0.55: трендовая персистентность (Trend).
@@ -376,23 +377,28 @@ def calc_hurst_exponent(closes: List[float], window: int = 100) -> float:
         return 0.5
     series = closes[-min(len(closes), max(24, window)) :]
     log_p = [math.log(max(x, 1e-12)) for x in series]
-    n = len(log_p)
-    max_lag = min(20, n // 3)
-    if max_lag < 4:
+    rets = [log_p[i] - log_p[i - 1] for i in range(1, len(log_p))]
+    n_ret = len(rets)
+    if n_ret < 16:
         return 0.5
 
     xs: List[float] = []
     ys: List[float] = []
-    for lag in range(2, max_lag + 1):
-        diffs = [log_p[i] - log_p[i - lag] for i in range(lag, n)]
-        if len(diffs) < 2:
+    for m in (1, 2, 4, 8, 16):
+        n_blocks = n_ret // m
+        if n_blocks < 5:
             continue
-        mean_d = sum(diffs) / len(diffs)
-        var_d = sum((d - mean_d) ** 2 for d in diffs) / len(diffs)
-        if var_d <= 1e-18:
+        ms = 0.0
+        for b in range(n_blocks):
+            blk = sum(rets[b * m : (b + 1) * m])
+            ms += blk * blk
+        ms /= n_blocks
+        if ms <= 1e-18:
             continue
-        xs.append(math.log(float(lag)))
-        ys.append(0.5 * math.log(var_d))
+        # Точная поправка Дженсена (дигамма-разложение log(chi^2_K / K) ~ -1/K - 1/(3*K^2))
+        jensen_corr = (1.0 / (2.0 * n_blocks)) + (1.0 / (6.0 * n_blocks * n_blocks))
+        xs.append(math.log(float(m)))
+        ys.append(0.5 * math.log(ms) + jensen_corr)
 
     if len(xs) < 2:
         return 0.5

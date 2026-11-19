@@ -225,7 +225,8 @@ class BybitV5DirectController:
             else:
                 cutoff_ms=midnight
                 training_mode=False
-            if not training_mode and self.ledger.today_count(since_ts=cutoff_ms/1000.0)>=10:raise ValueError('Лимит 10 входов в день')
+            max_daily=int(self.engine.settings.get('risk',{}).get('max_daily_trades',10) or 10)
+            if not training_mode and self.ledger.today_count(since_ts=cutoff_ms/1000.0)>=max_daily:raise ValueError(f'Лимит {max_daily} входов в день')
             acct_bal=self.get_account_summary()['usdt_balance']
             capital=acct_bal if is_isolated_booster else min(1000.,acct_bal)
             b_metrics_live=None
@@ -300,7 +301,7 @@ class BybitV5DirectController:
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
             hold_min=480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (360 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))
-            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.6','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
+            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.7','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
             if hasattr(self.spm,'ensure_isolated_margin') and 'FUNDING_CARRY' not in str(strategy_id):
                 iso_res=self.spm.ensure_isolated_margin(symbol,int(leverage))
                 if isinstance(iso_res,dict) and iso_res.get('ok') is False:
@@ -357,9 +358,14 @@ class ControlCenterState:
         self.x_radar = XNewsSentimentRadar()
         self.env_manager = BybitEnvManager(BASE_DIR / "data", self.engine.client.api_key, self.engine.client.api_secret)
         b_creds = self.env_manager.get_account_credentials("booster")
+        a_creds = self.env_manager.get_account_credentials("autotrade")
         self.booster.state["isolated_subaccount"] = bool(b_creds.get("isolated", False))
         active_creds = self.env_manager.get_active_credentials()
-        if active_creds.get("api_key"):
+        if a_creds.get("isolated") and a_creds.get("api_key"):
+            self.bybit.ledger = self.autotrade_ledger
+            self.bybit.spm.ledger = self.autotrade_ledger
+            self.bybit.apply_credentials(a_creds["api_key"], a_creds["api_secret"], a_creds["base_url"])
+        elif active_creds.get("api_key"):
             self.bybit.apply_credentials(active_creds["api_key"], active_creds["api_secret"], active_creds["base_url"])
         if b_creds.get("isolated") and b_creds.get("api_key"):
             self.booster_bybit = BybitV5DirectController(self.engine)
@@ -603,7 +609,15 @@ class ControlCenterState:
             o_side = str(o.get("side", ""))
             o_strat = ctrl.ledger.pending_strategy(o_sym, o_side)
             c_ms = int(o.get("createdTime", 0) or 0)
-            ttl_min = 45 if "S1_TREND_RETEST" in o_strat else (20 if o_strat.startswith("BOOSTER:") else 0)
+            ttl_min = (
+                45 if any(k in o_strat for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")) else (
+                    30 if "S3_VWAP_RANGE" in o_strat else (
+                        90 if "AUTOTRADE_MOMENTUM_FUNDING" in o_strat else (
+                            20 if o_strat.startswith("BOOSTER:") else 0
+                        )
+                    )
+                )
+            )
             if ttl_min > 0 and c_ms > 0 and (now_ms - c_ms) >= ttl_min * 60 * 1000:
                 c_ord = ctrl.cancel_order(o_sym, str(o.get("orderId", "")))
                 if c_ord.get("ok"):
@@ -803,7 +817,7 @@ class ControlCenterState:
             core_pairs = self.settings.get("universe", {}).get("core_pairs", [])
             ws_sum = self.ws_hub.get_summary()
             btc_reg = self.regime_guard.update_btc_regime(ws_sum)
-            news_sum = self.x_radar.refresh_feed()
+            news_sum = self.x_radar.get_summary() if hasattr(self.x_radar, "get_summary") else {}
 
             scan_res = self.engine.scan_market(auto_execute_demo=False)
             scan_res["oi_squeeze_signals"] = squeeze_list
@@ -1208,9 +1222,10 @@ def create_wsgi_app(state: ControlCenterState):
                     state.autopilot_booster_enabled = False
                     state.autopilot_core_enabled = False
                     state.save_persisted_state()
-                    cancel=state.bybit.cancel_all_orders()
-                    close=state.bybit.close_all_positions()
-                    state.add_log("🚨 АВАРИЙНЫЙ СТОП: автопилоты выключены; запросы отмены и закрытия отправлены. Проверяйте остаток позиций и ордеров.")
+                    for ctrl in state._active_controllers():
+                        ctrl.cancel_all_orders()
+                        ctrl.close_all_positions()
+                    state.add_log("🚨 АВАРИЙНЫЙ СТОП: автопилоты выключены; запросы отмены и закрытия отправлены на все активные контуры.")
 
                 state.save_persisted_state()
                 resp = {
@@ -1256,9 +1271,10 @@ def create_wsgi_app(state: ControlCenterState):
                 entry_px = float(data.get("entry_price", 0) or 0)
                 tp_px = float(data.get("take_profit", 0) or 0)
                 sl_px = float(data.get("stop_loss", 0) or 0)
-                b_metrics = state.booster.compute_metrics(state.bybit.get_closed_pnl(), state.bybit.get_positions())
+                b_ctrl = getattr(state, "booster_bybit", state.bybit)
+                b_metrics = state.booster.compute_metrics(b_ctrl.get_closed_pnl(), b_ctrl.get_positions())
                 sizing = state.booster.calculate_order_qty(entry_px, sl_px, b_metrics)
-                resp = state.bybit.place_order(
+                resp = b_ctrl.place_order(
                     sym, side, "Market", sizing["qty_coins"], entry_px, tp_px, sl_px, sizing["leverage"], state.split_tp_enabled, strategy_id="BOOSTER:MANUAL"
                 )
                 if resp.get("ok"):
@@ -1356,13 +1372,15 @@ def create_wsgi_app(state: ControlCenterState):
                 resp = state.bybit.close_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0))
                 state.add_log("✖ Отправлена заявка на закрытие позиции " + str(data["symbol"]))
             elif path == "/api/close_all_positions":
-                resp = state.bybit.close_all_positions()
-                state.add_log("🚨 Отправлены заявки на закрытие позиций; исполнение проверяется по данным биржи.")
+                res_list = [ctrl.close_all_positions() for ctrl in state._active_controllers()]
+                resp = {"ok": all(r.get("ok") for r in res_list), "submitted_count": sum(int(r.get("submitted_count", 0)) for r in res_list)}
+                state.add_log("🚨 Отправлены заявки на закрытие позиций на все активные контуры.")
             elif path == "/api/cancel_order":
                 resp = state.bybit.cancel_order(data["symbol"], data["order_id"])
             elif path == "/api/cancel_all_orders":
-                resp = state.bybit.cancel_all_orders()
-                state.add_log("🗑 Запрос отмены активных ордеров отправлен.")
+                res_list = [ctrl.cancel_all_orders() for ctrl in state._active_controllers()]
+                resp = {"ok": all(r.get("ok") for r in res_list)}
+                state.add_log("🗑 Запрос отмены активных ордеров отправлен на все активные контуры.")
 
             else:
                 start_response("404 Not Found",headers+[("Content-Type","application/json")]);return [b'{"ok":false,"retMsg":"Unknown command"}']

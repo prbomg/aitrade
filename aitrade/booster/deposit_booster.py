@@ -51,6 +51,7 @@ class DepositBoosterManager:
             "started_at_str": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "manual_adjustment_usd": 0.0,
             "high_water_mark": 1000.0,
+            "active_high_water_mark": 1000.0,
             "daily_loss_limit_pct": 8.0 if isolated_subaccount else 3.0,
             "kelly_risk_pct": 4.0,
             "drawdown_damper_pct": 20.0,
@@ -97,6 +98,7 @@ class DepositBoosterManager:
         self.state["start_equity"] = float(start_equity or 1000.0)
         self.state["target_equity"] = float(target_equity or 10000.0)
         self.state["high_water_mark"] = self.state["start_equity"]
+        self.state["active_high_water_mark"] = self.state["start_equity"]
         self.state["ratchet_base_equity"] = self.state["start_equity"]
         self.state["training_unlimited_mode"] = False
         self._save(self.state)
@@ -222,6 +224,7 @@ class DepositBoosterManager:
         next_ratchet_eq = round(r_base * r_mult, 2)
 
         active_eq = round(gross_eq - vault_usd, 2)
+        ratchet_triggered = False
         if isolated and active_eq >= next_ratchet_eq and active_eq > r_base:
             skim = round((active_eq - r_base) * r_skim, 2)
             if skim > 0:
@@ -231,6 +234,8 @@ class DepositBoosterManager:
                 next_ratchet_eq = round(r_base * r_mult, 2)
                 self.state["vault_usd"] = vault_usd
                 self.state["ratchet_base_equity"] = r_base
+                self.state["active_high_water_mark"] = active_eq
+                ratchet_triggered = True
                 events = list(self.state.get("ratchet_events", []) or [])
                 events.append({
                     "ts": datetime.now(timezone.utc).isoformat(),
@@ -248,12 +253,18 @@ class DepositBoosterManager:
         for row in sorted(closed_pnl_list, key=lambda r: (int(r.get("updatedTime") or 0), str(r.get("orderId") or ""))):
             if belongs(row):
                 curve.append(curve[-1] + float(row.get("closedPnl") or 0))
-        prev_hwm = float(self.state.get("high_water_mark", start_eq) or start_eq)
-        hwm = max(max(curve), current_eq, prev_hwm) if isolated else max(max(curve), current_eq)
+        prev_total_hwm = float(self.state.get("high_water_mark", start_eq) or start_eq)
+        total_hwm = max(max(curve), gross_eq, prev_total_hwm) if isolated else max(max(curve), current_eq)
+        prev_active_hwm = float(self.state.get("active_high_water_mark", start_eq) or start_eq)
+        active_hwm = active_eq if ratchet_triggered else max(prev_active_hwm, active_eq)
+        hwm = active_hwm if isolated else total_hwm
         goal_reached = (current_eq + vault_usd) >= target_eq
         campaign_complete = goal_reached and not any(belongs(p) for p in open_positions)
-        if hwm != self.state.get("high_water_mark", start_eq):
-            self.state["high_water_mark"] = hwm
+        if total_hwm != self.state.get("high_water_mark", start_eq):
+            self.state["high_water_mark"] = total_hwm
+            state_dirty = True
+        if isolated and active_hwm != self.state.get("active_high_water_mark", start_eq):
+            self.state["active_high_water_mark"] = active_hwm
             state_dirty = True
 
         if state_dirty:
@@ -262,7 +273,7 @@ class DepositBoosterManager:
 
         phase_info = self.PHASES[0]
         for ph in self.PHASES:
-            if hwm >= ph["min_eq"]:
+            if total_hwm >= ph["min_eq"]:
                 phase_info = ph
 
         dd_from_hwm_pct = round(max(0.0, ((hwm - live_eq) / max(hwm, 1.0)) * 100.0), 2)

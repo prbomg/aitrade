@@ -90,7 +90,7 @@ def classify_regime(
     closes = [c.close for c in bars_1h]
     adx_val, plus_di, minus_di = calc_adx(bars_1h, 14)
     atr_pct = calc_atr_percentile(bars_1h, atr_period=14, lookback=100)
-    hurst = calc_hurst_exponent(closes, window=100)
+    hurst = calc_hurst_exponent(closes, window=160)
     _, st_dirs = calc_supertrend(bars_1h, period=10, multiplier=3.0)
     st_dir = st_dirs[-1] if st_dirs else 0
     ema20 = calc_ema(closes, 20)[-1]

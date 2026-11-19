@@ -81,7 +81,7 @@ class AITradeCombineEngine:
     ) -> MarketContext:
         ticker = ticker_map.get(symbol, {"symbol": symbol})
         c15 = self.client.get_klines(symbol, interval="15", limit=600)
-        c1h = self.client.get_klines(symbol, interval="60", limit=120)
+        c1h = self.client.get_klines(symbol, interval="60", limit=220)
         c4h = self.client.get_klines(symbol, interval="240", limit=50)
         c5m = self.client.get_klines(symbol, interval="5", limit=60)
         orderbook = self.client.get_orderbook(symbol, limit=50)

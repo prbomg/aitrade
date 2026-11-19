@@ -190,6 +190,9 @@ class WalkForwardBacktester:
         tp_fee_frac: float,
         sl_fee_frac: float,
         move_be_at_1r: bool,
+        be_trigger_r: float = 1.0,
+        trail_trigger_r: float = 1.5,
+        trail_frac: float = 0.0085,
     ) -> Tuple[float, float, int]:
         risk_dist = abs(entry_px - stop_loss)
         if risk_dist <= 0 or not future_bars:
@@ -211,11 +214,11 @@ class WalkForwardBacktester:
                     raw = (take_profit - entry_px) / entry_px
                     net_pct = (raw - entry_fee_frac - tp_fee_frac) * 100.0
                     return net_pct, net_pct / ((risk_dist / entry_px) * 100.0), idx + 1
-                if move_be_at_1r and not be_armed and bar.high >= entry_px + risk_dist:
+                if move_be_at_1r and not be_armed and bar.high >= entry_px + be_trigger_r * risk_dist:
                     cur_sl = max(cur_sl, be_px)
                     be_armed = True
-                if move_be_at_1r and bar.high >= entry_px + 1.5 * risk_dist:
-                    cur_sl = max(cur_sl, bar.close * (1.0 - 0.0085))
+                if move_be_at_1r and bar.high >= entry_px + trail_trigger_r * risk_dist:
+                    cur_sl = max(cur_sl, bar.close * (1.0 - trail_frac))
             else:
                 hit_sl = bar.high >= cur_sl
                 hit_tp = bar.low <= take_profit
@@ -227,11 +230,11 @@ class WalkForwardBacktester:
                     raw = (entry_px - take_profit) / entry_px
                     net_pct = (raw - entry_fee_frac - tp_fee_frac) * 100.0
                     return net_pct, net_pct / ((risk_dist / entry_px) * 100.0), idx + 1
-                if move_be_at_1r and not be_armed and bar.low <= entry_px - risk_dist:
+                if move_be_at_1r and not be_armed and bar.low <= entry_px - be_trigger_r * risk_dist:
                     cur_sl = min(cur_sl, be_px)
                     be_armed = True
-                if move_be_at_1r and bar.low <= entry_px - 1.5 * risk_dist:
-                    cur_sl = min(cur_sl, bar.close * (1.0 + 0.0085))
+                if move_be_at_1r and bar.low <= entry_px - trail_trigger_r * risk_dist:
+                    cur_sl = min(cur_sl, bar.close * (1.0 + trail_frac))
 
         last_close = future_bars[-1].close
         raw = ((last_close - entry_px) / entry_px) if side == "Buy" else ((entry_px - last_close) / entry_px)
@@ -289,7 +292,7 @@ class WalkForwardBacktester:
         hold = int(sig.features.get("max_hold_bars", 16))
         fill = i
         is_limit = str(getattr(sig, "order_type", "Market")) == "Limit"
-        s1 = sig.strategy_id == "S1_TREND_RETEST"
+        is_booster_trend = sig.strategy_id in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")
         if is_limit:
             fill = None
             ttl = int(sig.features.get("retest_ttl_bars", 3))
@@ -313,6 +316,9 @@ class WalkForwardBacktester:
         is_post_only = bool(sig.features.get("post_only", False))
         entry_cost = (self.maker_fee if is_post_only else (self.taker_fee + self.base_slippage)) * cost_multiplier
         exit_cost = (self.taker_fee + self.base_slippage) * cost_multiplier
+        atr15_val = float((sig.features or {}).get("atr15", 0.0) or 0.0)
+        atr15_frac = (atr15_val / sig.entry_price) if (atr15_val > 0 and sig.entry_price > 0) else 0.0
+        trail_f = max(0.015, 1.8 * atr15_frac) if is_booster_trend else 0.0085
         net, r, used = self._resolve_trade(
             bars,
             sig.side,
@@ -322,7 +328,10 @@ class WalkForwardBacktester:
             entry_cost,
             exit_cost,
             exit_cost,
-            s1,
+            is_booster_trend,
+            be_trigger_r=1.2 if is_booster_trend else 1.0,
+            trail_trigger_r=1.8 if is_booster_trend else 1.5,
+            trail_frac=trail_f,
         )
         step_ms = (candles[1].timestamp - candles[0].timestamp) if len(candles) > 1 else 900000
         return (
@@ -402,6 +411,10 @@ class WalkForwardBacktester:
         trades: List[Tuple[Any, ...]],
         risk_per_trade_frac: float = 0.005,
         initial_equity: float = 1000.0,
+        max_total_risk_frac: float = 0.02,
+        max_leverage: float = 3.0,
+        max_positions: int = 3,
+        allow_compounding: bool = False,
     ) -> Tuple[List[float], float, float, int]:
         """Event-time cash accounting; reserve risk/notional until actual exit timestamp."""
         equity = initial_equity
@@ -431,14 +444,14 @@ class WalkForwardBacktester:
             settle(t[0])
             symbol = t[5] if len(t) > 5 and t[5] else str(index)
             stop = t[6] if len(t) > 6 else 0.0055
-            cap_base = min(initial_equity, max(0.0, equity))
+            cap_base = max(0.0, equity) if allow_compounding else min(initial_equity, max(0.0, equity))
             budget = cap_base * risk_per_trade_frac
             notional = budget / (stop + 0.0054)
             if (
-                len(active) >= 3
+                len(active) >= max_positions
                 or any(x[4] == symbol for x in active)
-                or sum(x[2] for x in active) + budget > cap_base * 0.02
-                or sum(x[3] for x in active) + notional > cap_base * 3.0
+                or sum(x[2] for x in active) + budget > cap_base * max_total_risk_frac + 1e-9
+                or sum(x[3] for x in active) + notional > cap_base * max_leverage + 1e-9
             ):
                 skipped += 1
                 continue
@@ -468,11 +481,22 @@ class WalkForwardBacktester:
         trades: List[Tuple[Any, ...]],
         n_trials: int = 1,
         risk_per_trade_frac: float = 0.005,
+        max_total_risk_frac: float = 0.02,
+        max_leverage: float = 3.0,
+        max_positions: int = 3,
+        allow_compounding: bool = False,
     ) -> BacktestSummary:
         if not trades:
             return BacktestSummary(mode_name, 0, 0, 0, 0.0, None, 0.0, 0.0, 0.0, None, None)
 
-        pnls, equity, max_dd, _ = self._portfolio(trades, risk_per_trade_frac=risk_per_trade_frac)
+        pnls, equity, max_dd, _ = self._portfolio(
+            trades,
+            risk_per_trade_frac=risk_per_trade_frac,
+            max_total_risk_frac=max_total_risk_frac,
+            max_leverage=max_leverage,
+            max_positions=max_positions,
+            allow_compounding=allow_compounding,
+        )
         if not pnls:
             return BacktestSummary(mode_name, 0, 0, 0, 0.0, None, 0.0, 0.0, 0.0, None, None)
         r_mults = list(self._portfolio_r)
@@ -508,6 +532,10 @@ class WalkForwardBacktester:
         n_trials: int = 1,
         mc_iterations: int = 5000,
         risk_per_trade_frac: float = 0.005,
+        max_total_risk_frac: float = 0.02,
+        max_leverage: float = 3.0,
+        max_positions: int = 3,
+        allow_compounding: bool = False,
     ) -> Dict[str, Any]:
         """
         Скользящий Walk-Forward (Rolling WFA): минимум `n_cycles` циклов (75% IS / 25% OOS),
@@ -562,8 +590,15 @@ class WalkForwardBacktester:
             c_oos = [t for t in all_1x if is_end <= t[0] < oos_end]
             c_oos_2x = [t for t in all_2x if is_end <= t[0] < oos_end]
 
-            s_is = self._summarize(f"Cycle {c + 1} IS", c_is, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
-            s_oos = self._summarize(f"Cycle {c + 1} OOS", c_oos, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
+            p_kw = dict(
+                risk_per_trade_frac=risk_per_trade_frac,
+                max_total_risk_frac=max_total_risk_frac,
+                max_leverage=max_leverage,
+                max_positions=max_positions,
+                allow_compounding=allow_compounding,
+            )
+            s_is = self._summarize(f"Cycle {c + 1} IS", c_is, n_trials=n_trials, **p_kw)
+            s_oos = self._summarize(f"Cycle {c + 1} OOS", c_oos, n_trials=n_trials, **p_kw)
             ann_is = s_is.net_return_pct * (365.0 / is_days)
             ann_oos = s_oos.net_return_pct * (365.0 / oos_days)
             ann_is_list.append(ann_is)
@@ -590,9 +625,16 @@ class WalkForwardBacktester:
         # WFE валиден только при положительной средней годовой доходности IS
         wfe = round(mean_ann_oos / mean_ann_is, 3) if (mean_ann_is > 1e-6) else None
 
-        oos_summary = self._summarize("Rolling WFA OOS (1x)", oos_trades_1x, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
-        oos_pnls, _, _, _ = self._portfolio(oos_trades_1x, risk_per_trade_frac=risk_per_trade_frac)
-        oos_stress_2x = self._summarize("Rolling WFA OOS (2x Stress)", oos_trades_2x, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
+        p_kw = dict(
+            risk_per_trade_frac=risk_per_trade_frac,
+            max_total_risk_frac=max_total_risk_frac,
+            max_leverage=max_leverage,
+            max_positions=max_positions,
+            allow_compounding=allow_compounding,
+        )
+        oos_summary = self._summarize("Rolling WFA OOS (1x)", oos_trades_1x, n_trials=n_trials, **p_kw)
+        oos_pnls, _, _, _ = self._portfolio(oos_trades_1x, **p_kw)
+        oos_stress_2x = self._summarize("Rolling WFA OOS (2x Stress)", oos_trades_2x, n_trials=n_trials, **p_kw)
         mc = run_monte_carlo_permutation(oos_pnls, initial_equity=1000.0, iterations=mc_iterations)
         wfe_ok = bool(
             wfe is not None
@@ -681,9 +723,9 @@ class WalkForwardBacktester:
                         mom_2x.append(t2)
 
         return {
-            "B1_SQUEEZE_BREAKOUT": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_b1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04),
-            "S1_TREND_RETEST": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04),
-            "S3_VWAP_RANGE": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s3, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.01),
+            "B1_SQUEEZE_BREAKOUT": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_b1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04, max_total_risk_frac=0.07, max_leverage=5.0, max_positions=2, allow_compounding=True),
+            "S1_TREND_RETEST": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04, max_total_risk_frac=0.07, max_leverage=5.0, max_positions=2, allow_compounding=True),
+            "S3_VWAP_RANGE": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s3, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.01, max_total_risk_frac=0.025, max_leverage=3.0, max_positions=3, allow_compounding=False),
             "AUTOTRADE_MOMENTUM_FUNDING": {
                 "status": "ok",
                 "oos_summary": asdict(self._summarize("Momentum+Funding (1x)", mom_1x, n_trials=4, risk_per_trade_frac=0.01)),

@@ -334,47 +334,58 @@ class WalkForwardMetaLabeler:
             from aitrade.config import BASE_DIR
             from aitrade.storage import Ledger
 
-            db_path = BASE_DIR / "data" / "execution_ledger.sqlite3"
-            if not db_path.exists():
-                return [], [], [], []
-            ledger = Ledger(db_path)
-            closed_rows = ledger.attribute(ledger.records("closed"))
-            intents_map, _, _ = ledger._execution_lifecycles()
+            db_names = (
+                "execution_ledger.sqlite3",
+                "execution_ledger_booster.sqlite3",
+                "execution_ledger_autotrade.sqlite3",
+            )
             lx: List[List[float]] = []
             ly: List[float] = []
             lr: List[float] = []
             li: List[Tuple[int, int]] = []
-            for r in closed_rows:
-                iid = str(r.get("entry_intent_id") or "")
-                if not iid or iid not in intents_map:
+            seen_keys: set = set()
+            for db_name in db_names:
+                db_path = BASE_DIR / "data" / db_name
+                if not db_path.exists():
                     continue
-                intent_obj = intents_map[iid]
-                raw_strat = str(intent_obj.get("strategy_id") or "")
-                clean_strat = raw_strat.split(":", 1)[1].strip() if ":" in raw_strat else raw_strat.strip()
-                if strategy_id and clean_strat != strategy_id and raw_strat != strategy_id:
-                    continue
-                if side and str(intent_obj.get("side") or "") != str(side):
-                    continue
-                feats = ((intent_obj.get("signal_context") or {}).get("features") or {})
-                if not isinstance(feats, dict) or "vwap_zscore" not in feats:
-                    continue
-                vec = [
-                    max(-1.8, min(1.8, float(feats.get("vwap_zscore", 0.0)))),
-                    (float(feats.get("rsi_14", 50.0)) - 50.0) / 50.0,
-                    min(float(feats.get("rvol", 1.5)), 2.2) / 2.2,
-                    max(-1.0, min(1.0, float(feats.get("clv_proxy", feats.get("obi_smoothed", 0.0))))),
-                ]
-                pnl = float(r.get("closedPnl", 0.0) or 0.0)
-                entry_px = float(intent_obj.get("entry") or r.get("avgEntryPrice") or 0.0)
-                qty = float(r.get("closedSize") or r.get("qty") or intent_obj.get("qty") or 0.0)
-                notional = max(entry_px * qty, 10.0)
-                ret_pct = (pnl / notional) * 100.0
-                s_ms = int(r.get("entry_created_ms") or r.get("createdTime") or 0)
-                e_ms = int(r.get("updatedTime") or s_ms + 900_000)
-                lx.append(vec)
-                ly.append(1.0 if pnl > 0 else 0.0)
-                lr.append(ret_pct)
-                li.append((s_ms, max(s_ms, e_ms)))
+                ledger = Ledger(db_path)
+                closed_rows = ledger.attribute(ledger.records("closed"))
+                intents_map, _, _ = ledger._execution_lifecycles()
+                for r in closed_rows:
+                    iid = str(r.get("entry_intent_id") or "")
+                    if not iid or iid not in intents_map:
+                        continue
+                    dedup_key = (iid, str(r.get("orderId") or r.get("updatedTime") or ""))
+                    if dedup_key in seen_keys:
+                        continue
+                    seen_keys.add(dedup_key)
+                    intent_obj = intents_map[iid]
+                    raw_strat = str(intent_obj.get("strategy_id") or "")
+                    clean_strat = raw_strat.split(":", 1)[1].strip() if ":" in raw_strat else raw_strat.strip()
+                    if strategy_id and clean_strat != strategy_id and raw_strat != strategy_id:
+                        continue
+                    if side and str(intent_obj.get("side") or "") != str(side):
+                        continue
+                    feats = ((intent_obj.get("signal_context") or {}).get("features") or {})
+                    if not isinstance(feats, dict) or "vwap_zscore" not in feats:
+                        continue
+                    vec = [
+                        max(-1.8, min(1.8, float(feats.get("vwap_zscore", 0.0)))),
+                        (float(feats.get("rsi_14", 50.0)) - 50.0) / 50.0,
+                        min(float(feats.get("rvol", 1.5)), 2.2) / 2.2,
+                        max(-1.0, min(1.0, float(feats.get("clv_proxy", feats.get("obi_smoothed", 0.0))))),
+                    ]
+                    pnl = float(r.get("closedPnl", 0.0) or 0.0)
+                    entry_px = float(intent_obj.get("entry") or r.get("avgEntryPrice") or 0.0)
+                    qty = float(r.get("closedSize") or r.get("qty") or intent_obj.get("qty") or 0.0)
+                    notional = max(entry_px * qty, 10.0)
+                    ret_pct = (pnl / notional) * 100.0
+                    s_ms = int(r.get("entry_created_ms") or r.get("createdTime") or 0)
+                    e_ms = int(r.get("updatedTime") or s_ms + 900_000)
+                    lx.append(vec)
+                    ly.append(1.0 if pnl > 0 else 0.0)
+                    lr.append(ret_pct)
+                    li.append((s_ms, max(s_ms, e_ms)))
             return lx, ly, lr, li
         except Exception:
             return [], [], [], []
