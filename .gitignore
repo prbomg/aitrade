@@ -5,8 +5,11 @@ __pycache__/
 *.db
 *.sqlite3
 .DS_Store
+._*
 .venv/
 venv/
-data/cache/
+env/
+data/
 logs/
 *.env
+*.docx

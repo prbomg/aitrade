@@ -32,9 +32,10 @@ class WalkForwardMetaLabeler:
         self.label_horizon = int(ml_cfg.get("label_horizon_bars", 8))
         self.maker_fee = float(ex_cfg.get("maker_fee_rate", 0.0002))
         self.taker_fee = float(ex_cfg.get("taker_fee_rate", 0.00055))
+        self._candidate_samples=[]
 
     def _extract_historical_matrix(
-        self, candles: List[Candle], direction_sign: float
+        self, candles: List[Candle], direction_sign: float, strategy_id=None
     ) -> Tuple[List[List[float]], List[float], List[float]]:
         """
         Строит обучающую выборку исторических векторов признаков X, бинарных меток успеха y (1/0)
@@ -46,43 +47,89 @@ class WalkForwardMetaLabeler:
         if n < 45:
             return [], [], []
 
-        rsi_s = calc_rsi(candles, 14)
-        atr_s = calc_atr_series(candles, 14)
-        X: List[List[float]] = []
-        y: List[float] = []
-        returns_pct: List[float] = []
-
-        start_idx = 18
-        end_idx = n - 1
-        for i in range(start_idx, max(start_idx + 1, end_idx)):
-            sub = candles[max(0, i - 24) : i + 1]
-            vwap_b = calc_session_vwap_bands(sub)
-            rvol_i = calc_rvol(sub, lookback=15)
-            z_vwap = max(-1.8, min(1.8, (candles[i].close - vwap_b.vwap) / max(vwap_b.std, 1e-9)))
-            rsi_norm = (rsi_s[i] - 50.0) / 50.0
-            rvol_norm = min(rvol_i, 2.2) / 2.2
-            rng = max(candles[i].high - candles[i].low, 1e-9)
-            clv_proxy = ((candles[i].close - candles[i].low) - (candles[i].high - candles[i].close)) / rng
-            feat = [z_vwap, rsi_norm, rvol_norm, clv_proxy]
-
-            future_slice = candles[i + 1 : min(n, i + 1 + self.label_horizon)]
-            if not future_slice:
-                future_slice = [candles[i]]
-            entry = candles[i].close
-            if direction_sign > 0:
-                mfe = (max(c.high for c in future_slice) - entry) / max(entry, 1e-9) * 100.0
-                mae = (entry - min(c.low for c in future_slice)) / max(entry, 1e-9) * 100.0
+        from aitrade.strategies.regime_s1_s3 import _build_ml_features,generate_s1_s3_signal
+        from aitrade.backtest.walk_forward import WalkForwardBacktester
+        replay=WalkForwardBacktester({'exchange':{'maker_fee_rate':self.maker_fee,'taker_fee_rate':self.taker_fee}})
+        atr_s=calc_atr_series(candles,14)
+        X=[];y=[];returns_pct=[];self._candidate_samples=[]
+        intraday=strategy_id in ('S1_TREND_RETEST','S3_VWAP_RANGE')
+        start_idx=219 if intraday else 18
+        end_idx=n-(27 if intraday else self.label_horizon)
+        last_exit=0
+        for i in range(start_idx,end_idx):
+            feat=self._feature_vector(candles[:i+1])
+            if intraday:
+                if candles[i].timestamp<last_exit:continue
+                sig=generate_s1_s3_signal('TRAIN',candles[:i+1],reference_open_px=candles[i+1].open,min_rr_s3=.5)
+                if not sig or sig.strategy_id!=strategy_id or (sig.side=='Buy')!=(direction_sign>0):continue
+                trade=replay.replay_signal(candles,i+1,sig)
+                if not trade:continue
+                realized=trade[1];last_exit=trade[4]
             else:
-                mfe = (entry - min(c.low for c in future_slice)) / max(entry, 1e-9) * 100.0
-                mae = (max(c.high for c in future_slice) - entry) / max(entry, 1e-9) * 100.0
-
-            target_step = max(0.22, (atr_s[i] / max(entry, 1e-9)) * 100.0 * 0.85)
-            is_win = 1.0 if (mfe >= target_step and mfe >= mae * 0.85) else 0.0
-            X.append(feat)
-            y.append(is_win)
-            returns_pct.append(max(0.25, mfe))
+                entry=candles[i].close
+                target=max(.0022,atr_s[i]/entry*.85);stop=target/1.15
+                sl=entry*(1-stop*direction_sign);tp=entry*(1+target*direction_sign)
+                realized,_,_=replay._resolve_trade(candles[i+1:i+1+self.label_horizon],
+                    'Buy' if direction_sign>0 else 'Sell',entry,sl,tp,self.taker_fee+.0003,self.taker_fee+.0003,self.taker_fee+.0003,False)
+            X.append(feat);y.append(float(realized>0));returns_pct.append(realized)
+            if intraday:self._candidate_samples.append({'bar_ms':candles[i].timestamp,'end_ms':last_exit,'x':feat,'y':float(realized>0),'ret':realized})
 
         return X, y, returns_pct
+
+    @staticmethod
+    def _feature_vector(candles):
+        from aitrade.strategies.regime_s1_s3 import _build_ml_features
+        f=_build_ml_features(candles)
+        return [max(-1.8,min(1.8,f['vwap_zscore'])),(f['rsi_14']-50)/50,min(f['rvol'],2.2)/2.2,f['clv_proxy']]
+
+    @staticmethod
+    def _load_ledger_closed_samples(strategy_id: str, side: str) -> Tuple[List[List[float]], List[float], List[float]]:
+        """Загружает реально закрытые и атрибутированные сделки из execution_ledger.sqlite3 (Closed-Loop Learning)."""
+        try:
+            from aitrade.config import BASE_DIR
+            from aitrade.storage import Ledger
+            db_path = BASE_DIR / "data" / "execution_ledger.sqlite3"
+            if not db_path.exists():
+                return [], [], []
+            ledger = Ledger(db_path)
+            closed_rows = ledger.attribute(ledger.records("closed"))
+            intents_map, _, _ = ledger._execution_lifecycles()
+            lx: List[List[float]] = []
+            ly: List[float] = []
+            lr: List[float] = []
+            for r in closed_rows:
+                iid = str(r.get("entry_intent_id") or "")
+                if not iid or iid not in intents_map:
+                    continue
+                intent_obj = intents_map[iid]
+                raw_strat = str(intent_obj.get("strategy_id") or "")
+                clean_strat = raw_strat.split(":", 1)[1].strip() if ":" in raw_strat else raw_strat.strip()
+                if strategy_id and clean_strat != strategy_id and raw_strat != strategy_id:
+                    continue
+                if side and str(intent_obj.get("side") or "") != str(side):
+                    continue
+                feats = ((intent_obj.get("signal_context") or {}).get("features") or {})
+                if not isinstance(feats, dict) or "vwap_zscore" not in feats:
+                    continue
+                vec = [
+                    max(-1.8, min(1.8, float(feats.get("vwap_zscore", 0.0)))),
+                    (float(feats.get("rsi_14", 50.0)) - 50.0) / 50.0,
+                    min(float(feats.get("rvol", 1.5)), 2.2) / 2.2,
+                    max(-1.0, min(1.0, float(feats.get("clv_proxy", feats.get("obi_smoothed", 0.0))))),
+                ]
+                pnl = float(r.get("closedPnl", 0.0) or 0.0)
+                entry_px = float(intent_obj.get("entry") or r.get("avgEntryPrice") or 0.0)
+                qty = float(r.get("closedSize") or r.get("qty") or intent_obj.get("qty") or 0.0)
+                notional = max(entry_px * qty, 10.0)
+                ret_pct = (pnl / notional) * 100.0
+                # Добавляем реальный боевой опыт с весом 2x
+                for _ in range(2):
+                    lx.append(vec)
+                    ly.append(1.0 if pnl > 0 else 0.0)
+                    lr.append(ret_pct)
+            return lx, ly, lr
+        except Exception:
+            return [], [], []
 
     def _compute_dissimilarity_index(
         self, X_train: List[List[float]], x_new: List[float]
@@ -94,7 +141,7 @@ class WalkForwardMetaLabeler:
         if len(X_train) < 5:
             return 0.45
         dim = len(x_new)
-        all_rows = X_train + [x_new]
+        all_rows = X_train
         mins = [min(row[d] for row in all_rows) for d in range(dim)]
         maxs = [max(row[d] for row in all_rows) for d in range(dim)]
 
@@ -135,13 +182,32 @@ class WalkForwardMetaLabeler:
         3. Cost-Aware Execution Filter: |r_hat| > lambda * c_total.
         """
         direction_sign = 1.0 if signal.side == "Buy" else -1.0
-        X_train, y_train, ret_train = self._extract_historical_matrix(ctx.candles_15m, direction_sign)
+        X_train, y_train, ret_train = self._extract_historical_matrix(ctx.candles_15m, direction_sign, signal.strategy_id)
 
-        z_vwap = max(-1.8, min(1.8, float(signal.features.get("vwap_zscore", 0.0))))
-        rsi_norm = (float(signal.features.get("rsi_14", 50.0)) - 50.0) / 50.0
-        rvol_norm = min(float(signal.features.get("rvol", 1.5)), 2.2) / 2.2
-        obi_val = max(-1.0, min(1.0, float(signal.features.get("obi_smoothed", 0.0))))
-        x_new = [z_vwap, rsi_norm, rvol_norm, obi_val]
+        if signal.strategy_id in ('S1_TREND_RETEST','S3_VWAP_RANGE'):
+            from aitrade.config import BASE_DIR
+            from aitrade.storage import atomic_json
+            import json
+            path=BASE_DIR/'data'/'ml_samples_v2.json'
+            saved=json.loads(path.read_text()) if path.exists() else {}
+            for sample in self._candidate_samples:
+                key=f"{signal.strategy_id}:{signal.side}:{signal.symbol}:{sample['bar_ms']}"
+                saved[key]=dict(sample,strategy=signal.strategy_id,side=signal.side,symbol=signal.symbol)
+            saved=dict(sorted(saved.items(),key=lambda kv:kv[1]['end_ms'])[-4000:])
+            atomic_json(path,saved)
+            eligible=[v for v in saved.values() if v['strategy']==signal.strategy_id and v['side']==signal.side and v['end_ms']<=ctx.candles_15m[-1].timestamp+900000][-256:]
+            X_train=[v['x'] for v in eligible];y_train=[v['y'] for v in eligible];ret_train=[v['ret'] for v in eligible]
+        lx, ly, lr = self._load_ledger_closed_samples(signal.strategy_id, signal.side)
+        if lx:
+            X_train = (X_train + lx)[-256:]
+            y_train = (y_train + ly)[-256:]
+            ret_train = (ret_train + lr)[-256:]
+        signal.features['ml_live_ledger_samples'] = len(lx) // 2
+        # Historical OHLCV and live OHLCV use the exact same builder. Live L2 stays a separate gate.
+        x_new=self._feature_vector(ctx.candles_15m)
+        signal.features['ml_feature_version']=2
+        signal.features['ml_training_samples']=len(X_train)
+        signal.features['ml_calibration_status']='uncalibrated_similarity_score'
 
         di_value = self._compute_dissimilarity_index(X_train, x_new)
 
@@ -184,23 +250,25 @@ class WalkForwardMetaLabeler:
 
         target_tp1_pct = abs(signal.take_profit_1 - signal.entry_price) / max(signal.entry_price, 1e-9) * 100.0
         expected_return_pct = round(
-            blended_prob * max(target_tp1_pct, empirical_ret * 0.75)
-            - (1.0 - blended_prob) * (signal.stop_distance_pct * 0.45),
+            blended_prob * target_tp1_pct
+            - (1.0 - blended_prob) * (signal.stop_distance_pct),
             3,
         )
 
-        entry_fee_pct = (self.maker_fee if signal.order_type == "Limit" else self.taker_fee) * 100.0
-        exit_fee_pct = self.maker_fee * 100.0
-        total_roundtrip_cost_pct = entry_fee_pct + exit_fee_pct + ctx.screener.spread_pct
+        entry_fee_pct = self.taker_fee * 100.0
+        exit_fee_pct = self.taker_fee * 100.0
+        total_roundtrip_cost_pct = entry_fee_pct + exit_fee_pct + ctx.screener.spread_pct + 0.06
         cost_threshold_pct = round(self.cost_lambda * total_roundtrip_cost_pct, 4)
 
+        req_prob = 0.52 if signal.strategy_id == "S1_TREND_RETEST" else (0.56 if signal.strategy_id == "S3_VWAP_RANGE" else self.min_win_prob)
         passed_cost = expected_return_pct >= cost_threshold_pct
         passed_di = di_value <= self.di_threshold
-        passed_prob = blended_prob >= self.min_win_prob
+        passed_prob = blended_prob >= req_prob
 
         signal.ml_win_probability = blended_prob
         signal.expected_return_pct = expected_return_pct
         signal.cost_threshold_pct = cost_threshold_pct
         signal.dissimilarity_index = di_value
-        signal.passed_ml_filter = bool(passed_cost and passed_di and passed_prob)
+        min_samples = min(8, len(X_train)) if len(X_train) > 0 else 0
+        signal.passed_ml_filter = bool(passed_cost and passed_di and passed_prob and (len(X_train)>=min_samples if signal.strategy_id in ("S1_TREND_RETEST","S3_VWAP_RANGE") else True))
         return signal

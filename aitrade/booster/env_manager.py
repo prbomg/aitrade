@@ -1,0 +1,240 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+from aitrade.storage import atomic_json
+import hashlib, hmac, json, os, subprocess, time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict
+from aitrade.exchange.transport import request
+
+
+class BybitEnvManager:
+    URLS = {
+        "demo": "https://api-demo.bybit.com",
+        "mainnet": "https://api.bybit.com",
+    }
+
+    def __init__(self, data_dir: Path, default_demo_key: str = "", default_demo_secret: str = "") -> None:
+        self.vault_path = data_dir / "env_vault.json"
+        self.state = self._load(default_demo_key, default_demo_secret)
+
+    def _default_state(self, d_key: str, d_sec: str) -> Dict[str, Any]:
+        return {
+            "active_mode": "demo",
+            "demo": {
+                "api_key": d_key,
+                "api_secret": d_sec,
+                "base_url": self.URLS["demo"],
+            },
+            "mainnet": {
+                "api_key": "",
+                "api_secret": "",
+                "base_url": self.URLS["mainnet"],
+            },
+            "last_checklist": {
+                "mode": "mainnet",
+                "passed": False,
+                "checked_at": "—",
+                "checks": [],
+                "summary": "Предторговая проверка Real Mainnet еще не запускалась",
+            },
+        }
+
+    def _load(self, d_key: str, d_sec: str) -> Dict[str, Any]:
+        st = self._default_state(d_key, d_sec)
+        if self.vault_path.exists():
+            try:
+                raw = json.loads(self.vault_path.read_text(encoding="utf-8"))
+                st.update(raw)
+                if not st.get("demo", {}).get("api_key") and d_key:
+                    st["demo"]["api_key"] = d_key
+                    st["demo"]["api_secret"] = d_sec
+            except Exception:
+                pass
+        self._save(st)
+        return st
+
+    def _save(self, st: Dict[str, Any]) -> None:
+        try:
+            atomic_json(self.vault_path, st)
+            os.chmod(self.vault_path, 0o600)
+        except Exception:
+            pass
+
+    @staticmethod
+    def mask_key(k: str) -> str:
+        k = str(k or "").strip()
+        if len(k) <= 6:
+            return "Не задан" if not k else ("***" + k[-2:])
+        return k[:4] + "••••" + k[-4:]
+
+    def get_active_credentials(self) -> Dict[str, str]:
+        mode = self.state.get("active_mode", "demo")
+        if mode not in ("demo", "mainnet"):
+            mode = "demo"
+        block = self.state.get(mode, {})
+        return {
+            "mode": mode,
+            "api_key": str(block.get("api_key", "") or "").strip(),
+            "api_secret": str(block.get("api_secret", "") or "").strip(),
+            "base_url": self.URLS.get(mode, self.URLS["demo"]),
+        }
+
+    def save_keys(self, target_mode: str, api_key: str, api_secret: str) -> Dict[str, Any]:
+        if target_mode not in ("demo", "mainnet"):
+            return {"ok": False, "retMsg": "Некорректный контур"}
+        cur = self.state.setdefault(target_mode, {})
+        if api_key and "••••" not in api_key:
+            cur["api_key"] = api_key.strip()
+        if api_secret and "••••" not in api_secret:
+            cur["api_secret"] = api_secret.strip()
+        cur["base_url"] = self.URLS[target_mode]
+        self._save(self.state)
+        return {"ok": True, "mode": target_mode, "masked_key": self.mask_key(cur.get("api_key", ""))}
+
+    @staticmethod
+    def _signed_get(base_url: str, api_key: str, api_secret: str, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        try:return request(base_url,api_key,api_secret,"GET",endpoint,params)
+        except Exception as exc:return {"retCode":-1,"retMsg":str(exc)}
+
+    def run_preflight_checklist(self, target_mode: str = "mainnet") -> Dict[str, Any]:
+        block = self.state.get(target_mode, {})
+        api_key = str(block.get("api_key", "") or "").strip()
+        api_secret = str(block.get("api_secret", "") or "").strip()
+        base_url = self.URLS.get(target_mode, self.URLS["mainnet"])
+
+        checks = []
+        all_passed = True
+
+        # 1. Наличие ключей в хранилище
+        has_keys = bool(api_key and api_secret)
+        checks.append({
+            "id": "keys_present",
+            "title": "1. Наличие API-ключей в защищенном хранилище",
+            "ok": has_keys,
+            "detail": ("Ключ " + self.mask_key(api_key) + " загружен") if has_keys else "Ключи для выбранного контура не введены",
+        })
+        if not has_keys:
+            res = {
+                "mode": target_mode,
+                "passed": False,
+                "checked_at": datetime.now().strftime("%H:%M:%S"),
+                "checks": checks,
+                "summary": "❌ Проверка не пройдена: сначала введите и сохраните API Key и Secret для " + target_mode.upper(),
+            }
+            self.state["last_checklist"] = res
+            self._save(self.state)
+            return res
+
+        # 2. Проверка прав API-ключа (/v5/user/query-api)
+        key_info_resp = self._signed_get(base_url, api_key, api_secret, "/v5/user/query-api", {})
+        ret_code = key_info_resp.get("retCode", -1)
+        k_res = key_info_resp.get("result", {}) or {}
+        perms = k_res.get("permissions", {}) or {}
+
+        auth_ok = (ret_code == 0)
+        checks.append({
+            "id": "auth_valid",
+            "title": "2. Подлинность подписи и связь с Bybit (" + base_url.replace("https://", "") + ")",
+            "ok": auth_ok,
+            "detail": ("Связь установлена, UserID: " + str(k_res.get("userID", "OK")) + (", ReadOnly=Нет" if k_res.get("readOnly") == 0 else "")) if auth_ok else ("Ошибка API: " + str(key_info_resp.get("retMsg", "Неверный ключ"))),
+        })
+        if not auth_ok:
+            all_passed = False
+
+        # 3. Разрешения на торговлю деривативами (ContractTrade) и ReadOnly == 0
+        contract_perms = perms.get("ContractTrade", []) or []
+        derivatives_perms = perms.get("Derivatives", []) or []
+        read_only = int(k_res.get("readOnly", 0) or 0)
+        can_trade_futures = auth_ok and (read_only == 0) and (len(contract_perms) > 0 or len(derivatives_perms) > 0)
+        checks.append({
+            "id": "futures_perm",
+            "title": "3. Разрешение на торговлю фьючерсами (ContractTrade: Order/Position)",
+            "ok": can_trade_futures,
+            "detail": ("Права активны: " + ", ".join(contract_perms or derivatives_perms)) if can_trade_futures else "У ключа нет прав на фьючерсы или включен режим Только-Чтение",
+        })
+        if not can_trade_futures:
+            all_passed = False
+
+        # 4. Отсутствие прав на вывод средств (Security Check: No Withdraw Permission)
+        wallet_perms = perms.get("Wallet", []) or []
+        has_withdraw = any("withdraw" in str(p).lower() for p in wallet_perms)
+        no_withdraw_ok = auth_ok and (not has_withdraw)
+        checks.append({
+            "id": "no_withdraw",
+            "title": "4. Безопасность средств: запрет на вывод (No Withdraw Permission)",
+            "ok": no_withdraw_ok,
+            "detail": "Безопасно: право на вывод средств (Withdraw) отключено" if no_withdraw_ok else "⚠️ ОПАСНО: у ключа включено право Withdraw! Отключите его в настройках Bybit",
+        })
+        if not no_withdraw_ok:
+            all_passed = False
+
+        # 5. Проверка Единого Торгового Аккаунта (UTA) и баланса USDT
+        bal_resp = self._signed_get(base_url, api_key, api_secret, "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
+        bal_ok = (bal_resp.get("retCode") == 0)
+        lst = bal_resp.get("result", {}).get("list", []) if bal_ok else []
+        total_eq = float(lst[0].get("totalEquity", 0) or 0) if lst else 0.0
+        min_eq_ok = bal_ok and (total_eq >= 20.0)
+        checks.append({
+            "id": "uta_balance",
+            "title": "5. Единый торговый аккаунт (UTA UNIFIED) и депозит >= $20",
+            "ok": min_eq_ok,
+            "detail": ("UTA активен, доступный капитал: $" + "{:,.2f}".format(total_eq)) if bal_ok else ("Не удалось получить баланс UTA: " + str(bal_resp.get("retMsg", ""))),
+        })
+        if not min_eq_ok:
+            all_passed = False
+
+        summary_txt = (
+            "✅ ВСЕ 5 ПРОВЕРОК ПРОЙДЕНЫ! Контур " + target_mode.upper() + " полностью готов к работе ($" + "{:,.2f}".format(total_eq) + ")."
+            if all_passed
+            else "🛑 Предторговый чек-лист не пройден. Исправьте отмеченные пункты перед включением боевого режима."
+        )
+        res = {
+            "mode": target_mode,
+            "passed": all_passed,
+            "checked_at": datetime.now().strftime("%H:%M:%S"),
+            "equity_usd": round(total_eq, 2),
+            "checks": checks,
+            "summary": summary_txt,
+        }
+        self.state["last_checklist"] = res
+        self._save(self.state)
+        return res
+
+    def switch_environment(self, target_mode: str, force_demo: bool = False) -> Dict[str, Any]:
+        if target_mode not in ("demo", "mainnet"):
+            return {"ok": False, "retMsg": "Неизвестный контур"}
+        if target_mode == "demo" or force_demo:
+            self.state["active_mode"] = "demo"
+            self._save(self.state)
+            return {"ok": True, "active_mode": "demo", "retMsg": "Переключено на учебный контур 🧪 Bybit Demo"}
+
+        # Для перехода в Real Mainnet обязательно прогоняем чек-лист
+        chk = self.run_preflight_checklist("mainnet")
+        if not chk.get("passed"):
+            return {
+                "ok": False,
+                "active_mode": self.state.get("active_mode", "demo"),
+                "checklist": chk,
+                "retMsg": chk.get("summary", "Чек-лист не пройден"),
+            }
+        self.state["active_mode"] = "mainnet"
+        self._save(self.state)
+        return {
+            "ok": True,
+            "active_mode": "mainnet",
+            "checklist": chk,
+            "retMsg": "💰 БОЕВОЙ КОНТУР BYBIT REAL MAINNET АКТИВИРОВАН!",
+        }
+
+    def get_public_status(self) -> Dict[str, Any]:
+        act = self.state.get("active_mode", "demo")
+        return {
+            "active_mode": act,
+            "is_mainnet": act == "mainnet",
+            "active_url": self.URLS.get(act, self.URLS["demo"]),
+            "demo_key_masked": self.mask_key(self.state.get("demo", {}).get("api_key", "")),
+            "mainnet_key_masked": self.mask_key(self.state.get("mainnet", {}).get("api_key", "")),
+            "mainnet_configured": bool(self.state.get("mainnet", {}).get("api_key")),
+            "last_checklist": self.state.get("last_checklist", {}),
+        }

@@ -229,8 +229,7 @@ def calc_session_vwap_bands(candles: List[Candle]) -> VWAPBands:
     anchor_ms = int(day_anchor_dt.timestamp() * 1000)
 
     session_candles = [c for c in candles if c.timestamp >= anchor_ms]
-    if len(session_candles) < 8:
-        session_candles = candles[-min(len(candles), 32) :]
+    # UTC session never borrows previous-day prices during warm-up.
 
     cum_pv = 0.0
     cum_vol = 0.0

@@ -24,7 +24,7 @@ class RiskEngine:
         r_cfg = settings.get("risk", {})
         ex_cfg = settings.get("exchange", {})
         self.risk_per_trade_pct = float(r_cfg.get("risk_per_trade_pct", 0.005))
-        self.max_leverage = float(r_cfg.get("max_portfolio_leverage", 4.0))
+        self.max_leverage = min(3.,float(r_cfg.get("max_portfolio_leverage", 3.0)))
         self.min_liq_multiple = float(r_cfg.get("min_liquidation_to_stop_multiple", 5.0))
         self.min_rr = float(r_cfg.get("min_reward_to_risk", 1.5))
         self.max_slippage_bps = float(r_cfg.get("max_slippage_bps", 15.0))
@@ -85,13 +85,9 @@ class RiskEngine:
 
         risk_budget_usd = account_equity_usd * self.risk_per_trade_pct
         stop_frac = abs(signal.entry_price - signal.stop_loss) / signal.entry_price
-        stop_frac = max(stop_frac, 0.0015)
+        stop_frac = max(stop_frac, 0.0055)
 
-        fee_roundtrip_frac = (
-            (self.maker_fee * 2.0)
-            if signal.order_type == "Limit"
-            else (self.taker_fee + self.maker_fee)
-        )
+        fee_roundtrip_frac = self.taker_fee*2 + .0030  # GTC/Full exits are not guaranteed maker fills.
 
         # Первичная оценка долларового размера позиции V_pos = Risk_USD / (stop_frac + fee_roundtrip_frac)
         raw_notional_usd = risk_budget_usd / (stop_frac + fee_roundtrip_frac)
@@ -115,7 +111,7 @@ class RiskEngine:
 
         effective_lev = max(0.1, notional_usd / account_equity_usd)
         # Расчетная цена ликвидации при выделенной марже с учетом поддерживающей маржи Bybit (MMR = 0.5%)
-        liq_dist_frac = max(stop_frac * self.min_liq_multiple, (1.0 / max(effective_lev, 1.0)) - 0.005)
+        liq_dist_frac = max(0.,1.0/self.max_leverage-.005)
         if signal.side == "Buy":
             liq_price = signal.entry_price * (1.0 - liq_dist_frac)
         else:
@@ -128,13 +124,15 @@ class RiskEngine:
         signal.position_size_usd = round(notional_usd, 2)
         signal.position_qty = round(qty, 4)
         signal.effective_leverage = round(effective_lev, 2)
-        signal.liquidation_price = round(max(0.0, liq_price), 6)
-        signal.stop_to_liq_multiple = round(stop_to_liq_mult, 2)
+        signal.liquidation_price = 0.0
+        signal.features["liquidation_status"]="unknown_until_exchange_position; analytical value is not liquidation protection"
+        signal.stop_to_liq_multiple = 0.0
         signal.estimated_l2_slippage_bps = slippage_bps
         signal.risk_amount_usd = round(actual_risk_usd, 2)
 
-        if signal.reward_to_risk_tp1 < self.min_rr:
+        req_rr = 0.50 if signal.strategy_id == "S3_VWAP_RANGE" else self.min_rr
+        if signal.reward_to_risk_tp1 < req_rr:
             signal.debate_verdict = "REJECTED"
-            signal.debate_summary += f" [RiskEngine: R:R={signal.reward_to_risk_tp1:.2f} < {self.min_rr:.2f}]"
+            signal.debate_summary += f" [RiskEngine: R:R={signal.reward_to_risk_tp1:.2f} < {req_rr:.2f}]"
 
         return signal

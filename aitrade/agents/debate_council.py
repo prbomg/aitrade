@@ -86,7 +86,7 @@ class MultiAgentDebateCouncil:
             conflict_blocked = True
             reject_note = f"Запрет контртренда против сильного импульса ADX(1H)={ctx.screener.adx_1h:.1f}"
 
-        verdict = "APPROVED" if (signal.passed_ml_filter and not conflict_blocked) else "REJECTED"
+        verdict = "APPROVED" if (signal.passed_ml_filter and not conflict_blocked and signal.debate_verdict != "REJECTED") else "REJECTED"
         summary_parts = [
             f"[Режим: {regime}]",
             f"Бычий агент: {'; '.join(bull_args[:2])}.",

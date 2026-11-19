@@ -29,6 +29,7 @@ from aitrade.strategies.lead_lag_density import evaluate_lead_lag_density_strate
 from aitrade.strategies.liquidity_sweep_fvg import evaluate_liquidity_sweep_fvg_strategy
 from aitrade.strategies.oi_cvd_squeeze import evaluate_oi_cvd_squeeze_strategy
 from aitrade.strategies.orb_breakout import evaluate_orb_breakout_strategy
+from aitrade.strategies.regime_s1_s3 import generate_s1_s3_signal
 from aitrade.strategies.vwap_keltner_mr import evaluate_vwap_keltner_strategy
 
 
@@ -37,7 +38,7 @@ class AITradeCombineEngine:
 
     def __init__(self, settings: Optional[Dict[str, Any]] = None) -> None:
         self.settings = settings or load_settings()
-        self.client = BybitV5Client(self.settings, allow_offline_fallback=True)
+        self.client = BybitV5Client(self.settings, allow_offline_fallback=bool(self.settings.get("offline_simulation", False)))
         self.coinalyze = CoinalyzeClient(self.settings.get("coinalyze_api_key", ""))
         self.screener = CoinsInPlayScreener(self.settings)
         self.ml_labeler = WalkForwardMetaLabeler(self.settings)
@@ -52,7 +53,7 @@ class AITradeCombineEngine:
         btc_candles_15m: List[Any],
     ) -> MarketContext:
         ticker = ticker_map.get(symbol, {"symbol": symbol})
-        c15 = self.client.get_klines(symbol, interval="15", limit=120)
+        c15 = self.client.get_klines(symbol, interval="15", limit=600)
         c1h = self.client.get_klines(symbol, interval="60", limit=80)
         c4h = self.client.get_klines(symbol, interval="240", limit=50)
         c5m = self.client.get_klines(symbol, interval="5", limit=60)
@@ -61,19 +62,21 @@ class AITradeCombineEngine:
         oi_hist = self.client.get_open_interest_history(symbol, interval_time="15min", limit=40)
         recent_trades = self.client.get_recent_trades(symbol, limit=150)
 
-        vwap_bands = calc_session_vwap_bands(c15)
-        vol_profile = calc_volume_profile(c15)
-        micro = analyze_microstructure(c15, orderbook, ob_hist, recent_trades)
-        scr_res = self.screener.evaluate_coin(symbol, ticker, c15, c1h, orderbook)
+        c15_closed = c15[:-1] if len(c15) > 1 else c15
+        c1h_closed = c1h[:-1] if len(c1h) > 1 else c1h
+        vwap_bands = calc_session_vwap_bands(c15_closed)
+        vol_profile = calc_volume_profile(c15_closed)
+        micro = analyze_microstructure(c15_closed, orderbook, ob_hist, recent_trades)
+        scr_res = self.screener.evaluate_coin(symbol, ticker, c15_closed, c1h_closed, orderbook)
 
         return MarketContext(
             symbol=symbol,
             ticker=ticker,
-            candles_5m=c5m,
-            candles_15m=c15,
-            candles_1h=c1h,
-            candles_4h=c4h,
-            btc_candles_15m=btc_candles_15m,
+            candles_5m=c5m[:-1] if len(c5m) > 1 else c5m,
+            candles_15m=c15_closed,
+            candles_1h=c1h_closed,
+            candles_4h=c4h[:-1] if len(c4h) > 1 else c4h,
+            btc_candles_15m=btc_candles_15m[:-1] if len(btc_candles_15m) > 1 else btc_candles_15m,
             orderbook=orderbook,
             oi_history=oi_hist,
             vwap_bands=vwap_bands,
@@ -92,34 +95,56 @@ class AITradeCombineEngine:
         all_tickers = self.client.get_tickers()
         ticker_map = {t["symbol"]: t for t in all_tickers if "symbol" in t}
         btc_15m = self.client.get_klines("BTCUSDT", interval="15", limit=120)
-        equity_usd = self.demo_executor.get_account_equity_usdt()
+        equity_usd = min(self.demo_executor.get_account_equity_usdt(), float(self.settings.get("risk", {}).get("allocated_equity_usdt", 1000.0)))
 
         screener_results: List[ScreenerResult] = []
         raw_candidates: List[TradeSignal] = []
         approved_signals: List[TradeSignal] = []
         rejected_signals: List[TradeSignal] = []
 
-        max_workers = min(8, max(1, len(core_pairs)))
+        max_workers = min(12, max(1, len(core_pairs)))
+        context_errors = []
+        def build_one(symbol):
+            try:
+                ctx = self.build_market_context(symbol, ticker_map, btc_15m)
+                if len(ctx.candles_15m) < 45 or not ctx.orderbook.bids or not ctx.orderbook.asks:
+                    raise ValueError("Недостаточно рыночных данных")
+                return symbol, ctx
+            except Exception as exc:
+                context_errors.append({"symbol": symbol, "error": str(exc)[:160]})
+                return symbol, None
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             contexts = list(
                 pool.map(
-                    lambda s: (s, self.build_market_context(s, ticker_map, btc_15m)),
+                    build_one,
                     core_pairs,
                 )
             )
 
         for sym, ctx in contexts:
+            if ctx is None: continue
             screener_results.append(ctx.screener)
             if not ctx.screener.passed:
                 continue
 
             sym_signals: List[TradeSignal] = []
-            sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
-            sym_signals.extend(evaluate_liquidity_sweep_fvg_strategy(ctx))
-            sym_signals.extend(evaluate_oi_cvd_squeeze_strategy(ctx))
-            sym_signals.extend(evaluate_orb_breakout_strategy(ctx))
-            if sym != "BTCUSDT":
-                sym_signals.extend(evaluate_lead_lag_density_strategy(ctx))
+            if self.settings.get("strategy_mode", "s1_s3") == "legacy":
+                sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
+                sym_signals.extend(evaluate_liquidity_sweep_fvg_strategy(ctx))
+                sym_signals.extend(evaluate_oi_cvd_squeeze_strategy(ctx))
+                sym_signals.extend(evaluate_orb_breakout_strategy(ctx))
+                if sym != "BTCUSDT":
+                    sym_signals.extend(evaluate_lead_lag_density_strategy(ctx))
+            else:
+                s1_s3_sig = generate_s1_s3_signal(
+                    sym,
+                    ctx.candles_15m,
+                    bars_1h=ctx.candles_1h,
+                    min_rr_s3=0.50,
+                    obi_smoothed=ctx.micro.smoothed_obi,
+                )
+                if s1_s3_sig is not None:
+                    sym_signals.append(s1_s3_sig)
 
             for sig in sym_signals:
                 raw_candidates.append(sig)
@@ -156,6 +181,7 @@ class AITradeCombineEngine:
                 pass
 
         return {
+            "context_errors": context_errors,
             "data_source": self.client.last_data_source,
             "live_open_orders": live_orders,
             "live_open_positions": live_positions,

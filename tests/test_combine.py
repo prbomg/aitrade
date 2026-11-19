@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from aitrade.backtest.walk_forward import WalkForwardBacktester
@@ -37,6 +38,10 @@ from aitrade.risk.risk_engine import RiskEngine
 class TestAITradeCombine(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = load_settings()
+        self.settings['offline_simulation'] = True
+        self.settings['exchange'].update(demo_api_key='',demo_api_secret='',live_api_key='',live_api_secret='')
+        offline = patch.object(BybitV5Client, '_public_get', side_effect=RuntimeError('offline test'))
+        offline.start(); self.addCleanup(offline.stop)
         self.client = BybitV5Client(self.settings, allow_offline_fallback=True)
 
     def test_indicators_and_vwap_bands(self) -> None:
@@ -97,37 +102,37 @@ class TestAITradeCombine(unittest.TestCase):
         self.assertTrue(0.0 <= micro.liquidity_behavior_index <= 1.0)
         self.assertGreater(micro.vpin_tof, 0.0)
 
-    def test_risk_engine_5x_liq_and_l2_slippage(self) -> None:
-        engine = AITradeCombineEngine(self.settings)
-        scan = engine.scan_market(symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"], auto_execute_demo=False)
-        self.assertGreaterEqual(scan["approved_sniper_signals_count"], 1)
+    def signal_fixture(self):
+        from aitrade.strategies.base import TradeSignal
+        return TradeSignal('BTCUSDT','TEST','Fixture','15','Buy','Limit',100.,99.,102.,103.,.65,passed_ml_filter=True)
 
-        sig_dict = scan["approved_signals"][0]
-        # Проверяем соблюдение правила 5x дистанции до ликвидации и лимита плеча <= 4.0x
-        self.assertGreaterEqual(sig_dict["stop_to_liq_multiple"], 4.95)
-        self.assertLessEqual(sig_dict["effective_leverage"], 4.0)
-        self.assertLessEqual(sig_dict["dissimilarity_index"], 1.0)
-        self.assertGreaterEqual(sig_dict["expected_return_pct"], sig_dict["cost_threshold_pct"])
+    def test_risk_engine_5x_liq_and_l2_slippage(self):
+        from aitrade.exchange.bybit_v5 import OrderBookSnapshot,OrderBookLevel
+        book=OrderBookSnapshot('BTCUSDT',0,[OrderBookLevel(99.99,10000)],[OrderBookLevel(100.01,10000)])
+        signal=RiskEngine(self.settings).size_and_validate_signal(self.signal_fixture(),book,1000.)
+        self.assertGreater(signal.position_qty,0)
+        self.assertEqual(signal.stop_to_liq_multiple,0.)
+        self.assertIn("unknown_until_exchange_position",signal.features["liquidation_status"])
+        self.assertLessEqual(signal.effective_leverage,4.)
+        bad=self.signal_fixture();bad.take_profit_1=100.1
+        bad=RiskEngine(self.settings).size_and_validate_signal(bad,book,1000.)
+        self.assertEqual(bad.debate_verdict,'REJECTED')
 
     def test_demo_executor_and_walk_forward_backtest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_db = Path(tmpdir) / "test_demo.sqlite3"
             engine = AITradeCombineEngine(self.settings)
             engine.demo_executor = BybitDemoExecutor(self.client, self.settings, db_path=tmp_db)
-            scan = engine.scan_market(symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"], auto_execute_demo=True)
-            self.assertGreaterEqual(len(scan["executed_demo_orders"]), 1)
+            signal=self.signal_fixture()
+            signal.position_qty=1.;signal.position_size_usd=100.;signal.effective_leverage=1.
+            result=engine.demo_executor.execute_signal(signal)
+            self.assertEqual(result['execution_venue'],'LOCAL_BYBIT_DEMO_SIM')
             journal = engine.demo_executor.list_recent_trades()
-            self.assertEqual(len(journal), len(scan["executed_demo_orders"]))
+            self.assertEqual(len(journal), 1)
 
-        bt = WalkForwardBacktester(self.settings).run_comparison_backtest(
-            symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]
-        )
-        sniper = bt["aitrade_sniper_combine"]
-        naive = bt["naive_baseline"]
-        self.assertGreater(sniper["total_trades"], 0)
-        # Снайперский режим должен снижать избыточный оборот (Turnover) и повышать Win Rate
-        self.assertLess(sniper["total_trades"], naive["total_trades"])
-        self.assertGreaterEqual(sniper["win_rate_pct"], naive["win_rate_pct"])
+        # Production research never substitutes synthetic candles for a network error.
+        with self.assertRaises(RuntimeError):
+            WalkForwardBacktester(self.settings).run_comparison_backtest(symbols=['BTCUSDT'])
 
 
 if __name__ == "__main__":

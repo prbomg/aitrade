@@ -46,3 +46,4 @@ def load_settings(config_path: Path = CONFIG_PATH) -> Dict[str, Any]:
     settings["telegram_bot_token"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     settings["telegram_chat_id"] = os.environ.get("TELEGRAM_CHAT_ID", "")
     return settings
+

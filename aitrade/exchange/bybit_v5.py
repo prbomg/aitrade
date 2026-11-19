@@ -114,7 +114,7 @@ class BybitV5Client:
         self._orderbook_history: Dict[str, List[OrderBookSnapshot]] = {}
         self.last_data_source: str = "bybit_v5_live"
         self.last_network_error: str = ""
-        self._ssl_ctx = ssl._create_unverified_context()
+        self._ssl_ctx = ssl.create_default_context()
 
     # -------------------------------------------------------------------------
     # Низкоуровневые HTTP и HMAC-SHA256 методы Bybit V5
@@ -149,22 +149,8 @@ class BybitV5Client:
             with urllib.request.urlopen(req, timeout=timeout, context=self._ssl_ctx) as resp:
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw)
-        except Exception as urllib_err:
-            # Резервный запрос через системный macOS curl (LibreSSL)
-            cmd = ["curl", "-sS", "-k", "--max-time", str(int(timeout)), "-X", method.upper()]
-            for hk, hv in req_headers.items():
-                cmd.extend(["-H", f"{hk}: {hv}"])
-            if body_bytes is not None:
-                cmd.extend(["-d", body_bytes.decode("utf-8")])
-            cmd.append(url)
-            try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 1.5)
-                if proc.returncode == 0 and proc.stdout.strip().startswith("{"):
-                    return json.loads(proc.stdout)
-                err_detail = proc.stderr.strip() or proc.stdout.strip()[:120] or str(urllib_err)
-            except Exception:
-                err_detail = str(urllib_err)
-            raise RuntimeError(err_detail)
+        except Exception as exc:
+            raise RuntimeError("Bybit transport: " + type(exc).__name__) from None
 
     def _public_get(self, path: str, params: Dict[str, Any], timeout: float = 4.5) -> Dict[str, Any]:
         query_str = urllib.parse.urlencode(params)

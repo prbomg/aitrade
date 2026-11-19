@@ -1,1388 +1,1442 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AItrade Control Center — Снайперский ИИ-комбайн Bybit V5</title>
-  <style>
-    :root {
-      --bg: #070b14;
-      --surface: #0f172a;
-      --card: #131c31;
-      --border: #1e293b;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --amber: #f59e0b;
-      --green: #10b981;
-      --red: #ef4444;
-      --blue: #3b82f6;
-      --indigo: #6366f1;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.45;
-    }
-    .topbar {
-      background: linear-gradient(90deg, #0b1120 0%, #111827 100%);
-      border-bottom: 1px solid var(--border);
-      padding: 16px 28px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 16px;
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }
-    .brand { display: flex; align-items: center; gap: 14px; }
-    .logo-badge {
-      width: 42px; height: 42px; border-radius: 11px;
-      background: linear-gradient(135deg, var(--amber), #ea580c);
-      color: #000; font-weight: 900; font-size: 19px;
-      display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35);
-    }
-    .brand h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
-    .brand-sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
-    .status-pills { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .status-chip {
-      background: #131c31;
-      border: 1px solid #263554;
-      padding: 7px 13px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 600;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .dot-live { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; box-shadow: 0 0 8px var(--green); }
-    .container { max-width: 1480px; margin: 0 auto; padding: 22px 28px 48px; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AItrade V5 Pro Terminal (UI v2.0) — Разгон $1k→$10k & ML Core</title>
+<style>
+:root { --bg:#090d16; --card:#111827; --card2:#162033; --border:#24324d; --text:#e2e8f0; --muted:#94a3b8; }
+* { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+body { margin:0; background:var(--bg); color:var(--text); font-size:13px; }
 
-    /* KPI ROW */
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 14px;
-      margin-bottom: 22px;
-    }
-    .kpi-box {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 16px 18px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.22);
-    }
-    .kpi-lbl { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
-    .kpi-val { font-size: 25px; font-weight: 800; margin-top: 6px; }
-    .kpi-sub { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+/* Шапка + Единая полоса KPI */
+.topbar { position:sticky; top:0; z-index:200; background:rgba(15,23,42,0.96); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); padding:9px 18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+.brand { font-size:15px; font-weight:800; color:#fff; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.badge { padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600; display:inline-block; white-space:nowrap; }
+.badge-green { background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); }
+.badge-amber { background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); }
+.badge-blue { background:rgba(56,189,248,0.18); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); }
+.badge-purple { background:rgba(167,139,250,0.18); color:#c4b5fd; border:1px solid rgba(167,139,250,0.4); }
+.badge-red { background:rgba(239,68,68,0.18); color:#f87171; border:1px solid rgba(239,68,68,0.4); }
 
-    /* NAVIGATION TABS */
-    .nav-tabs {
-      display: flex;
-      gap: 8px;
-      background: #0b1120;
-      padding: 8px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      margin-bottom: 22px;
-      flex-wrap: wrap;
-    }
-    .tab-btn {
-      background: transparent;
-      color: var(--muted);
-      border: none;
-      padding: 11px 18px;
-      border-radius: 9px;
-      font-size: 13.5px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .tab-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.04); }
-    .tab-btn.active {
-      background: var(--blue);
-      color: #fff;
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
-    }
-    .tab-count {
-      background: rgba(0, 0, 0, 0.28);
-      padding: 2px 7px;
-      border-radius: 99px;
-      font-size: 11px;
-    }
-    .tab-pane { display: none; }
-    .tab-pane.active { display: block; animation: fadeIn 0.2s ease; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+.controls-row { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+button, select, input { background:#1e293b; color:#fff; border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer; transition:0.15s; }
+button:hover { filter:brightness(1.14); }
+.btn-primary { background:#0284c7; border-color:#38bdf8; font-weight:600; }
+.btn-success { background:#059669; border-color:#10b981; font-weight:600; }
+.btn-danger { background:#dc2626; border-color:#ef4444; font-weight:600; }
+.btn-warning { background:#d97706; border-color:#f59e0b; font-weight:600; }
+.btn-purple { background:#7c3aed; border-color:#a78bfa; font-weight:600; }
+.btn-ghost { background:#162033; border-color:#334155; color:#cbd5e1; font-weight:600; }
+.btn-sm { padding:4px 8px; font-size:11px; }
+.btn-armed { background:#b91c1c !important; border-color:#fca5a5 !important; animation:pulseRed 0.8s infinite alternate; }
+@keyframes pulseRed { from { box-shadow:0 0 4px #ef4444; } to { box-shadow:0 0 14px #ef4444; } }
 
-    /* PANELS & SIGNAL CARDS */
-    .panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 20px 22px;
-      margin-bottom: 20px;
-    }
-    .panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 12px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    .panel-header h2 { margin: 0; font-size: 17px; font-weight: 700; }
-    .filter-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .search-input {
-      background: #070b14;
-      border: 1px solid #263554;
-      color: #fff;
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 13px;
-    }
+/* Компактная полоса KPI */
+.kpi-strip { background:#0d1322; border-bottom:1px solid var(--border); padding:8px 18px; display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
+@media (max-width:1100px){ .kpi-strip { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:640px){ .kpi-strip { grid-template-columns:repeat(2,1fr); } }
+.kpi-mini { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:7px 11px; display:flex; flex-direction:column; justify-content:center; }
+.kpi-mini-lbl { color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:0.3px; }
+.kpi-mini-val { font-size:16px; font-weight:800; margin-top:2px; }
+.kpi-mini-sub { font-size:10.5px; color:var(--muted); margin-top:1px; }
 
-    .sig-card {
-      background: var(--card);
-      border: 1px solid #263554;
-      border-radius: 13px;
-      padding: 18px;
-      margin-bottom: 16px;
-      transition: border-color 0.15s ease;
-    }
-    .sig-card:hover { border-color: var(--blue); }
-    .sig-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .sig-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .sig-rank { color: var(--amber); font-weight: 800; font-size: 14px; }
-    .sig-symbol { font-size: 19px; font-weight: 800; letter-spacing: -0.3px; }
-    .sig-strat { color: #cbd5e1; font-size: 13.5px; font-weight: 600; margin-left: 4px; }
-    .sig-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+.container { padding:12px 18px; max-width:1720px; margin:0 auto; }
 
-    .pill {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 7px;
-      font-size: 11.5px;
-      font-weight: 700;
-    }
-    .pill-long { background: rgba(16, 185, 129, 0.16); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.3); }
-    .pill-short { background: rgba(239, 68, 68, 0.16); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
-    .pill-tf { background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
-    .pill-win { background: rgba(245, 158, 11, 0.18); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.35); }
-    .pill-edge { background: rgba(59, 130, 246, 0.16); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+/* Выдвижной ящик (Drawer): Ручной ордер + Smart Guard + Логи */
+.drawer-panel { display:none; background:var(--card2); border:1px solid #38bdf8; border-radius:10px; padding:12px 14px; margin-bottom:12px; box-shadow:0 8px 25px rgba(0,0,0,0.45); }
+.drawer-panel.open { display:block; }
+.calc-preview { background:#090d16; border:1px dashed #38bdf8; border-radius:7px; padding:7px 11px; font-size:11.5px; color:#cbd5e1; margin-top:6px; display:flex; gap:14px; flex-wrap:wrap; }
 
-    .sig-metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
-      gap: 10px;
-      background: #090e1a;
-      border: 1px solid var(--border);
-      padding: 12px 14px;
-      border-radius: 10px;
-      margin-bottom: 12px;
-    }
-    .m-cell { display: flex; flex-direction: column; }
-    .m-lbl { font-size: 11px; color: var(--muted); }
-    .m-val { font-size: 13.5px; font-weight: 700; margin-top: 2px; }
+/* Пульт управления стратегиями (3 компактные карточки) */
+.strategy-deck { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:12px; }
+@media (max-width:1150px){ .strategy-deck { grid-template-columns:1fr; } }
+.strat-card { background:var(--card); border:2px solid var(--border); border-radius:10px; padding:11px 14px; display:flex; flex-direction:column; justify-content:space-between; }
+.strat-card.active-booster { border-color:#a78bfa; box-shadow:0 0 15px rgba(139,92,246,0.16); }
+.strat-card.active-core { border-color:#38bdf8; box-shadow:0 0 15px rgba(56,189,248,0.16); }
+.strat-header { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px; }
+.strat-title { font-size:13.5px; font-weight:700; color:#fff; margin:0; }
+.strat-metrics { display:grid; grid-template-columns:1fr 1fr; gap:6px; background:rgba(9,13,22,0.7); padding:7px 9px; border-radius:7px; margin-bottom:9px; font-size:11px; }
+.strat-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.btn-big-toggle { width:100%; padding:8px 12px; font-size:12.5px; font-weight:700; border-radius:7px; text-align:center; }
 
-    .sig-rationale-title { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
-    .rationale-list { margin: 4px 0 10px; padding-left: 18px; color: #e2e8f0; font-size: 13px; }
-    .rationale-list li { margin-bottom: 3px; }
-    .debate-banner {
-      background: rgba(59, 130, 246, 0.09);
-      border-left: 3px solid var(--blue);
-      padding: 9px 12px;
-      border-radius: 6px;
-      font-size: 12.5px;
-      color: #dbeafe;
-      margin-bottom: 8px;
-    }
-    .invalidation-line {
-      font-size: 12px;
-      color: #fca5a5;
-      background: rgba(239, 68, 68, 0.07);
-      padding: 6px 10px;
-      border-radius: 6px;
-    }
+/* Постоянный виджет активных позиций (Sticky Live Positions Bar) */
+.live-pos-banner { display:none; background:linear-gradient(180deg, rgba(16,185,129,0.08), rgba(17,24,39,0.95)); border:1px solid rgba(16,185,129,0.45); border-radius:10px; padding:10px 14px; margin-bottom:12px; }
+.live-pos-banner.visible { display:block; }
 
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px; }
-    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+.panel { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:12px; }
+.panel-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px; }
+.panel-title { font-size:13.5px; font-weight:700; color:#fff; margin:0; }
 
-    .green { color: var(--green); }
-    .red { color: var(--red); }
-    .amber { color: var(--amber); }
-    .muted { color: var(--muted); }
+/* Вкладки со счетчиками */
+.tabs { display:flex; gap:7px; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:8px; flex-wrap:wrap; }
+.tab-btn { background:#151f32; color:var(--muted); border:1px solid var(--border); padding:7px 12px; border-radius:7px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; }
+.tab-btn.active { background:#0284c7; color:#fff; border-color:#38bdf8; }
+.tab-count { background:rgba(15,23,42,0.75); color:#fff; padding:1px 6px; border-radius:99px; font-size:10.5px; font-weight:700; }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
 
-    .arch-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 14px;
-      margin-top: 14px;
-    }
-    .arch-box {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px 16px;
-    }
-    .arch-box h4 { margin: 0 0 6px 0; color: var(--amber); font-size: 14px; }
-    .arch-box p { margin: 0; font-size: 12.5px; color: #cbd5e1; }
-  </style>
+/* Таблицы с поддержкой мобильного скролла и фиксированной 1-й колонкой */
+.table-wrap { width:100%; overflow-x:auto; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th, td { padding:6px 8px; text-align:left; border-bottom:1px solid rgba(255,255,255,0.06); white-space:nowrap; }
+th { color:var(--muted); font-weight:600; background:rgba(15,23,42,0.6); }
+table th:first-child, table td:first-child { position:sticky; left:0; background:var(--card); z-index:2; }
+.pos-green { color:#34d399; font-weight:600; }
+.pos-red { color:#f87171; font-weight:600; }
+
+.form-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px; }
+.form-group { display:flex; flex-direction:column; gap:3px; }
+.form-group label { font-size:11px; color:var(--muted); }
+
+/* Прогресс и SVG График Кривой Капитала */
+.booster-top-grid { display:grid; grid-template-columns:1.35fr 1fr; gap:12px; margin-bottom:10px; }
+@media (max-width:1050px){ .booster-top-grid { grid-template-columns:1fr; } }
+.progress-wrap { width:100%; background:#090d16; border:1px solid var(--border); border-radius:9px; height:22px; overflow:hidden; position:relative; margin:6px 0 10px 0; }
+.progress-bar { height:100%; background:linear-gradient(90deg, #059669, #0284c7, #7c3aed); transition:width 0.4s; }
+.progress-label { position:absolute; top:2px; left:10px; font-size:11px; font-weight:700; color:#fff; }
+.chart-box { background:#090d16; border:1px solid var(--border); border-radius:9px; padding:8px 10px; height:135px; display:flex; flex-direction:column; justify-content:space-between; }
+
+/* Журнал событий с чип-фильтрами */
+.log-chips { display:flex; gap:5px; flex-wrap:wrap; }
+.log-chip { padding:3px 8px; font-size:11px; border-radius:6px; background:#162033; color:var(--muted); border:1px solid var(--border); cursor:pointer; }
+.log-chip.active { background:#0284c7; color:#fff; border-color:#38bdf8; }
+.log-box { background:#090d16; border:1px solid var(--border); border-radius:8px; padding:8px 10px; height:145px; overflow-y:auto; font-family:monospace; font-size:11px; line-height:1.45; color:#cbd5e1; }
+
+.toast { position:fixed; bottom:18px; right:18px; background:#0284c7; color:#fff; padding:11px 16px; border-radius:8px; font-weight:600; display:none; z-index:9999; box-shadow:0 6px 20px rgba(0,0,0,0.5); }
+
+.drawer-panel, .drawer, .dropdown-panel, .top-drawer, #autopilot-drawer, .controls-drawer { margin-top: 12px !important; padding-top: 16px !important; overflow: visible !important; z-index: 1000 !important; }
+</style>
 </head>
 <body>
-  <div class="topbar">
-    <div class="brand">
-      <div class="logo-badge">AI</div>
+
+<!-- ВЕРХНЯЯ ПАНЕЛЬ -->
+<div class="topbar">
+  <div class="brand">
+    <span>⚡ AItrade V5 Pro</span>
+    <span class="badge badge-green" id="conn-badge">Bybit Demo LIVE</span>
+    <span class="badge badge-amber" id="master-status-badge">⏸ Автопилоты: ОСТАНОВЛЕНЫ</span>
+    <span class="badge badge-blue" id="btc-regime-badge" title="Фильтр поводыря BTCUSDT (5м/15м импульс + CVD)">⚖️ BTC: NEUTRAL</span>
+    <span class="badge badge-blue" id="x-news-badge" title="Живой сентимент X (Twitter) и новостных лент">🐦 X/News: NEUTRAL</span>
+    <span class="badge badge-blue" id="ws-badge">📡 WebSocket: Подключение...</span>
+    <span class="badge badge-green" id="chaser-badge" title="Smart Limit Chaser: исполнение ордеров Post-Only (0.02% Maker вместо 0.055% Taker)">💎 Maker Chaser: ВКЛ</span>
+    <span style="font-size:11.5px;color:var(--muted)" id="scan-time-label">Скан: —</span>
+  </div>
+  <div class="controls-row">
+    <button type="button" id="btn-toggle-env" class="btn-purple">🧪 Demo ⇄ 💰 Real Mainnet ▾</button>
+    <button type="button" id="btn-toggle-drawer" class="btn-ghost">⚙️ Ручной ордер & Smart Guard ▾</button>
+    <button type="button" id="btn-toggle-logs" class="btn-ghost">📟 Журнал событий ▾</button>
+    <button type="button" id="btn-sound-toggle" class="btn-ghost" title="Звуковое оповещение при сигнале A+ или открытии сделки">🔔 Звук: ВКЛ</button>
+    <button type="button" id="btn-scan-only" class="btn-primary">🔍 Обновить скан</button>
+    <button type="button" id="btn-stop-all-top" class="btn-warning">🟢 Автопилоты активны (Нажмите для паузы)</button>
+    <button type="button" id="btn-refresh">🔄</button>
+  </div>
+</div>
+
+<!-- КОМПАКТНАЯ ЕДИНАЯ ПОЛОСА KPI -->
+<div class="kpi-strip">
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Баланс Маржи (USDT)</span><span class="kpi-mini-val" id="kpi-usdt">$0.00</span><span class="kpi-mini-sub" id="kpi-equity">Эквити: $0.00</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">🚀 Капитал Разгона ($1k→$10k)</span><span class="kpi-mini-val pos-green" id="kpi-booster-eq">$1,000.00</span><span class="kpi-mini-sub" id="kpi-booster-floor">Порог снижения риска: $920.00</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Позиции / Ордера)</span><span class="kpi-mini-val" id="kpi-pos-orders">0 поз. / 0 орд.</span><span class="kpi-mini-sub">Защита TP1 50% + БУ активна</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Нереализованный PnL</span><span class="kpi-mini-val" id="kpi-upnl">$0.00</span><span class="kpi-mini-sub">По текущим сделкам</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Реализованный PnL (журнал)</span><span class="kpi-mini-val" id="kpi-rpnl">$0.00</span><span class="kpi-mini-sub" id="kpi-winrate">Win Rate: —</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Поток WebSocket L2 (20мс)</span><span class="kpi-mini-val" id="kpi-ws">0 тиков</span><span class="kpi-mini-sub" id="kpi-ws-sub">Загрузка потока</span></div>
+</div>
+
+<div class="container"><div id="runtime-status" role="status" style="padding:12px;margin-bottom:10px;border:1px solid #f59e0b;border-radius:6px">Загрузка состояния сервиса…</div>
+
+  <!-- ВЫДВИЖНОЙ ЯЩИК 0: ПЕРЕКЛЮЧАТЕЛЬ DEMO <-> REAL MAINNET И ПРЕДТОРГОВЫЙ ЧЕК-ЛИСТ -->
+  <div class="drawer-panel" id="drawer-env" style="border-color:#a78bfa">
+    <div class="panel-header">
+      <h3 class="panel-title">🔐 Переключатель контура «🧪 Bybit Demo ⇄ 💰 Bybit Real Mainnet» и Предторговый Чек-лист</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="badge badge-green" id="env-active-mode-badge">Активен: 🧪 BYBIT DEMO</span>
+        <button type="button" class="btn-ghost btn-sm" id="btn-close-env">✖ Свернуть</button>
+      </div>
+    </div>
+
+    <div class="booster-top-grid" style="margin-bottom:8px">
+      <!-- Левая колонка: Хранилище ключей и кнопки переключения -->
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+        <div style="font-weight:700;margin-bottom:8px;color:#fff">1. Защищенное хранилище API-ключей (env_vault.json, chmod 600)</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">
+          Текущий ключ Demo: <b style="color:#34d399" id="env-demo-masked">—</b> &nbsp;|&nbsp;
+          Текущий ключ Mainnet: <b style="color:#c4b5fd" id="env-main-masked">Не задан</b>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Контур для записи ключей</label>
+            <select id="env-key-target">
+              <option value="mainnet" selected>💰 Bybit Real Mainnet (api.bybit.com)</option>
+              <option value="demo">🧪 Bybit Demo (api-demo.bybit.com)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <input type="text" id="env-api-key" placeholder="Вставьте API Key..." style="width:190px">
+          </div>
+          <div class="form-group">
+            <label>API Secret</label>
+            <input type="password" id="env-api-secret" placeholder="Вставьте API Secret..." style="width:190px">
+          </div>
+          <div class="form-group" style="padding-top:15px">
+            <button type="button" id="btn-save-env-keys" class="btn-primary">💾 Сохранить ключи</button>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button type="button" id="btn-run-checklist" class="btn-purple">📋 1. Запустить предторговый чек-лист (5 проверок)</button>
+          <button type="button" id="btn-switch-mainnet" class="btn-danger">💰 2. ВКЛЮЧИТЬ БОЕВОЙ REAL MAINNET</button>
+          <button type="button" id="btn-switch-demo" class="btn-success">🧪 Вернуться на Bybit Demo</button>
+        </div>
+      </div>
+
+      <!-- Правая колонка: Результаты предторгового чек-листа -->
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-weight:700;color:#fff">📋 Предторговый аудит безопасности (Pre-Flight Checklist)</span>
+          <span style="font-size:11px;color:var(--muted)" id="env-chk-time">Проверка: —</span>
+        </div>
+        <div id="env-chk-summary" style="font-size:12px;font-weight:700;color:#fbbf24;margin-bottom:8px">
+          Нажмите «📋 Запустить предторговый чек-лист» для проверки ключей, прав фьючерсов, отсутствия Withdraw и баланса UTA.
+        </div>
+        <div id="env-chk-list" style="display:flex;flex-direction:column;gap:5px;font-size:11.5px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ВЫДВИЖНОЙ ЯЩИК 1: РУЧНОЙ ОРДЕР И КАЛЬКУЛЯТОР РИСКА + SMART GUARD -->
+  <div class="drawer-panel" id="drawer-settings">
+    <div class="panel-header">
+      <h3 class="panel-title">🎛 Ручной ордер (с живым калькулятором риска в $) и Настройки защитника Smart Guard</h3>
+      <button type="button" class="btn-ghost btn-sm" id="btn-close-drawer">✖ Свернуть панель</button>
+    </div>
+    <div class="form-row" style="border-bottom:1px solid var(--border);padding-bottom:8px">
+      <div class="form-group"><label>Монета</label><select id="manual-symbol"></select></div>
+      <div class="form-group"><label>Тип</label><select id="manual-type"><option value="Market">Market</option><option value="Limit">Limit</option></select></div>
+      <div class="form-group"><label for="manual-limit-price">Цена для Limit</label><input type="number" id="manual-limit-price" min="0" step="any" placeholder="Укажите цену" style="width:115px"></div>
+      <div class="form-group"><label>Кол-во монет</label><input type="number" id="manual-qty" value="0.02" step="0.001" style="width:90px"></div>
+      <div class="form-group"><label>TP2 % (TP1=½)</label><input type="number" id="manual-tp-pct" value="1.6" step="0.1" style="width:80px"></div>
+      <div class="form-group"><label>SL %</label><input type="number" id="manual-sl-pct" value="0.8" step="0.1" style="width:75px"></div>
+      <div class="form-group"><label>Плечо</label><input type="number" id="cfg-leverage" value="3" min="1" max="15" style="width:65px"></div>
+      <div class="form-group" style="padding-top:15px;flex-direction:row;gap:6px">
+        <button type="button" id="btn-manual-buy" class="btn-success">🚀 Открыть Лонг (Split TP)</button>
+        <button type="button" id="btn-manual-sell" class="btn-danger">🔻 Открыть Шорт (Split TP)</button>
+      </div>
+    </div>
+    <div class="calc-preview" id="manual-calc-box">
+      <span>💵 Рыночная цена: <b id="calc-px">—</b></span>
+      <span>📦 Номинал позиции: <b id="calc-notional">$0.00</b></span>
+      <span>🏦 Требуемая маржа: <b id="calc-margin">$0.00</b></span>
+      <span>🛡 Риск при Stop-Loss: <b class="pos-red" id="calc-risk">-$0.00</b></span>
+      <span>🎯 Потенциал TP2: <b class="pos-green" id="calc-reward">+$0.00</b></span>
+    </div>
+    <div class="form-row" style="padding-top:8px;margin-bottom:0">
+      <div class="form-group"><label>🛡 Smart Guard</label><select id="sg-enabled"><option value="1">ВКЛ (5с цикл)</option><option value="0">ВЫКЛ</option></select></div>
+      <div class="form-group"><label>🎯 Авто TP1 (50%)</label><select id="sg-split"><option value="1">Да (Reduce-Only)</option><option value="0">Нет</option></select></div>
+      <div class="form-group"><label>Безубыток при +%</label><input type="number" id="sg-be-pct" value="0.55" step="0.05" style="width:95px"></div>
+      <div class="form-group"><label>Шаг Трейлинга %</label><input type="number" id="sg-trail-pct" value="0.40" step="0.05" style="width:85px"></div>
+      <div class="form-group"><label>🛡 BTC & Корреляция</label><select id="rg-enabled"><option value="1">ВКЛ (Блок против BTC)</option><option value="0">ВЫКЛ</option></select></div>
+      <div class="form-group"><label>Макс. в 1 секторе</label><input type="number" id="rg-max-sector" value="1" min="1" max="4" style="width:65px"></div>
+      <div class="form-group"><label>Макс. в 1 сторону</label><input type="number" id="rg-max-dir" value="2" min="1" max="6" style="width:65px"></div>
+      <div class="form-group"><label>⏱ Time-Stop</label><select id="ts-enabled"><option value="1">ВКЛ</option><option value="0">ВЫКЛ</option></select></div>
+      <div class="form-group"><label>Таймер (мин)</label><input type="number" id="ts-minutes" value="45" min="10" max="240" step="5" style="width:65px"></div>
+      <div class="form-group"><label>💎 Limit Chaser (Post-Only)</label><select id="lc-mode"><option value="hybrid">ВКЛ (Post-Only + Market фолбэк)</option><option value="strict">Строгий Post-Only (0.02%)</option><option value="off">ВЫКЛ (Обычный Market)</option></select></div>
+      <div class="form-group" style="padding-top:15px"><button type="button" id="btn-save-sg" class="btn-purple">💾 Сохранить параметры на сервер</button></div>
+    </div>
+  </div>
+
+  <!-- ВЫДВИЖНОЙ ЯЩИК 2: ЖУРНАЛ СОБЫТИЙ С ФИЛЬТРАМИ -->
+  <div class="drawer-panel" id="drawer-logs">
+    <div class="panel-header">
+      <h3 class="panel-title">📟 Журнал событий сервера (24/7)</h3>
+      <div class="log-chips" id="log-filter-bar">
+        <span class="log-chip active" data-filter="ALL">Все события</span>
+        <span class="log-chip" data-filter="TRADE">🚀 Только сделки</span>
+        <span class="log-chip" data-filter="GUARD">🛡 Защита / БУ</span>
+        <span class="log-chip" data-filter="ALERT">⚠️ Стоп-краны и Важное</span>
+      </div>
+    </div>
+    <div class="log-box" id="log-box">Загрузка...</div>
+  </div>
+
+  <!-- ПУЛЬТ УПРАВЛЕНИЯ СТРАТЕГИЯМИ (3 КАРТОЧКИ) -->
+  <div class="strategy-deck">
+    <div class="strat-card" id="card-booster">
       <div>
-        <h1>AItrade Control Center — Снайперский ИИ-комбайн Bybit V5</h1>
-        <div class="brand-sub">Воронка: Coins in Play Screener &rarr; 5 Интрадей-Архетипов &rarr; ML Meta-Labeling (&lambda;=2.0, DI&le;1.0) &rarr; Multi-Agent Debate &rarr; RiskEngine (5x Liq Rule)</div>
+        <div class="strat-header">
+          <h3 class="strat-title">🚀 1. Автопилот Разгона ($1,000 → $10,000)</h3>
+          <span class="badge badge-amber" id="badge-booster-state">ВЫКЛЮЧЕН</span>
+        </div>
+        <div class="strat-metrics">
+          <div>Капитал: <b class="pos-green" id="deck-b-eq">$1,000.00</b></div>
+          <div>Этап: <b id="deck-b-phase">Фаза 1 (дно $920)</b></div>
+          <div>Риск (Келли+HM): <b id="deck-b-risk">$12.00 (1.2%)</b></div>
+          <div>Фоновых циклов: <b id="deck-b-cycles">0</b></div>
+        </div>
+      </div>
+      <div class="strat-actions">
+        <button type="button" id="btn-toggle-booster" class="btn-big-toggle btn-purple">🚀 ВКЛЮЧИТЬ АВТОПИЛОТ РАЗГОНА</button>
+        <button type="button" id="btn-once-booster" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход только по Разгону (A+)</button>
       </div>
     </div>
-    <div class="status-pills">
-      <span class="status-chip"><span class="dot-live"></span> Источник: <strong>deterministic_market_replay</strong></span>
-      <span class="status-chip">🔑 Ключи Bybit Demo: <strong>ПОДКЛЮЧЕНЫ</strong></span>
-      <span class="status-chip">🕒 Обновлено: <strong>11.11.2026 19:16:45</strong></span>
+
+    <div class="strat-card" id="card-core">
+      <div>
+        <div class="strat-header">
+          <h3 class="strat-title">🎯 2. Автопилот Основной ИИ (торговые пары)</h3>
+          <span class="badge badge-amber" id="badge-core-state">ВЫКЛЮЧЕН</span>
+        </div>
+        <div class="strat-metrics">
+          <div>Мин. Оценка сигнала: <b><input type="number" id="core-min-prob" value="58" min="50" max="90" step="1" style="width:48px;padding:1px 4px">%</b></div>
+          <div>Макс. сделок: <b><input type="number" id="core-max-pos" value="3" min="1" max="8" step="1" style="width:42px;padding:1px 4px"></b></div>
+          <div>Плечо контура: <b id="deck-c-lev">3x (Split TP1)</b></div>
+          <div>Фоновых циклов: <b id="deck-c-cycles">0</b></div>
+        </div>
+      </div>
+      <div class="strat-actions">
+        <button type="button" id="btn-toggle-core" class="btn-big-toggle btn-primary">🎯 ВКЛЮЧИТЬ ОСНОВНОЙ АВТОПИЛОТ</button>
+        <button type="button" id="btn-once-core" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход по Основной ИИ</button>
+      </div>
+    </div>
+
+    <div class="strat-card" id="card-master">
+      <div>
+        <div class="strat-header">
+          <h3 class="strat-title">🛑 3. Главный пульт & Расписание</h3>
+          <span class="badge badge-green" id="badge-guard-state">🛡 Smart Guard АКТИВЕН</span>
+        </div>
+        <div class="strat-metrics">
+          <div>Интервал цикла:
+            <select id="autopilot-interval" style="padding:2px 5px">
+              <option value="60">1 мин</option>
+              <option value="180">3 мин</option>
+              <option value="300" selected>5 мин</option>
+              <option value="900">15 мин</option>
+            </select>
+          </div>
+          <div>След. скан через: <b id="deck-next-timer">—</b></div>
+          <div style="grid-column:span 2">Статус: <b id="deck-active-summary" style="color:#fbbf24">Все автопилоты выключены</b></div>
+        </div>
+      </div>
+      <div class="strat-actions">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;width:100%">
+          <button type="button" id="btn-enable-both" class="btn-success" style="font-weight:700;padding:8px">⚡ ВКЛЮЧИТЬ ОБА</button>
+          <button type="button" id="btn-stop-all" class="btn-warning" style="font-weight:700;padding:8px">⏸ ВЫКЛЮЧИТЬ ВСЕ</button>
+        </div>
+        <button type="button" id="btn-emergency-stop" class="btn-danger btn-sm" style="width:100%;padding:6px">🚨 АВАРИЙНЫЙ СТОП (Стоп автопилотов + Закрыть все сделки)</button>
+      </div>
     </div>
   </div>
 
-  <div class="container">
-    <!-- KPI METRICS -->
-    <div class="kpi-grid">
-      <div class="kpi-box">
-        <div class="kpi-lbl">Демо-депозит (Bybit Unified USDT)</div>
-        <div class="kpi-val">$10,000.00</div>
-        <div class="kpi-sub">Фиксированный риск: 0.50% на сделку | Плечо &le; 4.0x</div>
+  <!-- ПОСТОЯННЫЙ ВИДЖЕТ АКТИВНЫХ ПОЗИЦИЙ В РЫНКЕ (АВТОМАТИЧЕСКИ ПОЯВЛЯЕТСЯ ПРИ НАЛИЧИИ ПОЗИЦИЙ) -->
+  <div class="live-pos-banner" id="sticky-pos-banner">
+    <div class="panel-header" style="margin-bottom:6px">
+      <h3 class="panel-title">🟢 АКТИВНЫЕ ПОЗИЦИИ В РЫНКЕ (Оперативное управление в 1 клик)</h3>
+      <button type="button" id="btn-close-all-sticky" class="btn-danger btn-sm">🚨 Закрыть ВСЕ позиции</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Монета</th><th>Контур / Сектор</th><th>Сторона</th><th>Объем</th><th>Вход</th><th>Марк. цена</th><th>PnL ($)</th><th>Таймер</th><th>TP1 (50%)</th><th>TP2</th><th>Stop Loss</th><th>Защита</th><th>Быстрые действия</th></tr></thead>
+        <tbody id="sticky-positions-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- НАВИГАЦИОННЫЕ ВКЛАДКИ С ЖИВЫМИ СЧЕТЧИКАМИ -->
+  <div class="tabs" id="tabs-bar">
+    <button type="button" class="tab-btn active" data-tab="tab-booster">🚀 Разгон $1k→$10k & OI Squeeze <span class="tab-count" id="cnt-booster">0</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-signals">🎯 Сигналы Основной ИИ <span class="tab-count" id="cnt-signals">0</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-positions">📊 Позиции и Ордера <span class="tab-count" id="cnt-pos">0</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-ws">⚡ WebSocket L2 + Ликвидации <span class="tab-count" id="cnt-ws">—</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-screener">🔥 Скринер «Монеты в игре» <span class="tab-count" id="cnt-scr">—</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-xnews">🐦 Радар X & Новости <span class="tab-count" id="cnt-xnews">0</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-ml">🧠 Автокалибровка ML <span class="tab-count" id="cnt-ml">58%</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-history">💰 История Closed PnL <span class="tab-count" id="cnt-hist">0</span></button>
+  </div>
+
+  <!-- ВКЛАДКА 1: РАЗГОН $1k -> $10k + SVG EQUITY CURVE + OI SQUEEZE -->
+  <div id="tab-booster" class="tab-content active">
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title" id="booster-phase-title">🚀 Стратегия «Deposit Booster: $1,000 → $10,000» (Асимметричный компаундинг + House Money)</h3>
+        <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+          <span class="badge badge-green" id="booster-cb-badge">🛡 Дневной стоп-кран (-3%): В НОРМЕ</span>
+          <button type="button" id="btn-training-mode" class="btn-purple btn-sm" title="Отключает дневной лимит -3% и кулдауны монет для непрерывного обучения ИИ на Demo">🧪 Режим обучения (Без лимита -3%): ВЫКЛ</button>
+          <button type="button" id="btn-unlock-limits" class="btn-success btn-sm" title="Снимает сработавший дневной стоп-кран и кулдауны, сохраняя текущий баланс">🔓 Снять стоп-кран и кулдауны</button>
+          <button type="button" id="btn-reset-booster" class="btn-warning btn-sm" title="Полный перезапуск с $1,000.00 + очистка всех стоп-лимитов">🔄 Полный старт с $1,000 (Сброс всего)</button>
+        </div>
       </div>
-      <div class="kpi-box">
-        <div class="kpi-lbl">Монет «в игре» (Pre-Screener)</div>
-        <div class="kpi-val">20 / 20</div>
-        <div class="kpi-sub">Спред &lt; 0.1% | Защита ATR14/ATR20 &le; 1.5x</div>
-      </div>
-      <div class="kpi-box">
-        <div class="kpi-lbl">Воронка ИИ-фильтрации</div>
-        <div class="kpi-val green">32 &rarr; 8</div>
-        <div class="kpi-sub">Фильтр издержек Cost-Aware (&lambda;=2.0) и DI &le; 1.0</div>
-      </div>
-      <div class="kpi-box">
-        <div class="kpi-lbl">Топ-1 Сигнал (ML Winrate)</div>
-        <div class="kpi-val amber">85.0%</div>
-        <div class="kpi-sub">ADAUSDT (L2_DENSITY_LEAD_LAG_LONG)</div>
+
+      <div class="booster-top-grid">
+        <div>
+          <div class="progress-wrap">
+            <div class="progress-bar" id="booster-progress-bar" style="width:5%"></div>
+            <div class="progress-label" id="booster-progress-text">Прогресс: $1,000.00 → $10,000.00 (1.0x | Условная модель: ~89 шагов по +2.65%)</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+            <div class="kpi-mini"><span class="kpi-mini-lbl">Пик (High-Water Mark)</span><span class="kpi-mini-val pos-green" id="b-hwm">$1,000.00</span><span class="kpi-mini-sub" id="b-floor-status">Порог капитала: $920.00</span></div>
+            <div class="kpi-mini"><span class="kpi-mini-lbl">Риск на вход (Келли+HM)</span><span class="kpi-mini-val" id="b-risk-usd">$12.00 (1.2%)</span><span class="kpi-mini-sub" id="b-house-bonus">Бонус HM: +$0.00</span></div>
+            <div class="kpi-mini"><span class="kpi-mini-lbl">Дневной PnL Разгона</span><span class="kpi-mini-val" id="b-daily-pnl">$0.00</span><span class="kpi-mini-sub" id="b-daily-limit">Стоп-кран дня: -$30.00</span></div>
+          </div>
+        </div>
+        <div class="chart-box">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)">
+            <span>📈 Кривая капитала разгона (Live Equity vs Порог снижения риска)</span>
+            <span id="chart-min-max-lbl">$920 — $1,000</span>
+          </div>
+          <svg id="booster-svg-chart" width="100%" height="95" viewBox="0 0 420 95" preserveAspectRatio="none"></svg>
+        </div>
       </div>
     </div>
 
-    <!-- NAVIGATION TABS -->
-    <div class="nav-tabs">
-      <button class="tab-btn active" onclick="openTab('pane-signals', this)">
-        🎯 1. Снайперские сигналы <span class="tab-count">8</span>
-      </button>
-      <button class="tab-btn" onclick="openTab('pane-screener', this)">
-        📊 2. Скринер «Монеты в игре» <span class="tab-count">20</span>
-      </button>
-      <button class="tab-btn" onclick="openTab('pane-journal', this)">
-        📒 3. Демо-Портфель и Ордера <span class="tab-count">18</span>
-      </button>
-      <button class="tab-btn" onclick="openTab('pane-backtest', this)">
-        📈 4. Walk-Forward Бэктест и Аналитика
-      </button>
-      <button class="tab-btn" onclick="openTab('pane-settings', this)">
-        ⚙️ 5. Параметры Риска и Шлюзов Bybit
-      </button>
-    </div>
-
-    <!-- ВКЛАДКА 1: СНАЙПЕРСКИЕ СИГНАЛЫ -->
-    <div id="pane-signals" class="tab-pane active">
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Одобренные снайперские сигналы с максимальным винрейтом (Bybit V5)</h2>
-          <div class="filter-bar">
-            <input type="text" id="sigSearch" class="search-input" placeholder="Фильтр по монете (напр. XRP, ADA)..." oninput="filterSignals()" />
-          </div>
-        </div>
-        <div id="signalsContainer">
-        <div class="sig-card" data-symbol="ADAUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#1</span>
-              <span class="sig-symbol">ADAUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 85.0%</span>
-              <span class="pill pill-edge">E[R]: +0.578% (Порог: 0.1396%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">0.369015</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">0.367558 (-0.39%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.8R)</span><span class="m-val green">0.371638</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.8R)</span><span class="m-val green">0.373095</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$11,498.62 (1.15x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">219.0x стопа (0.049939)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.49 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.281 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 0.3688 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.78%), потенциал догоняющего движения -0.82%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.09σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=85.0%, E[R]=+0.58% > 2xИздержек=0.14%, DI=0.28).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Разъедание лимитной плотности более чем на 70% рыночными продажами или пробой уровня плотности
-            </div>
-          </div>
-        </div>
-        
-        <div class="sig-card" data-symbol="LINKUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#2</span>
-              <span class="sig-symbol">LINKUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 84.4%</span>
-              <span class="pill pill-edge">E[R]: +0.572% (Порог: 0.14%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">14.9628</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">14.903721 (-0.39%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.8R)</span><span class="m-val green">15.069142</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.8R)</span><span class="m-val green">15.128221</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$11,498.50 (1.15x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">219.0x стопа (2.02479)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.5 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.314 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 14.9561 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.86%), потенциал догоняющего движения -0.89%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.10σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=84.4%, E[R]=+0.57% > 2xИздержек=0.14%, DI=0.31).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Разъедание лимитной плотности более чем на 70% рыночными продажами или пробой уровня плотности
-            </div>
-          </div>
-        </div>
-        
-        <div class="sig-card" data-symbol="XRPUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#3</span>
-              <span class="sig-symbol">XRPUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 83.7%</span>
-              <span class="pill pill-edge">E[R]: +0.566% (Порог: 0.14%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">0.554028</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">0.551841 (-0.39%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.8R)</span><span class="m-val green">0.557965</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.8R)</span><span class="m-val green">0.560152</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$11,500.98 (1.15x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">219.0x стопа (0.075076)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.498 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.28 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 0.5538 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.80%), потенциал догоняющего движения -0.84%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Отрицательный фандинг (-3.80 б.п.) создает топливо для шорт-сквиза вверх. Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.18σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=83.7%, E[R]=+0.57% > 2xИздержек=0.14%, DI=0.28).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Разъедание лимитной плотности более чем на 70% рыночными продажами или пробой уровня плотности
-            </div>
-          </div>
-        </div>
-        
-        <div class="sig-card" data-symbol="NEARUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#4</span>
-              <span class="sig-symbol">NEARUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 83.4%</span>
-              <span class="pill pill-edge">E[R]: +0.563% (Порог: 0.14%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">4.90335</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">4.883989 (-0.39%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.8R)</span><span class="m-val green">4.9382</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.8R)</span><span class="m-val green">4.957561</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$11,498.15 (1.15x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">218.99x стопа (0.663399)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.501 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.281 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 4.9011 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.86%), потенциал догоняющего движения -0.90%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.12σ); Перегретый положительный фандинг (+4.50 б.п.) повышает риск каскада лонгов. Вердикт судьи: ОДОБРЕНО (ML Winrate=83.4%, E[R]=+0.56% > 2xИздержек=0.14%, DI=0.28).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Разъедание лимитной плотности более чем на 70% рыночными продажами или пробой уровня плотности
-            </div>
-          </div>
-        </div>
-        
-        <div class="sig-card" data-symbol="ADAUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#5</span>
-              <span class="sig-symbol">ADAUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Пробой диапазона сессии US_OVERLAP (Session ORB)</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 82.3%</span>
-              <span class="pill pill-edge">E[R]: +0.605% (Порог: 0.1396%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">0.369015</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">0.367209 (-0.49%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.6R)</span><span class="m-val green">0.371905</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.5R)</span><span class="m-val green">0.37353</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$9,444.46 (0.94x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">203.31x стопа (0.001845)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.49 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.281 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>Импульсный пробой верхней границы стартового диапазона сессии 0.3670 (ширина диапазона 0.63%)</li><li>Монета «в игре»: относительный объем RVOL=2.65x в окне US_OVERLAP</li><li>Поддержка потока ордеров в стакане Level-2 (OBI=+0.66, VAMP div=+3.2 bps)</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.09σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=82.3%, E[R]=+0.60% > 2xИздержек=0.14%, DI=0.28).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Правило 2 баров (2-Bar Stall Rule): если цена не обновляет максимум в течение 2 свечей или возвращается внутрь диапазона ORB — выход по рынку
-            </div>
-          </div>
-        </div>
-        
-        <div class="sig-card" data-symbol="BNBUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#6</span>
-              <span class="sig-symbol">BNBUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 82.3%</span>
-              <span class="pill pill-edge">E[R]: +0.553% (Порог: 0.14%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">601.545</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">599.169845 (-0.39%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.8R)</span><span class="m-val green">605.820279</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.8R)</span><span class="m-val green">608.195434</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$11,498.42 (1.15x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">218.99x стопа (81.398125)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.5 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.292 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 601.2743 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.85%), потенциал догоняющего движения -0.88%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.18σ); Перегретый положительный фандинг (+4.50 б.п.) повышает риск каскада лонгов. Вердикт судьи: ОДОБРЕНО (ML Winrate=82.3%, E[R]=+0.55% > 2xИздержек=0.14%, DI=0.29).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Разъедание лимитной плотности более чем на 70% рыночными продажами или пробой уровня плотности
-            </div>
-          </div>
-        </div>
-        
-        <div class="sig-card" data-symbol="SOLUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#7</span>
-              <span class="sig-symbol">SOLUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Отскок от верифицированной L2-плотности + Lead-Lag импульс BTC</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 82.1%</span>
-              <span class="pill pill-edge">E[R]: +0.552% (Порог: 0.14%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">180.4635</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">179.750953 (-0.39%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.8R)</span><span class="m-val green">181.746085</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.8R)</span><span class="m-val green">182.458632</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$11,498.41 (1.15x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">218.99x стопа (24.419337)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.5 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.27 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>В стакане Level-2 обнаружена крупная лимитная плотность $768,645 на уровне 180.3823 (индекс анти-спуфинга LBI=0.95, манипуляций не выявлено)</li><li>Межрыночный фактор Lead-Lag (lag=3): доходность BTC (-0.04%) опережает актив (+0.89%), потенциал догоняющего движения -0.93%</li><li>Сглаженный фильтром Савицкого — Голея дисбаланс стакана OBI=+0.66 и VAMP=+3.2 bps</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Старший 1H тренд бычий (EMA 8 > 21 > 50). Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.12σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=82.1%, E[R]=+0.55% > 2xИздержек=0.14%, DI=0.27).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Разъедание лимитной плотности более чем на 70% рыночными продажами или пробой уровня плотности
-            </div>
-          </div>
-        </div>
-        
-        <div class="sig-card" data-symbol="XRPUSDT" data-side="Buy">
-          <div class="sig-top">
-            <div class="sig-title-row">
-              <span class="sig-rank">#8</span>
-              <span class="sig-symbol">XRPUSDT</span>
-              <span class="pill pill-long">LONG • Limit Maker</span>
-              <span class="pill pill-tf">15m</span>
-              <span class="sig-strat">Пробой диапазона сессии US_OVERLAP (Session ORB)</span>
-            </div>
-            <div class="sig-badges">
-              <span class="pill pill-win">ML Winrate: 81.0%</span>
-              <span class="pill pill-edge">E[R]: +0.6% (Порог: 0.14%)</span>
-            </div>
-          </div>
-
-          <div class="sig-metrics-grid">
-            <div class="m-cell"><span class="m-lbl">Точка входа (Limit)</span><span class="m-val">0.554028</span></div>
-            <div class="m-cell"><span class="m-lbl">Stop-Loss (За хвост)</span><span class="m-val red">0.551283 (-0.50%)</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 1 (1.6R)</span><span class="m-val green">0.55842</span></div>
-            <div class="m-cell"><span class="m-lbl">Take-Profit 2 (2.5R)</span><span class="m-val green">0.56089</span></div>
-            <div class="m-cell"><span class="m-lbl">Объем позиции (0.5% риск)</span><span class="m-val">$9,337.73 (0.93x)</span></div>
-            <div class="m-cell"><span class="m-lbl">Запас до ликвидации</span><span class="m-val amber">200.82x стопа (0.00277)</span></div>
-            <div class="m-cell"><span class="m-lbl">Проскальзывание стакана L2</span><span class="m-val">1.498 bps</span></div>
-            <div class="m-cell"><span class="m-lbl">Индекс несходства (DI)</span><span class="m-val green">0.28 &le; 1.0</span></div>
-          </div>
-
-          <div class="sig-body">
-            <div class="sig-rationale-title">Факторы входа и микроструктура стакана L2:</div>
-            <ul class="rationale-list"><li>Импульсный пробой верхней границы стартового диапазона сессии 0.5511 (ширина диапазона 0.76%)</li><li>Монета «в игре»: относительный объем RVOL=2.60x в окне US_OVERLAP</li><li>Поддержка потока ордеров в стакане Level-2 (OBI=+0.66, VAMP div=+3.2 bps)</li></ul>
-            <div class="debate-banner">
-              <strong>🤖 Совет ИИ-агентов (Bull vs Bear Debate):</strong> [Режим: SQUEEZE_WATCH] Бычий агент: Перевес лимитного спроса в стакане L2 (сглаженный OBI=+0.66); Отрицательный фандинг (-3.80 б.п.) создает топливо для шорт-сквиза вверх. Медвежий агент: Цена статистически перегрета над сессионным VWAP (+3.18σ). Вердикт судьи: ОДОБРЕНО (ML Winrate=81.0%, E[R]=+0.60% > 2xИздержек=0.14%, DI=0.28).
-            </div>
-            <div class="invalidation-line">
-              <strong>⚠️ Правило отмены / выхода:</strong> Правило 2 баров (2-Bar Stall Rule): если цена не обновляет максимум в течение 2 свечей или возвращается внутрь диапазона ORB — выход по рынку
-            </div>
-          </div>
-        </div>
-        </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">🔥 Деривативный сканер «OI + Funding + Liquidation Squeeze» (Сетапы класса A+ для Разгона)</h3>
+        <span style="font-size:11.5px;color:var(--muted)">Автопилот Разгона автоматически открывает только сетапы со статусом <b>A+</b></span>
       </div>
-
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Отсеянные ИИ-фильтром кандидаты (Защита от комиссий и шума)</h2>
-        </div>
-        <table>
-          <thead>
-            <tr><th>Пара</th><th>Архетип</th><th>Сторона</th><th>ML Winrate</th><th>Ожид. ход / Порог 2x</th><th>Индекс DI</th><th>Статус</th></tr>
-          </thead>
-          <tbody>
-        <tr>
-          <td><strong>DOGEUSDT</strong></td>
-          <td>OI_LONG_FLUSH_REVERSAL</td>
-          <td>Buy</td>
-          <td>68.8%</td>
-          <td>+1.823% / 0.1398%</td>
-          <td>1.343</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>DOGEUSDT</strong></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>Buy</td>
-          <td>68.1%</td>
-          <td>+0.552% / 0.1398%</td>
-          <td>1.343</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>DOTUSDT</strong></td>
-          <td>OI_LONG_FLUSH_REVERSAL</td>
-          <td>Buy</td>
-          <td>68.8%</td>
-          <td>+1.814% / 0.14%</td>
-          <td>1.458</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>DOTUSDT</strong></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>Buy</td>
-          <td>68.2%</td>
-          <td>+0.534% / 0.14%</td>
-          <td>1.458</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>OPUSDT</strong></td>
-          <td>OI_LONG_FLUSH_REVERSAL</td>
-          <td>Buy</td>
-          <td>72.6%</td>
-          <td>+1.939% / 0.14%</td>
-          <td>1.31</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>OPUSDT</strong></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>Buy</td>
-          <td>71.9%</td>
-          <td>+0.55% / 0.14%</td>
-          <td>1.31</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>LTCUSDT</strong></td>
-          <td>OI_LONG_FLUSH_REVERSAL</td>
-          <td>Buy</td>
-          <td>71.6%</td>
-          <td>+1.924% / 0.14%</td>
-          <td>1.57</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>LTCUSDT</strong></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>Buy</td>
-          <td>70.9%</td>
-          <td>+0.575% / 0.14%</td>
-          <td>1.57</td>
-          <td><span class="pill pill-short">Отсеян ИИ-фильтром</span></td>
-        </tr>
-        </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ВКЛАДКА 2: СКРИНЕР МОНЕТ В ИГРЕ -->
-    <div id="pane-screener" class="tab-pane">
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Четырехступенчатый пре-скринер «Монеты в игре» (Coins in Play — 20 фьючерсных пар Bybit)</h2>
-        </div>
+      <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Пара</th>
-              <th>In-Play Score</th>
-              <th>RVOL (Отн. объем)</th>
-              <th>NATR (%)</th>
-              <th>ATR14/ATR20</th>
-              <th>Бид-Аск Спред</th>
-              <th>Оборот 24ч</th>
-              <th>Фандинг</th>
-              <th>Старший 1H Режим</th>
-              <th>Активные плейбуки</th>
-              <th>Допуск</th>
+              <th>Монета</th><th>Сетап / Паттерн</th><th>Класс</th><th>Направление</th><th>Цена входа</th>
+              <th>Δ OI (45м)</th><th>Funding Rate</th><th>L2 OBI (Топ-5)</th><th>TP1 (50%) / TP2</th><th>Stop Loss</th><th>Обоснование</th><th>Ручной вход по Booster-риску</th>
             </tr>
           </thead>
-          <tbody>
-        <tr>
-          <td><strong>DOGEUSDT</strong></td>
-          <td><strong class="amber">78.0</strong></td>
-          <td>2.67x</td>
-          <td>0.601%</td>
-          <td>1.37x</td>
-          <td>0.0299%</td>
-          <td>$501.5M</td>
-          <td>+0.0450%</td>
-          <td><strong>RANGE</strong> (ADX 50.7)</td>
-          <td class="muted">VWAP_KELTNER_MEAN_REVERSION, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>LTCUSDT</strong></td>
-          <td><strong class="amber">77.9</strong></td>
-          <td>2.54x</td>
-          <td>0.59%</td>
-          <td>1.38x</td>
-          <td>0.03%</td>
-          <td>$204.0M</td>
-          <td>-0.0380%</td>
-          <td><strong>RANGE</strong> (ADX 32.9)</td>
-          <td class="muted">VWAP_KELTNER_MEAN_REVERSION, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>FETUSDT</strong></td>
-          <td><strong class="amber">77.4</strong></td>
-          <td>2.64x</td>
-          <td>0.562%</td>
-          <td>1.33x</td>
-          <td>0.03%</td>
-          <td>$114.8M</td>
-          <td>-0.0380%</td>
-          <td><strong>RANGE</strong> (ADX 25.2)</td>
-          <td class="muted">VWAP_KELTNER_MEAN_REVERSION, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>OPUSDT</strong></td>
-          <td><strong class="amber">77.3</strong></td>
-          <td>2.62x</td>
-          <td>0.554%</td>
-          <td>1.38x</td>
-          <td>0.03%</td>
-          <td>$233.8M</td>
-          <td>+0.0450%</td>
-          <td><strong>RANGE</strong> (ADX 34.6)</td>
-          <td class="muted">VWAP_KELTNER_MEAN_REVERSION, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>BNBUSDT</strong></td>
-          <td><strong class="amber">75.9</strong></td>
-          <td>2.89x</td>
-          <td>0.461%</td>
-          <td>1.11x</td>
-          <td>0.03%</td>
-          <td>$590.8M</td>
-          <td>+0.0450%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 44.4)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>NEARUSDT</strong></td>
-          <td><strong class="amber">75.9</strong></td>
-          <td>2.83x</td>
-          <td>0.458%</td>
-          <td>1.13x</td>
-          <td>0.03%</td>
-          <td>$323.0M</td>
-          <td>+0.0450%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 33.6)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>XRPUSDT</strong></td>
-          <td><strong class="amber">75.8</strong></td>
-          <td>2.6x</td>
-          <td>0.45%</td>
-          <td>1.13x</td>
-          <td>0.03%</td>
-          <td>$561.0M</td>
-          <td>-0.0380%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 31.0)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>AVAXUSDT</strong></td>
-          <td><strong class="amber">74.8</strong></td>
-          <td>2.27x</td>
-          <td>0.599%</td>
-          <td>1.43x</td>
-          <td>0.03%</td>
-          <td>$471.8M</td>
-          <td>-0.0380%</td>
-          <td><strong>RANGE</strong> (ADX 46.4)</td>
-          <td class="muted">VWAP_KELTNER_MEAN_REVERSION, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>DOTUSDT</strong></td>
-          <td><strong class="amber">71.7</strong></td>
-          <td>2.73x</td>
-          <td>0.58%</td>
-          <td>1.39x</td>
-          <td>0.03%</td>
-          <td>$352.8M</td>
-          <td>+0.0100%</td>
-          <td><strong>RANGE</strong> (ADX 29.6)</td>
-          <td class="muted">VWAP_KELTNER_MEAN_REVERSION, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>ETHUSDT</strong></td>
-          <td><strong class="amber">70.8</strong></td>
-          <td>2.31x</td>
-          <td>0.631%</td>
-          <td>1.44x</td>
-          <td>0.03%</td>
-          <td>$650.2M</td>
-          <td>-0.0380%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 58.4)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>BTCUSDT</strong></td>
-          <td><strong class="amber">70.1</strong></td>
-          <td>2.26x</td>
-          <td>0.631%</td>
-          <td>1.39x</td>
-          <td>0.03%</td>
-          <td>$680.0M</td>
-          <td>+0.0450%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 44.4)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>LINKUSDT</strong></td>
-          <td><strong class="amber">69.8</strong></td>
-          <td>2.53x</td>
-          <td>0.451%</td>
-          <td>1.11x</td>
-          <td>0.03%</td>
-          <td>$442.0M</td>
-          <td>+0.0100%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 31.7)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>ADAUSDT</strong></td>
-          <td><strong class="amber">69.7</strong></td>
-          <td>2.65x</td>
-          <td>0.445%</td>
-          <td>1.16x</td>
-          <td>0.0298%</td>
-          <td>$531.2M</td>
-          <td>+0.0100%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 53.9)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>SOLUSDT</strong></td>
-          <td><strong class="amber">69.4</strong></td>
-          <td>2.75x</td>
-          <td>0.43%</td>
-          <td>1.13x</td>
-          <td>0.03%</td>
-          <td>$620.5M</td>
-          <td>+0.0100%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 33.8)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>APTUSDT</strong></td>
-          <td><strong class="amber">69.3</strong></td>
-          <td>2.23x</td>
-          <td>0.61%</td>
-          <td>1.44x</td>
-          <td>0.03%</td>
-          <td>$293.2M</td>
-          <td>-0.0380%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 34.0)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>TONUSDT</strong></td>
-          <td><strong class="amber">68.8</strong></td>
-          <td>2.21x</td>
-          <td>0.595%</td>
-          <td>1.47x</td>
-          <td>0.03%</td>
-          <td>$382.5M</td>
-          <td>-0.0380%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 49.4)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>SUIUSDT</strong></td>
-          <td><strong class="amber">68.7</strong></td>
-          <td>2.17x</td>
-          <td>0.621%</td>
-          <td>1.4x</td>
-          <td>0.03%</td>
-          <td>$412.2M</td>
-          <td>+0.0450%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 47.9)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>INJUSDT</strong></td>
-          <td><strong class="amber">67.4</strong></td>
-          <td>2.1x</td>
-          <td>0.597%</td>
-          <td>1.46x</td>
-          <td>0.03%</td>
-          <td>$144.5M</td>
-          <td>+0.0450%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 40.1)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>ARBUSDT</strong></td>
-          <td><strong class="amber">64.2</strong></td>
-          <td>2.27x</td>
-          <td>0.625%</td>
-          <td>1.41x</td>
-          <td>0.0299%</td>
-          <td>$263.5M</td>
-          <td>+0.0100%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 41.5)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        
-        <tr>
-          <td><strong>ATOMUSDT</strong></td>
-          <td><strong class="amber">63.0</strong></td>
-          <td>2.17x</td>
-          <td>0.639%</td>
-          <td>1.42x</td>
-          <td>0.03%</td>
-          <td>$174.2M</td>
-          <td>+0.0100%</td>
-          <td><strong>BULLISH_TREND</strong> (ADX 43.9)</td>
-          <td class="muted">VWAP_TREND_PULLBACK, LIQUIDITY_SWEEP_FVG</td>
-          <td><span class='pill pill-long'>В игре</span></td>
-        </tr>
-        </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ВКЛАДКА 3: ЖУРНАЛ ДЕМО-СДЕЛОК -->
-    <div id="pane-journal" class="tab-pane">
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Журнал демо-сделок (Bybit Unified Demo API / Локальное хранилище SQLite)</h2>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Время UTC</th>
-              <th>Пара</th>
-              <th>Направление</th>
-              <th>Стратегия</th>
-              <th>Цена входа</th>
-              <th>Stop-Loss</th>
-              <th>Take-Profit 1</th>
-              <th>Размер позиции ($)</th>
-              <th>ML Winrate</th>
-              <th>Контур исполнения</th>
-            </tr>
-          </thead>
-          <tbody>
-        <tr>
-          <td><strong>#18</strong></td>
-          <td>2026-11-11 14:21:47 UTC</td>
-          <td><strong>XRPUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.554028</td>
-          <td class="red">0.551841</td>
-          <td class="green">0.557965</td>
-          <td><strong>$11,500.98</strong> (1.15x)</td>
-          <td><span class="pill pill-win">83.7%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#17</strong></td>
-          <td>2026-11-11 14:21:46 UTC</td>
-          <td><strong>LINKUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>14.9628</td>
-          <td class="red">14.903721</td>
-          <td class="green">15.069142</td>
-          <td><strong>$11,498.50</strong> (1.15x)</td>
-          <td><span class="pill pill-win">84.4%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#16</strong></td>
-          <td>2026-11-11 14:21:46 UTC</td>
-          <td><strong>ADAUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.369015</td>
-          <td class="red">0.367558</td>
-          <td class="green">0.371638</td>
-          <td><strong>$11,498.62</strong> (1.15x)</td>
-          <td><span class="pill pill-win">85.0%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#15</strong></td>
-          <td>2026-11-11 08:26:06 UTC</td>
-          <td><strong>XRPUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.554028</td>
-          <td class="red">0.551841</td>
-          <td class="green">0.557965</td>
-          <td><strong>$11,500.98</strong> (1.15x)</td>
-          <td><span class="pill pill-win">83.7%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#14</strong></td>
-          <td>2026-11-11 08:26:06 UTC</td>
-          <td><strong>LINKUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>14.9628</td>
-          <td class="red">14.903721</td>
-          <td class="green">15.069142</td>
-          <td><strong>$11,498.50</strong> (1.15x)</td>
-          <td><span class="pill pill-win">84.4%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#13</strong></td>
-          <td>2026-11-11 08:26:06 UTC</td>
-          <td><strong>ADAUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.369015</td>
-          <td class="red">0.367558</td>
-          <td class="green">0.371638</td>
-          <td><strong>$11,498.62</strong> (1.15x)</td>
-          <td><span class="pill pill-win">85.0%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#12</strong></td>
-          <td>2026-11-11 08:02:21 UTC</td>
-          <td><strong>XRPUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.554028</td>
-          <td class="red">0.551841</td>
-          <td class="green">0.557965</td>
-          <td><strong>$11,500.98</strong> (1.15x)</td>
-          <td><span class="pill pill-win">83.7%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#11</strong></td>
-          <td>2026-11-11 08:02:21 UTC</td>
-          <td><strong>LINKUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>14.9628</td>
-          <td class="red">14.903721</td>
-          <td class="green">15.069142</td>
-          <td><strong>$11,498.50</strong> (1.15x)</td>
-          <td><span class="pill pill-win">84.4%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#10</strong></td>
-          <td>2026-11-11 08:02:21 UTC</td>
-          <td><strong>ADAUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.369015</td>
-          <td class="red">0.367558</td>
-          <td class="green">0.371638</td>
-          <td><strong>$11,498.62</strong> (1.15x)</td>
-          <td><span class="pill pill-win">85.0%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#9</strong></td>
-          <td>2026-11-11 08:00:42 UTC</td>
-          <td><strong>XRPUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.554028</td>
-          <td class="red">0.551841</td>
-          <td class="green">0.557965</td>
-          <td><strong>$11,500.98</strong> (1.15x)</td>
-          <td><span class="pill pill-win">83.7%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#8</strong></td>
-          <td>2026-11-11 08:00:42 UTC</td>
-          <td><strong>LINKUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>14.9628</td>
-          <td class="red">14.903721</td>
-          <td class="green">15.069142</td>
-          <td><strong>$11,498.50</strong> (1.15x)</td>
-          <td><span class="pill pill-win">84.4%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#7</strong></td>
-          <td>2026-11-11 08:00:42 UTC</td>
-          <td><strong>ADAUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.369015</td>
-          <td class="red">0.367558</td>
-          <td class="green">0.371638</td>
-          <td><strong>$11,498.62</strong> (1.15x)</td>
-          <td><span class="pill pill-win">85.0%</span></td>
-          <td><code>LOCAL_FALLBACK (URLError)</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#6</strong></td>
-          <td>2026-11-11 07:46:53 UTC</td>
-          <td><strong>XRPUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.554028</td>
-          <td class="red">0.551841</td>
-          <td class="green">0.557965</td>
-          <td><strong>$11,500.98</strong> (1.15x)</td>
-          <td><span class="pill pill-win">83.7%</span></td>
-          <td><code>LOCAL_BYBIT_DEMO_SIM</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#5</strong></td>
-          <td>2026-11-11 07:46:53 UTC</td>
-          <td><strong>LINKUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>14.9628</td>
-          <td class="red">14.903721</td>
-          <td class="green">15.069142</td>
-          <td><strong>$11,498.50</strong> (1.15x)</td>
-          <td><span class="pill pill-win">84.4%</span></td>
-          <td><code>LOCAL_BYBIT_DEMO_SIM</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#4</strong></td>
-          <td>2026-11-11 07:46:53 UTC</td>
-          <td><strong>ADAUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.369015</td>
-          <td class="red">0.367558</td>
-          <td class="green">0.371638</td>
-          <td><strong>$11,498.62</strong> (1.15x)</td>
-          <td><span class="pill pill-win">85.0%</span></td>
-          <td><code>LOCAL_BYBIT_DEMO_SIM</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#3</strong></td>
-          <td>2026-11-10 10:18:15 UTC</td>
-          <td><strong>XRPUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.554028</td>
-          <td class="red">0.551841</td>
-          <td class="green">0.557965</td>
-          <td><strong>$11,500.98</strong> (1.15x)</td>
-          <td><span class="pill pill-win">83.7%</span></td>
-          <td><code>LOCAL_BYBIT_DEMO_SIM</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#2</strong></td>
-          <td>2026-11-10 10:18:15 UTC</td>
-          <td><strong>LINKUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>14.9628</td>
-          <td class="red">14.903721</td>
-          <td class="green">15.069142</td>
-          <td><strong>$11,498.50</strong> (1.15x)</td>
-          <td><span class="pill pill-win">84.4%</span></td>
-          <td><code>LOCAL_BYBIT_DEMO_SIM</code></td>
-        </tr>
-        
-        <tr>
-          <td><strong>#1</strong></td>
-          <td>2026-11-10 10:18:15 UTC</td>
-          <td><strong>ADAUSDT</strong></td>
-          <td><span class='pill pill-long'>LONG</span></td>
-          <td>L2_DENSITY_LEAD_LAG_LONG</td>
-          <td>0.369015</td>
-          <td class="red">0.367558</td>
-          <td class="green">0.371638</td>
-          <td><strong>$11,498.62</strong> (1.15x)</td>
-          <td><span class="pill pill-win">85.0%</span></td>
-          <td><code>LOCAL_BYBIT_DEMO_SIM</code></td>
-        </tr>
-        </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ВКЛАДКА 4: WALK-FORWARD БЭКТЕСТ И АНАЛИТИКА -->
-    <div id="pane-backtest" class="tab-pane">
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Walk-Forward Бэктест на котировках Bybit V5 (Наивный Taker против Снайперского ИИ-комбайна)</h2>
-        </div>
-        <table>
-          <thead>
-            <tr><th>Метрика эффективности</th><th>Наивный индикаторный режим (Taker без фильтра издержек)</th><th>Снайперский ИИ-комбайн AItrade (Maker Limit + ML Cost-Aware &lambda;=2.0)</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>Общее число сделок (Turnover)</td><td>448</td><td><strong>165 (снижение шумового оборота на 63.2%)</strong></td></tr>
-            <tr><td>Win Rate (% прибыльных сделок)</td><td>17.41%</td><td><strong class="green" style="font-size:15px;">59.39%</strong></td></tr>
-            <tr><td>Profit Factor (Профит-фактор)</td><td>0.07</td><td><strong class="green">1.68</strong></td></tr>
-            <tr><td>Чистая доходность после комиссий Bybit</td><td class="red">-84.97%</td><td><strong class="green">+14.53%</strong></td></tr>
-            <tr><td>Среднее математическое ожидание (R)</td><td class="red">-0.912R</td><td><strong class="green">+0.092R</strong></td></tr>
-            <tr><td>Максимальная просадка (Max Drawdown)</td><td class="red">84.97%</td><td><strong>1.91%</strong></td></tr>
-            <tr><td>Sharpe Ratio / Deflated Sharpe (DSR)</td><td>-18.1 / -18.1</td><td><strong class="amber">3.13 / 2.78</strong></td></tr>
-          </tbody>
-        </table>
-
-        <div class="arch-grid">
-          <div class="arch-box">
-            <h4>1. Реальный стакан Bybit Unified Demo</h4>
-            <p>Вместо пустого Testnet используется шлюз <code>api-demo.bybit.com</code> с живыми котировками и реальным стаканом Level-2 Bybit V5.</p>
-          </div>
-          <div class="arch-box">
-            <h4>2. Исполнение лимитными ордерами (Maker 0.02%)</h4>
-            <p>Снайперские входы от границ VWAP &plusmn;2&sigma;, 50% FVG и верифицированных плотностей экономят до 63% на комиссиях по сравнению с рыночными ордерами Taker (0.055%).</p>
-          </div>
-          <div class="arch-box">
-            <h4>3. Защита от спуфинга (LBI) и рыночных шоков (DI)</h4>
-            <p>4-ступенчатый фильтр верификации плотностей отсекает исчезающие плиты (Vanishing Walls), а индекс несходства DI &le; 1.0 блокирует торговлю в аномалиях.</p>
-          </div>
-          <div class="arch-box">
-            <h4>4. Правило 5x дистанции до ликвидации</h4>
-            <p>Кредитное плечо является расчетным следствием ширины стопа (макс. 4x), а цена ликвидации всегда находится минимум в 5 раз дальше стоп-лосса.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ВКЛАДКА 5: НАСТРОЙКИ СИСТЕМЫ -->
-    <div id="pane-settings" class="tab-pane">
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Активная конфигурация риск-менеджмента, ML-ядра и шлюзов Bybit V5</h2>
-        </div>
-        <table>
-          <thead><tr><th>Параметр</th><th>Текущее значение</th><th>Назначение в архитектуре AItrade</th></tr></thead>
-          <tbody>
-            <tr><td>Режим биржевого коннектора</td><td><strong>DEMO</strong></td><td>Торговый шлюз <code>https://api-demo.bybit.com</code> + рыночный поток <code>https://api.bybit.com</code></td></tr>
-            <tr><td>Комиссии Bybit Perpetuals</td><td>Maker: <strong>0.020%</strong> | Taker: <strong>0.055%</strong></td><td>Учитываются в Cost-Aware Execution Filter и расчете размера позиции</td></tr>
-            <tr><td>Фиксированный риск на сделку</td><td><strong>0.50% от депозита</strong></td><td>Расчет объема позиции от ширины технического стоп-лосса (Leverage as an Output)</td></tr>
-            <tr><td>Максимальное плечо портфеля</td><td><strong>&le; 4.0x</strong></td><td>Жесткий потолок плеча для исключения каскадных маржин-коллов</td></tr>
-            <tr><td>Запас до цены ликвидации</td><td><strong>&ge; 5.0x ширины стопа</strong></td><td>Правило пятикратной дистанции до ликвидации (5x Stop Distance Rule)</td></tr>
-            <tr><td>Порог окупаемости издержек (&lambda;)</td><td><strong>&lambda; = 2.0</strong></td><td>Прогнозная доходность должна минимум вдвое перекрывать сумму комиссий и спреда</td></tr>
-            <tr><td>Порог индекса несходства (DI)</td><td><strong>DI &le; 1.0</strong></td><td>Отсечение незнакомых рыночных режимов и новостных шоков по евклидовой дистанции</td></tr>
-            <tr><td>Сглаживание микроструктуры стакана</td><td><strong>Savitzky-Golay (окно 7, полином 2)</strong></td><td>Подавление высокочастотного шума мерцающих заявок L2 OBI (arXiv 2506.05764v2)</td></tr>
-          </tbody>
+          <tbody id="oi-squeeze-tbody"><tr><td colspan="12">Сканирование Open Interest и Funding Rate...</td></tr></tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <script>
-    function openTab(paneId, btnEl) {
-      document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      document.getElementById(paneId).classList.add('active');
-      btnEl.classList.add('active');
-    }
+  <!-- ВКЛАДКА 2: СИГНАЛЫ ОСНОВНОЙ ИИ -->
+  <div id="tab-signals" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">🎯 Сигналы Основной ИИ-стратегии (ML Ансамбль по торговым парам)</h3>
+        <span style="font-size:11.5px;color:var(--muted)">Управляется карточкой «🎯 2. Автопилот Основной ИИ»</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Монета</th><th>Стратегия</th><th>Направление</th><th>Вход</th><th>Stop Loss</th><th>TP2</th><th>Оценка сигнала</th><th>Вердикт</th><th>Исполнить в 1 клик</th></tr></thead>
+          <tbody id="signals-tbody"><tr><td colspan="9">Загрузка...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-    function filterSignals() {
-      const q = (document.getElementById('sigSearch').value || '').toUpperCase().trim();
-      document.querySelectorAll('.sig-card').forEach(card => {
-        const sym = (card.getAttribute('data-symbol') || '').toUpperCase();
-        card.style.display = (!q || sym.includes(q)) ? 'block' : 'none';
-      });
+  <!-- ВКЛАДКА 3: ПОЗИЦИИ И ОРДЕРА -->
+  <div id="tab-positions" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">🟢 Открытые позиции на Bybit Demo (с меткой источника стратегии и Пирамидингом)</h3>
+        <button type="button" id="btn-close-all" class="btn-danger btn-sm">🚨 Закрыть ВСЕ позиции</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Монета</th><th>Контур / Сектор</th><th>Сторона</th><th>Объем</th><th>Вход</th><th>Марк. цена</th><th>PnL ($)</th><th>Таймер</th><th>TP1 (50%)</th><th>TP2 (Full)</th><th>Stop Loss</th><th>Статус защиты</th><th>Действия в 1 клик</th></tr></thead>
+          <tbody id="positions-tbody"><tr><td colspan="12">Загрузка...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">🕒 Активные лимитные ордера и тейки TP1 (Reduce-Only)</h3>
+        <button type="button" id="btn-cancel-all" class="btn-warning btn-sm">🗑 Отменить ВСЕ ордера</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Монета</th><th>Сторона</th><th>Назначение</th><th>Объем</th><th>Цена</th><th>Статус</th><th>Order ID</th><th>Действие</th></tr></thead>
+          <tbody id="orders-tbody"><tr><td colspan="8">Загрузка...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ВКЛАДКА 4: WEBSOCKET -->
+  <div id="tab-ws" class="tab-content">
+    <div class="booster-top-grid">
+      <div class="panel">
+        <div class="panel-header"><h3 class="panel-title">📡 Живая микроструктура WebSocket (orderbook.50 + publicTrade, торговые пары)</h3></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Монета</th><th>Mid / VAMP</th><th>Спред (б.п.)</th><th>L2 OBI (Топ-5)</th><th>Тиковый CVD ($)</th><th>Поток Buy/Sell</th><th>Возраст плиты</th><th>Ликв. (L/S $)</th><th>Быстрый вход</th></tr></thead>
+            <tbody id="ws-metrics-tbody"><tr><td colspan="9">Сбор потоковых данных...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3 class="panel-title">💥 Лента ликвидаций в реальном времени (allLiquidation)</h3></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Время</th><th>Монета</th><th>Тип</th><th>Цена</th><th>Объем ($)</th></tr></thead>
+            <tbody id="ws-liq-tbody"><tr><td colspan="5">Ожидание принудительных ликвидаций на Bybit...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ВКЛАДКА 5: СКРИНЕР -->
+  <div id="tab-screener" class="tab-content">
+    <div class="panel">
+      <div class="panel-header"><h3 class="panel-title">🔥 Рейтинг торговых пар Bybit V5 («Монеты в игре»: RVOL, NATR, Spread, MTF Bias)</h3></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Монета</th><th>Цена</th><th>Статус</th><th>In-Play Score</th><th>RVOL</th><th>NATR %</th><th>Спред %</th><th>MTF Bias</th><th>Быстрая сделка (Split TP)</th></tr></thead>
+          <tbody id="screener-tbody"><tr><td colspan="9">Загрузка...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ВКЛАДКА: РАДАР X (TWITTER) И НОВОСТНОЙ ФОН -->
+  <div id="tab-xnews" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">🐦 Радар X (Twitter) & Новостной Фильтр в реальном времени (Tree of Alpha + NLP Сентимент)</h3>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="badge badge-green" id="xnews-panic-badge">🛡 Щит Black-Swan: В НОРМЕ</span>
+          <button type="button" id="btn-refresh-xnews" class="btn-primary btn-sm">🔄 Загрузить свежие твиты сейчас</button>
+          <button type="button" id="btn-toggle-xnews" class="btn-ghost btn-sm">ВКЛ / ВЫКЛ фильтр X</button>
+        </div>
+      </div>
+      <div class="kpi-strip" style="border-radius:8px;margin-bottom:12px;padding:8px 10px">
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Индекс X / News</span><span class="kpi-mini-val" id="xn-score">0.0</span><span class="kpi-mini-sub" id="xn-state">Нейтральный фон</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Бычьих триггеров</span><span class="kpi-mini-val pos-green" id="xn-bull">0</span><span class="kpi-mini-sub">Усиливают лонги (+10 б.)</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Медвежьих триггеров</span><span class="kpi-mini-val pos-red" id="xn-bear">0</span><span class="kpi-mini-sub">Блокируют опасные лонги</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Щит Черных Лебедей</span><span class="kpi-mini-val pos-green" id="xn-shield">АКТИВЕН</span><span class="kpi-mini-sub">Авто-блок при Hack/SEC</span></div>
+        <div class="kpi-mini" style="grid-column:span 2"><span class="kpi-mini-lbl">Монеты в фокусе X (Twitter) прямо сейчас</span><span class="kpi-mini-val" style="font-size:13px;color:#38bdf8" id="xn-hot-coins">Ожидание данных...</span><span class="kpi-mini-sub">Тикеры с активным новостным фоном за последние 90 мин</span></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Время</th>
+              <th>Источник</th>
+              <th>Монета</th>
+              <th>Сентимент / Балл</th>
+              <th>Заголовок твита / срочной новости</th>
+              <th>Триггеры NLP</th>
+              <th>Мгновенная сделка по новости</th>
+            </tr>
+          </thead>
+          <tbody id="xnews-tbody"><tr><td colspan="7">Загрузка ленты X (Twitter) и новостей...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ВКЛАДКА: АВТОКАЛИБРОВКА ML ПО CLOSED PNL -->
+  <div id="tab-ml" class="tab-content">
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">🧠 Адаптивная калибровка весов стратегий и порога ML по реальному Closed PnL (Contextual Bandit)</h3>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="badge badge-green" id="ml-cal-status-badge">🧠 Авто-калибровка: АКТИВНА</span>
+          <button type="button" id="btn-run-ml-cal" class="btn-primary btn-sm">⚡ Пересчитать веса сейчас</button>
+          <button type="button" id="btn-toggle-ml-cal" class="btn-ghost btn-sm">ВКЛ / ВЫКЛ адаптацию</button>
+        </div>
+      </div>
+      <div class="kpi-strip" style="border-radius:8px;margin-bottom:12px;padding:8px 10px">
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Адаптивный порог ML</span><span class="kpi-mini-val pos-green" id="ml-rec-thr">58.0%</span><span class="kpi-mini-sub" id="ml-base-thr">Базовый порог: 58.0%</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Реальный Profit Factor</span><span class="kpi-mini-val" id="ml-port-pf">1.00</span><span class="kpi-mini-sub">По закрытым сделкам Bybit</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Win Rate портфеля</span><span class="kpi-mini-val" id="ml-port-wr">0.0%</span><span class="kpi-mini-sub" id="ml-port-wl">Побед: 0 / Стопов: 0</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Чистый результат (Net PnL)</span><span class="kpi-mini-val" id="ml-port-net">$0.00</span><span class="kpi-mini-sub">Учтено в калибраторе</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Лидер-стратегия</span><span class="kpi-mini-val" style="font-size:13px;color:#38bdf8" id="ml-top-strat">—</span><span class="kpi-mini-sub">Максимальный вес капитала</span></div>
+        <div class="kpi-mini"><span class="kpi-mini-lbl">Последняя калибровка</span><span class="kpi-mini-val" style="font-size:14px" id="ml-last-ts">—</span><span class="kpi-mini-sub">Синхронизация с Closed PnL</span></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Стратегия / Паттерн</th>
+              <th>Статус и Множитель веса</th>
+              <th>Сделок (Win / Loss)</th>
+              <th>Win Rate (%)</th>
+              <th>Profit Factor</th>
+              <th>Текущая серия (Streak)</th>
+              <th>Чистый PnL ($)</th>
+              <th>Поправка к Оценка сигнала</th>
+            </tr>
+          </thead>
+          <tbody id="ml-cal-tbody"><tr><td colspan="8">Загрузка матрицы калибровки...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ВКЛАДКА 6: ИСТОРИЯ -->
+  <div id="tab-history" class="tab-content">
+    <div class="panel">
+      <div class="panel-header"><h3 class="panel-title">💰 Реализованный PnL закрытых сделок и частичных тейков TP1 (/v5/position/closed-pnl)</h3></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Монета</th><th>Сторона</th><th>Объем</th><th>Цена входа</th><th>Цена выхода</th><th>Закрытый PnL (USDT)</th><th>Плечо</th><th>Время</th></tr></thead>
+          <tbody id="closed-pnl-tbody"><tr><td colspan="8">Загрузка...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+window._uiLockUntil = 0;
+document.addEventListener("mousedown", function(e) {
+  if (e.target.closest("select, input, .dropdown, [data-dropdown], [onclick*=drawer], [onclick*=Menu], [onclick*=Panel]")) {
+    window._uiLockUntil = Date.now() + 6000;
+  }
+}, true);
+document.addEventListener("focusin", function(e) {
+  if (e.target && (e.target.tagName === "SELECT" || e.target.tagName === "INPUT")) {
+    window._uiLockUntil = Date.now() + 8000;
+  }
+}, true);
+
+const API_BASE = "";
+window._priceMap = {};
+window._allLogs = [];
+window._logFilter = "ALL";
+window._soundEnabled = true;
+window._prevAPlusCount = 0;
+window._prevPosCount = 0;
+window._confirmTimers = {};
+
+function showToast(msg, isErr) {
+  const el = document.getElementById("toast");
+  el.style.background = isErr ? "#dc2626" : "#0284c7";
+  el.textContent = msg;
+  el.style.display = "block";
+  setTimeout(function() { el.style.display = "none"; }, 4000);
+}
+
+// Звуковой синтезатор Web Audio API (без внешних файлов)
+function playAlertTone(freq, durationMs) {
+  if (!window._soundEnabled) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq || 880;
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (durationMs || 180) / 1000);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + (durationMs || 180) / 1000);
+  } catch (e) {}
+}
+
+// Двухшаговое подтверждение опасных действий (Double-Tap Confirm без alert)
+function requireDoubleTap(btnEl, key, confirmLabel, actionFn) {
+  if (window._confirmTimers[key]) {
+    clearTimeout(window._confirmTimers[key].timer);
+    btnEl.textContent = window._confirmTimers[key].origText;
+    btnEl.classList.remove("btn-armed");
+    delete window._confirmTimers[key];
+    actionFn();
+    return;
+  }
+  const origText = btnEl.textContent;
+  btnEl.textContent = confirmLabel;
+  btnEl.classList.add("btn-armed");
+  const timer = setTimeout(function() {
+    btnEl.textContent = origText;
+    btnEl.classList.remove("btn-armed");
+    delete window._confirmTimers[key];
+  }, 3500);
+  window._confirmTimers[key] = {timer: timer, origText: origText};
+}
+
+window.addEventListener("unhandledrejection", function(event) { console.error(event.reason); });
+async function apiPost(path, data) {
+  try {
+    const r = await fetch(API_BASE + path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Requested-With": "AItrade"},
+      body: JSON.stringify(data || {})
+    });
+    const result = await r.json();
+    if (!r.ok || result.ok === false) throw new Error(result.retMsg || result.error || "Ошибка выполнения запроса");
+    return result;
+  } catch (e) {
+    showToast("Ошибка связи с сервером: " + e, true);
+    throw e;
+  }
+}
+
+document.getElementById("btn-toggle-env").addEventListener("click", function(){document.getElementById("drawer-env").classList.toggle("open");});
+document.getElementById("btn-close-env").addEventListener("click", function(){document.getElementById("drawer-env").classList.remove("open");});
+document.getElementById("btn-switch-mainnet").disabled = true;
+document.getElementById("btn-switch-mainnet").textContent = "Mainnet отключён до валидации";
+document.getElementById("btn-save-env-keys").addEventListener("click", async function(){
+ const r = await apiPost("/api/env_control",{action:"save_keys",target_mode:document.getElementById("env-key-target").value,api_key:document.getElementById("env-api-key").value,api_secret:document.getElementById("env-api-secret").value});
+ document.getElementById("env-api-secret").value="";document.getElementById("env-api-key").value="";showToast(r.ok ? "Ключи сохранены" : r.retMsg,!r.ok);refreshState();
+});
+document.getElementById("btn-run-checklist").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"run_checklist",target_mode:document.getElementById("env-key-target").value});showToast(r.retMsg || "Проверка завершена",!r.ok);refreshState();});
+document.getElementById("btn-switch-demo").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"switch_mode",target_mode:"demo"});showToast(r.retMsg || "Demo",!r.ok);refreshState();});
+// Выдвижные панели (Drawers)
+document.getElementById("btn-toggle-drawer").addEventListener("click", function() {
+  document.getElementById("drawer-settings").classList.toggle("open");
+  updateManualCalculator();
+});
+document.getElementById("btn-close-drawer").addEventListener("click", function() {
+  document.getElementById("drawer-settings").classList.remove("open");
+});
+document.getElementById("btn-toggle-logs").addEventListener("click", function() {
+  document.getElementById("drawer-logs").classList.toggle("open");
+});
+document.getElementById("btn-sound-toggle").addEventListener("click", function() {
+  window._soundEnabled = !window._soundEnabled;
+  this.textContent = window._soundEnabled ? "🔔 Звук: ВКЛ" : "🔕 Звук: ВЫКЛ";
+  if (window._soundEnabled) playAlertTone(740, 140);
+});
+
+// Фильтрация логов
+document.getElementById("log-filter-bar").addEventListener("click", function(e) {
+  const chip = e.target.closest(".log-chip");
+  if (!chip) return;
+  document.querySelectorAll(".log-chip").forEach(function(c) { c.classList.remove("active"); });
+  chip.classList.add("active");
+  window._logFilter = chip.getAttribute("data-filter") || "ALL";
+  renderLogs();
+});
+
+function renderLogs() {
+  const box = document.getElementById("log-box");
+  const flt = window._logFilter || "ALL";
+  const filtered = (window._allLogs || []).filter(function(line) {
+    if (flt === "TRADE") return line.indexOf("Открыт") !== -1 || line.indexOf("Booster") !== -1 || line.indexOf("Пирамидинг") !== -1 || line.indexOf("Закрыт") !== -1;
+    if (flt === "GUARD") return line.indexOf("Smart Guard") !== -1 || line.indexOf("Безубыток") !== -1 || line.indexOf("TP1") !== -1 || line.indexOf("Trailing") !== -1;
+    if (flt === "ALERT") return line.indexOf("🛑") !== -1 || line.indexOf("🚨") !== -1 || line.indexOf("ВКЛЮЧЕН") !== -1 || line.indexOf("ВЫКЛЮЧЕН") !== -1;
+    return true;
+  });
+  box.innerHTML = filtered.length === 0
+    ? "<div style=color:var(--muted)>Нет записей по выбранному фильтру.</div>"
+    : filtered.map(function(l) { return "<div>" + escapeHtml(l) + "</div>"; }).join("");
+}
+
+// Живой калькулятор риска в $ для ручного ордера
+function updateManualCalculator() {
+  const sym = document.getElementById("manual-symbol").value || "BTCUSDT";
+  const qty = Number(document.getElementById("manual-qty").value || 0.02);
+  const tpPct = Number(document.getElementById("manual-tp-pct").value || 1.6) / 100.0;
+  const slPct = Number(document.getElementById("manual-sl-pct").value || 0.8) / 100.0;
+  const lev = Math.max(1, Number(document.getElementById("cfg-leverage").value || 3));
+  const px = document.getElementById("manual-type").value === "Limit" ? Number(document.getElementById("manual-limit-price").value || 0) : Number(window._priceMap[sym] || 0);
+  document.getElementById("calc-px").textContent = px > 0 ? ("$" + px) : "ожидание...";
+  const rawNotional = px * qty;
+  const effNotional = px > 0 ? rawNotional : 0;
+  const margin = effNotional / lev;
+  const riskUsd = effNotional * (slPct + 0.0054);
+  const rewardUsd = effNotional * tpPct;
+  document.getElementById("calc-notional").textContent = "$" + effNotional.toFixed(2) + (rawNotional < 24 && px > 0 ? " (ниже минимума $24)" : "");
+  document.getElementById("calc-margin").textContent = "$" + margin.toFixed(2) + " (" + lev + "x)";
+  document.getElementById("calc-risk").textContent = "-$" + riskUsd.toFixed(2);
+  document.getElementById("calc-reward").textContent = "+$" + rewardUsd.toFixed(2);
+}
+
+["manual-symbol", "manual-type", "manual-limit-price", "manual-qty", "manual-tp-pct", "manual-sl-pct", "cfg-leverage"].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("input", updateManualCalculator);
+  if (el) el.addEventListener("change", updateManualCalculator);
+});
+
+// Переключение вкладок
+document.getElementById("tabs-bar").addEventListener("click", function(e) {
+  const btn = e.target.closest(".tab-btn");
+  if (!btn) return;
+  const tabId = btn.getAttribute("data-tab");
+  if (!tabId) return;
+  document.querySelectorAll(".tab-content").forEach(function(el) { el.classList.remove("active"); });
+  document.querySelectorAll(".tab-btn").forEach(function(el) { el.classList.remove("active"); });
+  const target = document.getElementById(tabId);
+  if (target) target.classList.add("active");
+  btn.classList.add("active");
+});
+
+// Управление стратегиями
+async function sendStrategyControl(mode) {
+  const iv = Number(document.getElementById("autopilot-interval").value || 300);
+  const cMaxPos = Number(document.getElementById("core-max-pos").value || 3);
+  const cMinProb = Number(document.getElementById("core-min-prob").value || 58);
+  const res = await apiPost("/api/strategy_control", {
+    mode: mode,
+    interval_sec: iv,
+    core_max_positions: cMaxPos,
+    core_min_prob_pct: cMinProb
+  });
+  await refreshState();
+  return res;
+}
+
+document.getElementById("btn-toggle-booster").addEventListener("click", async function() {
+  const r = await sendStrategyControl("toggle_booster");
+  playAlertTone(r.booster_enabled ? 880 : 440, 160);
+  showToast(r.booster_enabled ? "🚀 Автопилот РАЗГОНА ($1k→$10k) ВКЛЮЧЕН!" : "⏸ Автопилот Разгона выключен.");
+});
+
+document.getElementById("btn-toggle-core").addEventListener("click", async function() {
+  const r = await sendStrategyControl("toggle_core");
+  playAlertTone(r.core_enabled ? 880 : 440, 160);
+  showToast(r.core_enabled ? "🎯 Автопилот ОСНОВНОЙ ИИ-стратегии ВКЛЮЧЕН!" : "⏸ Автопилот Основной ИИ выключен.");
+});
+
+document.getElementById("btn-enable-both").addEventListener("click", async function() {
+  await sendStrategyControl("enable_both");
+  playAlertTone(960, 200);
+  showToast("⚡ ОБА автопилота (Разгон + Основная ИИ) ВКЛЮЧЕНЫ!");
+});
+
+document.getElementById("btn-stop-all").addEventListener("click", async function() {
+  await sendStrategyControl("stop_all");
+  showToast("⏸ ВСЕ автопилоты остановлены.");
+});
+
+document.getElementById("btn-stop-all-top").addEventListener("click", async function() {
+  await sendStrategyControl("stop_all");
+  showToast("⏸ ВСЕ автопилоты остановлены.");
+});
+
+// Опасные кнопки с защитой Double-Tap Confirm
+document.getElementById("btn-emergency-stop").addEventListener("click", function() {
+  const btn = this;
+  requireDoubleTap(btn, "emg_stop", "⚠️ ТОЧНО ОСТАНОВИТЬ И ЗАКРЫТЬ ВСЁ? (Нажмите еще раз)", async function() {
+    showToast("🚨 Выполняется аварийная остановка и закрытие всех позиций...", true);
+    await sendStrategyControl("emergency_stop");
+    showToast("🚨 Все автопилоты выключены, все позиции и ордера закрыты!");
+  });
+});
+
+document.getElementById("btn-reset-booster").addEventListener("click", function() {
+  const btn = this;
+  requireDoubleTap(btn, "rst_booster", "⚠️ Сбросить на $1,000 + снять все лимиты? (Нажмите еще раз)", async function() {
+    await apiPost("/api/booster_config", {reset: true, start_equity: 1000.0, target_equity: 10000.0});
+    await refreshState();
+    showToast("🚀 Разгон перезапущен с $1,000.00! Все стоп-краны и кулдауны очищены.");
+  });
+});
+
+const btnUnlockLim = document.getElementById("btn-unlock-limits");
+if (btnUnlockLim) {
+  btnUnlockLim.addEventListener("click", async function() {
+    await apiPost("/api/booster_config", {unlock_limits: true});
+    await refreshState();
+    showToast("🔓 Дневной стоп-кран и 60м кулдауны сняты! Можно торговать дальше.");
+  });
+}
+
+const btnTrainMode = document.getElementById("btn-training-mode");
+if (btnTrainMode) {
+  btnTrainMode.addEventListener("click", async function() {
+    const nextState = !window._boosterTrainingMode;
+    await apiPost("/api/booster_config", {training_mode: nextState});
+    await refreshState();
+    showToast(nextState ? "🧪 Режим обучения ИИ ВКЛЮЧЕН (торговля 24/7 без стоп-крана дня)" : "🛡 Включен стандартный защитный режим (-3% лимит дня)");
+  });
+}
+
+function bindCloseAllBtn(btnId, key) {
+  const el = document.getElementById(btnId);
+  if (!el) return;
+  el.addEventListener("click", function() {
+    requireDoubleTap(el, key, "⚠️ Подтвердите закрытие ВСЕХ позиций!", async function() {
+      showToast("🚨 Закрываем все позиции по рынку...");
+      await apiPost("/api/close_all_positions", {});
+      await refreshState();
+      showToast("✅ Все открытые позиции закрыты.");
+    });
+  });
+}
+bindCloseAllBtn("btn-close-all", "cls_all_1");
+bindCloseAllBtn("btn-close-all-sticky", "cls_all_2");
+
+document.getElementById("btn-cancel-all").addEventListener("click", function() {
+  const btn = this;
+  requireDoubleTap(btn, "cnl_all", "⚠️ Отменить все ордера? (Нажмите еще раз)", async function() {
+    await apiPost("/api/cancel_all_orders", {});
+    await refreshState();
+    showToast("Запрос отмены отправлен. Проверьте список активных заявок.");
+  });
+});
+
+document.getElementById("autopilot-interval").addEventListener("change", async function() {
+  await sendStrategyControl("update_params");
+  showToast("⏱ Интервал сканирования сохранен");
+});
+
+document.getElementById("btn-once-booster").addEventListener("click", async function() {
+  showToast("🚀 Скан торговых пар + разовый вход по сетапу Разгона A+...");
+  await apiPost("/api/scan", {trade_booster: true, trade_core: false});
+  await refreshState();
+  showToast("Скан принят в очередь. Ожидайте результат выполнения.");
+});
+
+document.getElementById("btn-once-core").addEventListener("click", async function() {
+  showToast("🎯 Скан торговых пар + разовый вход по Основной ИИ-стратегии...");
+  await apiPost("/api/scan", {trade_booster: false, trade_core: true});
+  await refreshState();
+  showToast("Скан принят в очередь. Ожидайте результат выполнения.");
+});
+
+document.getElementById("btn-scan-only").addEventListener("click", async function() {
+  showToast("🔍 Обновляем скан торговых пар и OI Squeeze...");
+  await apiPost("/api/scan", {trade_booster: false, trade_core: false});
+  await refreshState();
+  showToast("Скан поставлен в очередь. Таблицы обновятся после выполнения.");
+});
+
+document.getElementById("btn-refresh").addEventListener("click", function() {
+  refreshState();
+  showToast("🔄 Данные обновлены");
+});
+
+document.getElementById("btn-manual-buy").addEventListener("click", function() { submitManual("Buy"); });
+document.getElementById("btn-manual-sell").addEventListener("click", function() { submitManual("Sell"); });
+
+async function submitManual(side) {
+  const symbol = document.getElementById("manual-symbol").value || "BTCUSDT";
+  const order_type = document.getElementById("manual-type").value;
+  const qty = Number(document.getElementById("manual-qty").value || 0.02);
+  const tp_pct = Number(document.getElementById("manual-tp-pct").value || 1.6) / 100.0;
+  const sl_pct = Number(document.getElementById("manual-sl-pct").value || 0.8) / 100.0;
+  const leverage = Number(document.getElementById("cfg-leverage").value || 3);
+  showToast("Отправка ордера " + symbol + " (" + side + ")...");
+  const res = await apiPost("/api/place_manual", {symbol: symbol, side: side, order_type: order_type, qty: qty, price: order_type === "Limit" ? Number(document.getElementById("manual-limit-price").value) : 0, tp_pct: tp_pct, sl_pct: sl_pct, leverage: leverage});
+  await refreshState();
+  showToast(res.retMsg || "Заявка отправлена. Проверьте исполнение и защитные ордера.", !res.ok);
+}
+
+document.getElementById("btn-save-sg").addEventListener("click", async function() {
+  await apiPost("/api/smart_guard", {
+    enabled: document.getElementById("sg-enabled").value === "1",
+    split_tp_enabled: document.getElementById("sg-split").value === "1",
+    breakeven_trigger_pct: Number(document.getElementById("sg-be-pct").value || 0.55),
+    trailing_step_pct: Number(document.getElementById("sg-trail-pct").value || 0.40),
+    max_leverage: Number(document.getElementById("cfg-leverage").value || 3),
+    core_max_positions: Number(document.getElementById("core-max-pos").value || 3),
+    core_min_prob_pct: Number(document.getElementById("core-min-prob").value || 58),
+    btc_guard_enabled: document.getElementById("rg-enabled").value === "1",
+    max_same_sector: Number(document.getElementById("rg-max-sector").value || 1),
+    max_same_direction_total: Number(document.getElementById("rg-max-dir").value || 2),
+    time_stop_enabled: document.getElementById("ts-enabled").value === "1",
+    time_stop_minutes: Number(document.getElementById("ts-minutes").value || 45),
+    limit_chaser_enabled: document.getElementById("lc-mode").value !== "off",
+    limit_chaser_strict: document.getElementById("lc-mode").value === "strict",
+    sound_alerts_enabled: window._soundEnabled,
+    manual_prefs: {
+      symbol: document.getElementById("manual-symbol").value || "BTCUSDT",
+      order_type: document.getElementById("manual-type").value || "Market",
+      qty: Number(document.getElementById("manual-qty").value || 0.02),
+      tp_pct: Number(document.getElementById("manual-tp-pct").value || 1.6),
+      sl_pct: Number(document.getElementById("manual-sl-pct").value || 0.8)
     }
-  </script>
+  });
+  window._prefsHydrated = false;
+  await refreshState();
+  showToast("💾 Все параметры сохранены на сервер!");
+});
+
+document.body.addEventListener("click", async function(e) {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn) return;
+  const act = btn.getAttribute("data-action");
+  const sym = btn.getAttribute("data-symbol") || "BTCUSDT";
+  const side = btn.getAttribute("data-side") || "Buy";
+  const size = btn.getAttribute("data-size") || "0.02";
+  const avg = Number(btn.getAttribute("data-avg") || 0);
+  const mark = Number(btn.getAttribute("data-mark") || avg);
+  const tp = Number(btn.getAttribute("data-tp") || 0);
+  const sl = Number(btn.getAttribute("data-sl") || 0);
+  const idx = Number(btn.getAttribute("data-idx") || 0);
+  const oid = btn.getAttribute("data-oid") || "";
+
+  showToast("Выполняется " + act + " для " + sym + "...");
+  let res = {ok: false};
+  if (act === "split_tp") {
+    res = await apiPost("/api/pos_split_tp", {symbol: sym, side: side, size: Number(size), avg_price: avg, take_profit: tp, stop_loss: sl, position_idx: idx});
+  } else if (act === "close_half") {
+    res = await apiPost("/api/pos_close_half", {symbol: sym, side: side, size: size, position_idx: idx});
+  } else if (act === "breakeven") {
+    res = await apiPost("/api/pos_breakeven", {symbol: sym, side: side, avg_price: avg, position_idx: idx});
+  } else if (act === "trailing") {
+    res = await apiPost("/api/pos_trailing", {symbol: sym, mark_price: mark, position_idx: idx});
+  } else if (act === "pyramid") {
+    res = await apiPost("/api/pos_pyramid", {symbol: sym, side: side, size: Number(size), avg_price: avg, mark_price: mark, position_idx: idx});
+  } else if (act === "close_full") {
+    res = await apiPost("/api/close_position", {symbol: sym, side: side, size: size, position_idx: idx});
+  } else if (act === "cancel_ord") {
+    res = await apiPost("/api/cancel_order", {symbol: sym, order_id: oid});
+  } else if (act === "exec_sig") {
+    res = await apiPost("/api/place_order", {symbol: sym, side: side, order_type: "Market", qty: Number(size), price: avg, take_profit: tp, stop_loss: sl, leverage: 3});
+  } else if (act === "booster_exec") {
+    res = await apiPost("/api/booster_trade", {symbol: sym, side: side, entry_price: avg, take_profit: tp, stop_loss: sl});
+  } else if (act === "ws_quick") {
+    const qTp = side === "Buy" ? +(avg * 1.016).toPrecision(5) : +(avg * 0.984).toPrecision(5);
+    const qSl = side === "Buy" ? +(avg * 0.992).toPrecision(5) : +(avg * 1.008).toPrecision(5);
+    res = await apiPost("/api/booster_trade", {symbol: sym, side: side, entry_price: avg, take_profit: qTp, stop_loss: qSl});
+  }
+  await refreshState();
+  showToast(res.ok ? ((res.status === "PENDING" ? "⏳ Ожидается подтверждение: " : "✅ Выполнено: ") + sym + (res.retMsg ? " — " + res.retMsg : "")) : ("⚠️ " + (res.retMsg || "Отказ Bybit")), !res.ok);
+});
+
+// Отрисовка SVG-графика кривой капитала разгона ($1k -> $10k)
+function renderEquitySvg(curvePoints, floorUsd, hwmUsd) {
+  const svg = document.getElementById("booster-svg-chart");
+  if (!svg) return;
+  const pts = (curvePoints && curvePoints.length >= 2) ? curvePoints : [1000, 1000];
+  const minVal = Math.min.apply(null, pts.concat([floorUsd || 920])) * 0.992;
+  const maxVal = Math.max.apply(null, pts.concat([hwmUsd || 1000, (floorUsd || 920) * 1.1])) * 1.008;
+  const span = Math.max(1, maxVal - minVal);
+  const W = 420, H = 95;
+  const toY = function(v) { return Math.round(H - 10 - ((v - minVal) / span) * (H - 20)); };
+  const stepX = (W - 20) / Math.max(1, pts.length - 1);
+  const polyPts = pts.map(function(v, idx) { return Math.round(10 + idx * stepX) + "," + toY(v); }).join(" ");
+  const floorY = toY(floorUsd || 920);
+  const hwmY = toY(hwmUsd || 1000);
+  document.getElementById("chart-min-max-lbl").textContent = "Дно: $" + Number(floorUsd || 920).toFixed(0) + " | Текущий: $" + Number(pts[pts.length - 1]).toFixed(2);
+  svg.innerHTML =
+    "<line x1=10 y1=" + floorY + " x2=410 y2=" + floorY + " stroke=#ef4444 stroke-dasharray=4,4 stroke-width=1.3 />" +
+    "<line x1=10 y1=" + hwmY + " x2=410 y2=" + hwmY + " stroke=#10b981 stroke-dasharray=3,3 stroke-width=1 />" +
+    "<polyline fill=none stroke=#38bdf8 stroke-width=2.5 points=\"" + polyPts + "\" />";
+}
+
+function buildPositionsRows(posList) {
+  return posList.map(function(p) {
+    const u = Number(p.unrealisedPnl || 0);
+    const pIdx = Number(p.positionIdx || 0);
+    const srcTag = p.source_tag || "🎯 Системный";
+    const srcCls = srcTag.indexOf("Booster") !== -1 ? "badge-purple" : (srcTag.indexOf("Ручной") !== -1 ? "badge-amber" : "badge-blue");
+    const tp1B = p.tp1_order_price ? ("<span class=\"badge badge-green\">" + p.tp1_order_qty + " @ " + p.tp1_order_price + "</span>") : "<span class=\"badge badge-amber\">Ожидает</span>";
+    const stB = (p.is_breakeven ? "<span class=\"badge badge-green\">🛡 БУ</span> " : "") + (p.has_trailing ? ("<span class=\"badge badge-blue\">📈 Trail " + p.trailingStop + "</span>") : "<span class=\"badge badge-amber\">Активна</span>");
+    const tsLim = (window._rgCfg && window._rgCfg.time_stop_minutes) ? window._rgCfg.time_stop_minutes : 45;
+    const ageM = Number(p.age_min || 0).toFixed(0);
+    const secLbl = p.sector ? (" <span style=color:var(--muted);font-size:10px>[" + p.sector + "]</span>") : "";
+    const timerBadge = p.is_breakeven ? ("<span class=\"badge badge-green\">" + ageM + "м (в БУ)</span>") : ("<span class=\"badge badge-blue\">⏱ " + ageM + " / " + tsLim + "м</span>");
+    return "<tr><td><b>" + p.symbol + "</b> (" + p.leverage + "x)</td><td><span class=\"badge " + srcCls + "\">" + srcTag + "</span>" + secLbl + "</td><td class=" + (p.side === "Buy" ? "pos-green" : "pos-red") + ">" + p.side + "</td><td><b>" + p.size + "</b></td><td>" + p.avgPrice + "</td><td>" + p.markPrice + "</td><td class=" + (u >= 0 ? "pos-green" : "pos-red") + ">" + (u >= 0 ? "+" : "") + u.toFixed(2) + "$</td><td>" + timerBadge + "</td><td>" + tp1B + "</td><td>" + (p.takeProfit || "—") + "</td><td>" + (p.stopLoss || "—") + "</td><td>" + stB + "</td><td style=display:flex;gap:4px;flex-wrap:wrap>" +
+      "<button type=button class=\"btn-purple btn-sm\" data-action=split_tp data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-avg=" + p.avgPrice + " data-tp=" + (p.takeProfit || 0) + " data-sl=" + (p.stopLoss || 0) + " data-idx=" + pIdx + ">🎯 TP1 50%</button>" +
+      "<button type=button class=\"btn-success btn-sm\" data-action=breakeven data-symbol=" + p.symbol + " data-side=" + p.side + " data-avg=" + p.avgPrice + " data-idx=" + pIdx + ">🛡 В БУ</button>" +
+      "<button type=button class=\"btn-primary btn-sm\" data-action=pyramid data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-avg=" + p.avgPrice + " data-mark=" + p.markPrice + " data-idx=" + pIdx + ">➕ Доливка 50%</button>" +
+      "<button type=button class=\"btn-primary btn-sm\" data-action=trailing data-symbol=" + p.symbol + " data-mark=" + p.markPrice + " data-idx=" + pIdx + ">📈 Trail</button>" +
+      "<button type=button class=\"btn-warning btn-sm\" data-action=close_half data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-idx=" + pIdx + ">✂️ 50%</button>" +
+      "<button type=button class=\"btn-danger btn-sm\" data-action=close_full data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-idx=" + pIdx + ">✖</button></td></tr>";
+  }).join("");
+}
+
+let refreshInFlight = false;
+async function refreshState() {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  const controller = new AbortController();
+  const timer = setTimeout(function(){controller.abort();}, 10000);
+  try {
+    const r = await fetch(API_BASE + "/api/state", {signal:controller.signal});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const st = await r.json();
+    renderState(st);
+    const h = st.health || {}, scan = h.scan || {};
+    const stale = h.snapshot_age_sec == null || h.snapshot_age_sec > 30 || h.snapshot_error;
+    let message = stale ? "Данные устарели: " + (h.snapshot_error || "нет свежего снимка") : "Demo · данные обновлены";
+    if (scan.last_error) message += " · Ошибка скана: " + scan.last_error;
+    else message += scan.running ? " · выполняется скан" : " · скан завершён";
+    if (!h.autopilot_alive) message += " · поток автопилота остановлен";
+    if (h.entry_paused) message += " · новые автоматические входы на паузе";
+    if ((st.booster || {}).circuit_breaker_tripped) message += " · лимит риска достигнут, новые входы запрещены";
+    document.getElementById("runtime-status").textContent = message;
+    if (!h.autopilot_alive || scan.last_error) document.getElementById("master-status-badge").textContent = "Ошибка автопилота — см. статус";
+  } catch (e) {
+    document.getElementById("runtime-status").textContent = "Нет связи с сервисом: " + e.message;
+  } finally {clearTimeout(timer);refreshInFlight=false;}
+}
+
+function escapeHtml(value) { return String(value == null ? "" : value).replace(/[&<>"']/g, function(c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function renderState(st) {
+  document.getElementById("scan-time-label").textContent = "Скан: " + (st.last_scan_ts || "—");
+  const envSt = st.env_status || {};
+  const isMain = Boolean(envSt.is_mainnet);
+  const connB = document.getElementById("conn-badge");
+  if (connB) {
+    connB.className = isMain ? "badge badge-red btn-armed" : "badge badge-green";
+    connB.textContent = isMain ? "💰 BYBIT REAL MAINNET (БОЕВОЙ СЧЕТ)" : "🧪 Bybit Demo LIVE";
+  }
+  const envModeB = document.getElementById("env-active-mode-badge");
+  if (envModeB) {
+    envModeB.className = isMain ? "badge badge-red" : "badge badge-green";
+    envModeB.textContent = isMain ? "Активен: 💰 REAL MAINNET (api.bybit.com)" : "Активен: 🧪 BYBIT DEMO (api-demo.bybit.com)";
+  }
+  if (document.getElementById("env-demo-masked")) {
+    document.getElementById("env-demo-masked").textContent = envSt.demo_key_masked || "—";
+    document.getElementById("env-main-masked").textContent = envSt.mainnet_key_masked || "Не задан";
+    const chk = envSt.last_checklist || {};
+    document.getElementById("env-chk-time").textContent = "Проверка: " + (chk.checked_at || "—") + " [" + (chk.mode || "mainnet").toUpperCase() + "]";
+    const sumEl = document.getElementById("env-chk-summary");
+    sumEl.textContent = chk.summary || "Чек-лист еще не запускался";
+    sumEl.style.color = chk.passed ? "#34d399" : "#fbbf24";
+    const cListEl = document.getElementById("env-chk-list");
+    cListEl.innerHTML = (chk.checks || []).map(function(c) {
+      const ic = c.ok ? "✅" : "❌";
+      const clr = c.ok ? "#e2e8f0" : "#f87171";
+      return "<div style=\"padding:4px 7px;background:#111827;border-radius:5px;border-left:3px solid " + (c.ok ? "#10b981" : "#ef4444") + "\">" +
+        "<div style=\"font-weight:600;color:" + clr + "\">" + ic + " " + escapeHtml(c.title) + "</div>" +
+        "<div style=\"color:var(--muted);font-size:10.5px\">" + escapeHtml(c.detail) + "</div></div>";
+    }).join("");
+  }
+  const acct = st.account || {};
+  document.getElementById("kpi-usdt").textContent = "$" + Number(acct.usdt_balance || 0).toLocaleString("en-US", {minimumFractionDigits: 2});
+  document.getElementById("kpi-equity").textContent = "Эквити: $" + Number(acct.total_equity || 0).toLocaleString("en-US", {minimumFractionDigits: 2});
+
+  const posList = st.positions || [];
+  const ordList = st.open_orders || [];
+  document.getElementById("kpi-pos-orders").textContent = posList.length + " поз. / " + ordList.length + " орд.";
+
+  const upnl = Number(acct.unrealised_pnl || 0);
+  const uEl = document.getElementById("kpi-upnl");
+  uEl.textContent = (upnl >= 0 ? "+$" : "-$") + Math.abs(upnl).toFixed(2);
+  uEl.className = "kpi-mini-val " + (upnl >= 0 ? "pos-green" : "pos-red");
+
+  const rpnl = Number(st.realized_pnl_recent || 0);
+  const rEl = document.getElementById("kpi-rpnl");
+  rEl.textContent = (rpnl >= 0 ? "+$" : "-$") + Math.abs(rpnl).toFixed(2);
+  rEl.className = "kpi-mini-val " + (rpnl >= 0 ? "pos-green" : "pos-red");
+  document.getElementById("kpi-winrate").textContent = "Win Rate: " + (st.live_win_rate_pct || 0) + "% (" + (st.closed_trades_count || 0) + " сд.)";
+
+  // Обновляем карту цен для живого калькулятора
+  const ws = st.ws || {};
+  (ws.metrics || []).forEach(function(m) {
+    if (m.mid_price > 0) window._priceMap[m.symbol] = m.mid_price;
+  });
+  const sc = st.scan || {};
+  (sc.screener_top || []).forEach(function(r) {
+    if (r.last_price > 0) window._priceMap[r.symbol] = r.last_price;
+  });
+  updateManualCalculator();
+
+  // Отрисовка Deposit Booster ($1k -> $10k) + SVG Curve
+  const task=st.manual_task || {};
+  if (task.id && window._taskShown !== task.id && (task.status === 'completed' || task.status === 'failed')) {
+    window._taskShown=task.id;
+    showToast(task.status==='failed' ? 'Ошибка сканирования: '+task.error : 'Сканирование завершено. Результаты обновлены.', task.status==='failed');
+  }
+  const b = st.booster || {};
+  const bLive = Number(b.live_equity || 1000);
+  document.getElementById("kpi-booster-eq").textContent = "$" + bLive.toLocaleString("en-US", {minimumFractionDigits: 2});
+  document.getElementById("kpi-booster-floor").textContent = "Порог капитала: $" + Number(b.floor_usd || 920).toFixed(2) + " (" + (b.phase_name || "Фаза 1") + ")";
+  document.getElementById("booster-phase-title").textContent = "🚀 " + (b.phase_name || "Фаза 1") + " — Капитал: $" + bLive.toFixed(2) + " → Цель: $10,000";
+  document.getElementById("booster-progress-bar").style.width = Math.max(4, Number(b.progress_pct || 0)) + "%";
+  document.getElementById("booster-progress-text").textContent = "Прогресс: $" + bLive.toFixed(2) + " из $10,000 (" + (b.progress_pct || 0) + "% | Рост " + (b.growth_multiple || 1) + "x | Прогноз срока и доходности отсутствует)";
+  document.getElementById("b-hwm").textContent = "$" + Number(b.high_water_mark || 1000).toFixed(2);
+  document.getElementById("b-floor-status").textContent = b.near_floor_protection ? "⚠️ Вблизи дна ($" + b.floor_usd + "): риск 0.5%" : ("Порог капитала: $" + Number(b.floor_usd || 920).toFixed(2));
+  document.getElementById("b-risk-usd").textContent = "$" + Number(b.effective_risk_usd ?? 0).toFixed(2) + " (" + (b.effective_risk_pct ?? 0) + "%)";
+  document.getElementById("b-house-bonus").textContent = "Бонус HM: +$" + Number(b.house_money_bonus_usd || 0).toFixed(2);
+  const dPnl = Number(b.realized_today_usd || 0);
+  const dEl = document.getElementById("b-daily-pnl");
+  dEl.textContent = (dPnl >= 0 ? "+$" : "-$") + Math.abs(dPnl).toFixed(2);
+  dEl.className = "kpi-mini-val " + (dPnl >= 0 ? "pos-green" : "pos-red");
+  document.getElementById("b-daily-limit").textContent = "Стоп-кран дня: -$" + Number(b.daily_loss_limit_usd || 30).toFixed(2);
+  const cbB = document.getElementById("booster-cb-badge");
+  cbB.className = b.circuit_breaker_tripped ? "badge badge-red" : "badge badge-green";
+  cbB.textContent = b.circuit_breaker_tripped ? "🛑 Дневной стоп-кран СРАБОТАЛ (Пауза)" : "🛡 Дневной стоп-кран (-3%): В НОРМЕ";
+  renderEquitySvg(b.equity_curve || [1000, bLive], b.floor_usd || 920, b.high_water_mark || 1000);
+
+  // Пульт Стратегий
+  const ap = st.autopilot || {};
+  const bOn = Boolean(ap.booster_enabled);
+  const cOn = Boolean(ap.core_enabled);
+  document.getElementById("deck-b-eq").textContent = "$" + bLive.toFixed(2);
+  document.getElementById("deck-b-phase").textContent = "Фаза " + (b.phase_num || 1) + " (дно $" + Number(b.floor_usd || 920).toFixed(0) + ")";
+  document.getElementById("deck-b-risk").textContent = "$" + Number(b.effective_risk_usd ?? 0).toFixed(2) + " (" + (b.effective_risk_pct ?? 0) + "%)";
+  document.getElementById("deck-b-cycles").textContent = String(ap.booster_cycles_done || 0);
+
+  document.getElementById("card-booster").className = bOn ? "strat-card active-booster" : "strat-card";
+  const badgeB = document.getElementById("badge-booster-state");
+  badgeB.className = bOn ? "badge badge-green" : "badge badge-amber";
+  badgeB.textContent = bOn ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН";
+  const btnB = document.getElementById("btn-toggle-booster");
+  btnB.className = bOn ? "btn-big-toggle btn-success" : "btn-big-toggle btn-purple";
+  btnB.textContent = bOn ? "🟢 АВТОПИЛОТ РАЗГОНА: АКТИВЕН В ФОНЕ" : "🚀 ВКЛЮЧИТЬ АВТОПИЛОТ РАЗГОНА";
+
+  const cfg = st.settings || {};
+  document.getElementById("deck-c-lev").textContent = (cfg.max_leverage || 3) + "x (Split TP1)";
+  document.getElementById("deck-c-cycles").textContent = String(ap.core_cycles_done || 0);
+  document.getElementById("card-core").className = cOn ? "strat-card active-core" : "strat-card";
+  const badgeC = document.getElementById("badge-core-state");
+  badgeC.className = cOn ? "badge badge-green" : "badge badge-amber";
+  badgeC.textContent = cOn ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН";
+  const btnC = document.getElementById("btn-toggle-core");
+  btnC.className = cOn ? "btn-big-toggle btn-success" : "btn-big-toggle btn-primary";
+  btnC.textContent = cOn ? "🟢 ОСНОВНОЙ АВТОПИЛОТ: АКТИВЕН В ФОНЕ" : "🎯 ВКЛЮЧИТЬ ОСНОВНОЙ АВТОПИЛОТ";
+
+  const masterBadge = document.getElementById("master-status-badge");
+  const summaryEl = document.getElementById("deck-active-summary");
+  if (bOn && cOn) {
+    masterBadge.className = "badge badge-green";
+    masterBadge.textContent = "🤖 Активны ОБА: Разгон + Основная ИИ";
+    summaryEl.style.color = "#34d399";
+    summaryEl.textContent = "Работают ОБА: 🚀 Разгон + 🎯 Основная ИИ";
+  } else if (bOn) {
+    masterBadge.className = "badge badge-purple";
+    masterBadge.textContent = "🚀 Активен Автопилот Разгона";
+    summaryEl.style.color = "#c4b5fd";
+    summaryEl.textContent = "Работает только 🚀 Разгон ($1k→$10k)";
+  } else if (cOn) {
+    masterBadge.className = "badge badge-blue";
+    masterBadge.textContent = "🎯 Активен Основной Автопилот";
+    summaryEl.style.color = "#38bdf8";
+    summaryEl.textContent = "Работает только 🎯 Основная ИИ";
+  } else {
+    masterBadge.className = "badge badge-amber";
+    masterBadge.textContent = "⏸ Автопилоты: ОСТАНОВЛЕНЫ";
+    summaryEl.style.color = "#fbbf24";
+    summaryEl.textContent = "Все автопилоты на паузе";
+  }
+  document.getElementById("deck-next-timer").textContent = (bOn || cOn) ? ((ap.next_in_sec || 0) + " сек") : "На паузе";
+  const ivSel = document.getElementById("autopilot-interval");
+  if (document.activeElement !== ivSel && ap.interval_sec) ivSel.value = String(ap.interval_sec);
+
+  // Постоянный баннер активных позиций + счетчики вкладок
+  const stickyBanner = document.getElementById("sticky-pos-banner");
+  if (posList.length > 0) {
+    stickyBanner.classList.add("visible");
+    document.getElementById("sticky-positions-tbody").innerHTML = buildPositionsRows(posList);
+  } else {
+    stickyBanner.classList.remove("visible");
+  }
+  if (posList.length > window._prevPosCount) playAlertTone(920, 220);
+  window._prevPosCount = posList.length;
+
+  const sqList = st.oi_squeeze || [];
+  const aPlusCount = sqList.filter(function(x) { return x.grade === "A+"; }).length;
+  if (aPlusCount > window._prevAPlusCount) playAlertTone(1040, 180);
+  window._prevAPlusCount = aPlusCount;
+
+  const allSigs = [].concat(sc.approved_signals || [], sc.rejected_signals || []);
+  const cList = st.closed_pnl || [];
+  document.getElementById("cnt-booster").textContent = "A+: " + aPlusCount;
+  document.getElementById("cnt-signals").textContent = String(allSigs.length);
+  document.getElementById("cnt-pos").textContent = posList.length + "/" + ordList.length;
+  document.getElementById("cnt-ws").textContent = String(ws.symbols_live || 0);
+  document.getElementById("cnt-scr").textContent = String((sc.screener_top || []).length || 0);
+  document.getElementById("cnt-hist").textContent = String(cList.length);
+
+  // Таблица OI Squeeze
+  const sqBody = document.getElementById("oi-squeeze-tbody");
+  if (sqList.length === 0) {
+    sqBody.innerHTML = "<tr><td colspan=12 style=text-align:center;color:var(--muted);padding:14px>Нажмите «🔍 Обновить скан»...</td></tr>";
+  } else {
+    sqBody.innerHTML = sqList.map(function(s) {
+      const side = s.side || (s.direction === "LONG" ? "Buy" : "Sell");
+      const gCls = s.grade === "A+" ? "badge-green" : (s.grade === "A" ? "badge-blue" : "badge-amber");
+      const oiCls = s.oi_delta_45m_pct >= 0 ? "pos-green" : "pos-red";
+      return "<tr><td><b>" + s.symbol + "</b></td><td><b>" + s.setup_type + "</b></td><td><span class=\"badge " + gCls + "\">" + s.grade + " (" + s.score + ")</span></td><td class=" + (side === "Buy" ? "pos-green" : "pos-red") + ">" + (s.direction || (side === "Buy" ? "LONG" : "SHORT")) + "</td><td>" + s.entry_price + "</td><td class=" + oiCls + ">" + (s.oi_delta_45m_pct >= 0 ? "+" : "") + s.oi_delta_45m_pct + "% ($" + s.oi_value_m + "M)</td><td>" + s.funding_rate_pct + "%</td><td class=" + (s.obi_top5_pct >= 0 ? "pos-green" : "pos-red") + ">" + (s.obi_top5_pct >= 0 ? "+" : "") + s.obi_top5_pct + "%</td><td>" + s.tp1_price + " / <b>" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + "</b></td><td>" + s.stop_loss + "</td><td style=font-size:11px;color:var(--muted)>" + escapeHtml(s.rationale) + "</td><td><button type=button class=\"btn-success btn-sm\" data-action=booster_exec data-symbol=" + s.symbol + " data-side=" + side + " data-avg=" + s.entry_price + " data-tp=" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + " data-sl=" + s.stop_loss + ">🚀 Вход Booster ($" + Number(b.effective_risk_usd ?? 0).toFixed(0) + ")</button></td></tr>";
+    }).join("");
+  }
+
+  document.getElementById("kpi-ws").textContent = Number(ws.msg_count || 0).toLocaleString() + " тиков";
+  document.getElementById("kpi-ws-sub").textContent = "Активных пар L2: " + (ws.symbols_live || 0) + "/" + (ws.symbols_total || "—");
+  const wsB = document.getElementById("ws-badge");
+  wsB.className = ws.connected ? "badge badge-blue" : "badge badge-amber";
+  wsB.textContent = ws.connected ? ("📡 WebSocket LIVE (" + (ws.symbols_live || 0) + " пар)") : "📡 WebSocket: реконнект...";
+  const lc = st.limit_chaser || {};
+  const chB = document.getElementById("chaser-badge");
+  if (chB) {
+    if (!lc.enabled) {
+      chB.className = "badge badge-amber";
+      chB.textContent = "💎 Maker Chaser: ВЫКЛ";
+    } else {
+      chB.className = "badge badge-green";
+      chB.textContent = "💎 Post-Only Maker: " + (lc.maker_rate_pct == null ? "нет исполнений" : lc.maker_rate_pct + "% заявок");
+    }
+  }
+
+  const bReg = st.btc_regime || {};
+  window._rgCfg = st.regime_guard_config || {};
+  const regB = document.getElementById("btc-regime-badge");
+  if (regB) {
+    regB.textContent = bReg.label || "⚖️ BTC: NEUTRAL";
+    regB.title = bReg.reason || "";
+    if (bReg.state === "DUMP_GUARD") regB.className = "badge badge-red";
+    else if (bReg.state === "PUMP_GUARD" || bReg.state === "BULL_TREND") regB.className = "badge badge-green";
+    else if (bReg.state === "BEAR_TREND") regB.className = "badge badge-amber";
+    else regB.className = "badge badge-blue";
+  }
+
+  const sg = st.smart_guard || {};
+  const mp = st.manual_prefs || {};
+  const symSel = document.getElementById("manual-symbol");
+  if (symSel.options.length === 0 && cfg.core_pairs) {
+    cfg.core_pairs.forEach(function(s) {
+      const o = document.createElement("option");
+      o.value = s;
+      o.textContent = s;
+      symSel.appendChild(o);
+    });
+    if (mp.symbol) symSel.value = mp.symbol;
+  }
+  if (!window._prefsHydrated) {
+    window._prefsHydrated = true;
+    if (mp.symbol) symSel.value = mp.symbol;
+    if (mp.order_type) document.getElementById("manual-type").value = mp.order_type;
+    if (mp.qty) document.getElementById("manual-qty").value = mp.qty;
+    if (mp.tp_pct) document.getElementById("manual-tp-pct").value = mp.tp_pct;
+    if (mp.sl_pct) document.getElementById("manual-sl-pct").value = mp.sl_pct;
+    document.getElementById("sg-enabled").value = sg.enabled ? "1" : "0";
+    document.getElementById("sg-split").value = sg.split_tp_enabled ? "1" : "0";
+    if (sg.breakeven_trigger_pct !== undefined) document.getElementById("sg-be-pct").value = sg.breakeven_trigger_pct;
+    if (sg.trailing_step_pct !== undefined) document.getElementById("sg-trail-pct").value = sg.trailing_step_pct;
+    if (cfg.max_leverage) document.getElementById("cfg-leverage").value = cfg.max_leverage;
+    if (cfg.core_max_positions) document.getElementById("core-max-pos").value = cfg.core_max_positions;
+    if (cfg.core_min_prob_pct) document.getElementById("core-min-prob").value = cfg.core_min_prob_pct;
+    const rgc = st.regime_guard_config || {};
+    if (rgc.enabled !== undefined) document.getElementById("rg-enabled").value = rgc.enabled ? "1" : "0";
+    if (rgc.max_same_sector) document.getElementById("rg-max-sector").value = rgc.max_same_sector;
+    if (rgc.max_same_direction_total) document.getElementById("rg-max-dir").value = rgc.max_same_direction_total;
+    if (rgc.time_stop_enabled !== undefined) document.getElementById("ts-enabled").value = rgc.time_stop_enabled ? "1" : "0";
+    if (rgc.time_stop_minutes) document.getElementById("ts-minutes").value = rgc.time_stop_minutes;
+    const lcc = st.limit_chaser || {};
+    if (document.getElementById("lc-mode")) {
+      document.getElementById("lc-mode").value = !lcc.enabled ? "off" : (lcc.strict_post_only ? "strict" : "hybrid");
+    }
+    updateManualCalculator();
+  }
+
+  window._allLogs = st.logs || [];
+  renderLogs();
+
+  const pBody = document.getElementById("positions-tbody");
+  pBody.innerHTML = posList.length === 0
+    ? "<tr><td colspan=12 style=text-align:center;color:var(--muted);padding:16px>Нет открытых позиций.</td></tr>"
+    : buildPositionsRows(posList);
+
+  const oBody = document.getElementById("orders-tbody");
+  oBody.innerHTML = ordList.length === 0
+    ? "<tr><td colspan=8 style=text-align:center;color:var(--muted);padding:14px>Нет активных ордеров.</td></tr>"
+    : ordList.map(function(o) {
+        return "<tr><td><b>" + o.symbol + "</b></td><td class=" + (o.side === "Buy" ? "pos-green" : "pos-red") + ">" + o.side + "</td><td>" + (o.reduceOnly ? "<span class=\"badge badge-blue\">🎯 TP1 50% (Reduce-Only)</span>" : "<span class=\"badge badge-amber\">Лимитный вход</span>") + "</td><td><b>" + o.qty + "</b></td><td><b>" + o.price + "</b></td><td>" + o.orderStatus + "</td><td style=font-family:monospace>" + (o.orderId || "").slice(0, 10) + "</td><td><button type=button class=\"btn-danger btn-sm\" data-action=cancel_ord data-symbol=" + o.symbol + " data-oid=" + o.orderId + ">🗑 Отменить</button></td></tr>";
+      }).join("");
+
+  const wsMetrics = ws.metrics || [];
+  document.getElementById("ws-metrics-tbody").innerHTML = wsMetrics.map(function(m) {
+    const obiCls = m.obi_top5_pct >= 0 ? "pos-green" : "pos-red";
+    const cvdCls = m.cvd_usd >= 0 ? "pos-green" : "pos-red";
+    return "<tr><td><b>" + m.symbol + "</b></td><td>" + m.mid_price + " / <span style=color:#38bdf8>" + m.vamp_price + "</span></td><td>" + m.spread_bps + "</td><td class=" + obiCls + ">" + (m.obi_top5_pct >= 0 ? "+" : "") + m.obi_top5_pct + "%</td><td class=" + cvdCls + ">" + (m.cvd_usd >= 0 ? "+$" : "-$") + Math.abs(m.cvd_usd).toLocaleString() + "</td><td>" + m.flow_imbalance_pct + "% (" + m.trades_count + ")</td><td>" + m.largest_wall_age_sec + "с</td><td>" + m.long_liq_usd + "$ / " + m.short_liq_usd + "$</td><td style=display:flex;gap:4px><button type=button class=\"btn-success btn-sm\" data-action=ws_quick data-symbol=" + m.symbol + " data-side=Buy data-avg=" + m.mid_price + ">🚀 Лонг</button><button type=button class=\"btn-danger btn-sm\" data-action=ws_quick data-symbol=" + m.symbol + " data-side=Sell data-avg=" + m.mid_price + ">🔻 Шорт</button></td></tr>";
+  }).join("");
+
+  const liqs = ws.recent_liquidations || [];
+  document.getElementById("ws-liq-tbody").innerHTML = liqs.length === 0
+    ? "<tr><td colspan=5 style=color:var(--muted);text-align:center;padding:14px>Поток allLiquidation активен — ожидаем крупные ликвидации...</td></tr>"
+    : liqs.map(function(l) { return "<tr><td>" + l.time + "</td><td><b>" + l.symbol + "</b></td><td class=" + (l.side.includes("LONG") ? "pos-red" : "pos-green") + ">" + l.side + "</td><td>" + l.price + "</td><td><b>$" + Number(l.usd).toLocaleString() + "</b></td></tr>"; }).join("");
+
+  document.getElementById("signals-tbody").innerHTML = allSigs.length === 0
+    ? "<tr><td colspan=9 style=text-align:center;color:var(--muted);padding:14px>Нажмите «🔍 Обновить скан»</td></tr>"
+    : allSigs.map(function(s) {
+        const side = s.side || (s.direction === "LONG" ? "Buy" : "Sell");
+        return "<tr><td><b>" + s.symbol + "</b></td><td>" + escapeHtml(s.strategy_name) + "</td><td class=" + (side === "Buy" ? "pos-green" : "pos-red") + ">" + (s.direction || (side === "Buy" ? "LONG" : "SHORT")) + "</td><td>" + Number(s.entry_price).toFixed(4) + "</td><td>" + Number(s.stop_loss).toFixed(4) + "</td><td>" + Number(s.take_profit || s.take_profit_2 || s.take_profit_1).toFixed(4) + "</td><td><b>" + (Number(s.ml_win_probability) * 100).toFixed(1) + "%</b></td><td>" + s.debate_verdict + "</td><td style=display:flex;gap:5px><button type=button class=\"btn-primary btn-sm\" data-action=exec_sig data-symbol=" + s.symbol + " data-side=" + side + " data-size=" + (s.position_size_coins || s.position_qty || 0) + " data-avg=" + s.entry_price + " data-tp=" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + " data-sl=" + s.stop_loss + ">🎯 Стандарт</button><button type=button class=\"btn-purple btn-sm\" data-action=booster_exec data-symbol=" + s.symbol + " data-side=" + side + " data-avg=" + s.entry_price + " data-tp=" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + " data-sl=" + s.stop_loss + ">🚀 Booster</button></td></tr>";
+      }).join("");
+
+  const scrList = sc.screener_top || [];
+  document.getElementById("screener-tbody").innerHTML = scrList.map(function(r) {
+    const px = Number(r.last_price || 0);
+    return "<tr><td><b>" + r.symbol + "</b></td><td>" + px + "</td><td><span class=\"badge " + (r.passed ? "badge-green" : "badge-amber") + "\">" + (r.passed ? "IN PLAY" : "WAIT") + "</span></td><td><b>" + Number(r.in_play_score || 0).toFixed(2) + "</b></td><td>" + Number(r.rvol || 0).toFixed(2) + "x</td><td>" + Number(r.natr_pct || 0).toFixed(2) + "%</td><td>" + Number(r.spread_pct || 0).toFixed(4) + "%</td><td>" + (r.mtf_bias || "NEUTRAL") + "</td><td style=display:flex;gap:4px><button type=button class=\"btn-success btn-sm\" data-action=ws_quick data-symbol=" + r.symbol + " data-side=Buy data-avg=" + px + ">🚀 Лонг</button><button type=button class=\"btn-danger btn-sm\" data-action=ws_quick data-symbol=" + r.symbol + " data-side=Sell data-avg=" + px + ">🔻 Шорт</button></td></tr>";
+  }).join("");
+
+  // Отрисовка модуля Радар X (Twitter) & Новости
+  const xn = st.x_news || {};
+  window._xNewsEnabled = xn.enabled !== false;
+  const xnB = document.getElementById("x-news-badge");
+  if (xnB) {
+    xnB.textContent = xn.global_label || "🐦 X/News: NEUTRAL";
+    if (xn.global_state === "PANIC") xnB.className = "badge badge-red";
+    else if (xn.global_state === "BULLISH") xnB.className = "badge badge-green";
+    else if (xn.global_state === "BEARISH") xnB.className = "badge badge-amber";
+    else xnB.className = "badge badge-blue";
+  }
+  const xnItems = xn.items || [];
+  const cntXnEl = document.getElementById("cnt-xnews");
+  if (cntXnEl) cntXnEl.textContent = String(xnItems.length);
+
+  if (document.getElementById("xn-score")) {
+    const gSc = Number(xn.global_score || 0);
+    const scEl = document.getElementById("xn-score");
+    scEl.textContent = (gSc > 0 ? "+" : "") + gSc.toFixed(1);
+    scEl.className = "kpi-mini-val " + (gSc >= 10 ? "pos-green" : (gSc <= -10 ? "pos-red" : ""));
+    document.getElementById("xn-state").textContent = xn.global_label || "—";
+    document.getElementById("xn-bull").textContent = String(xn.bullish_count || 0);
+    document.getElementById("xn-bear").textContent = String(xn.bearish_count || 0);
+    document.getElementById("xn-shield").textContent = xn.panic_active ? "🛑 ТРЕВОГА PANIC" : "🛡 В НОРМЕ";
+    const pBadge = document.getElementById("xnews-panic-badge");
+    if (pBadge) {
+      pBadge.className = xn.panic_active ? "badge badge-red" : "badge badge-green";
+      pBadge.textContent = xn.panic_active ? ("🛑 PANIC: " + (xn.panic_reason || "Экстренный негатив")) : "🛡 Щит Black-Swan: В НОРМЕ";
+    }
+    const cMap = xn.coin_sentiment || {};
+    const hotKeys = Object.keys(cMap);
+    document.getElementById("xn-hot-coins").textContent = hotKeys.length === 0
+      ? "Спокойный фон по отслеживаемым монетам"
+      : hotKeys.slice(0, 6).map(function(k) {
+          const cs = cMap[k].score || 0;
+          return k.replace("USDT", "") + " (" + (cs >= 0 ? "+" : "") + cs + ")";
+        }).join("  •  ");
+
+    document.getElementById("xnews-tbody").innerHTML = xnItems.length === 0
+      ? "<tr><td colspan=7 style=text-align:center;color:var(--muted);padding:14px>Нажмите «🔄 Загрузить свежие твиты сейчас»</td></tr>"
+      : xnItems.map(function(it) {
+          const sym = it.primary_symbol || "BTCUSDT";
+          const px = Number(window._priceMap[sym] || 100);
+          const sCls = it.sentiment === "BULLISH" ? "badge-green" : (it.sentiment === "BEARISH" ? "badge-red" : "badge-blue");
+          const symBadges = (it.symbols && it.symbols.length > 0)
+            ? it.symbols.map(function(s) { return "<span class=\"badge badge-purple\">" + s + "</span>"; }).join(" ")
+            : "<span style=color:var(--muted)>РЫНОК (BTC)</span>";
+          return "<tr><td>" + it.time + " <span style=color:var(--muted);font-size:10px>(" + it.age_min + "м)</span></td><td><b>" + escapeHtml(it.source) + "</b></td><td>" + symBadges + "</td><td><span class=\"badge " + sCls + "\">" + it.sentiment + " (" + (it.score >= 0 ? "+" : "") + it.score + ")</span></td><td style=white-space:normal;max-width:520px;line-height:1.35>" + escapeHtml(it.headline) + "</td><td style=font-size:11px;color:var(--muted)>" + escapeHtml(it.triggers) + "</td><td style=display:flex;gap:4px><button type=button class=\"btn-success btn-sm\" data-action=ws_quick data-symbol=" + sym + " data-side=Buy data-avg=" + px + ">🚀 Лонг " + sym.replace("USDT", "") + "</button><button type=button class=\"btn-danger btn-sm\" data-action=ws_quick data-symbol=" + sym + " data-side=Sell data-avg=" + px + ">🔻 Шорт</button></td></tr>";
+        }).join("");
+  }
+
+  // Отрисовка модуля Adaptive ML Calibrator (Шаг 2)
+  const mlc = st.ml_calibration || {};
+  window._mlCalEnabled = mlc.enabled !== false;
+  const pStats = mlc.portfolio_stats || {};
+  const sList = mlc.strategy_list || [];
+  const recThr = Number(mlc.recommended_ml_threshold_pct || 58.0);
+  const cntMlEl = document.getElementById("cnt-ml");
+  if (cntMlEl) cntMlEl.textContent = recThr.toFixed(0) + "%";
+  const mlBadge = document.getElementById("ml-cal-status-badge");
+  if (mlBadge) {
+    mlBadge.className = window._mlCalEnabled ? "badge badge-green" : "badge badge-amber";
+    mlBadge.textContent = window._mlCalEnabled ? ("🧠 Авто-калибровка: ВКЛ (порог " + recThr.toFixed(1) + "%)") : "⏸ Авто-калибровка: ВЫКЛ";
+  }
+  if (document.getElementById("ml-rec-thr")) {
+    document.getElementById("ml-rec-thr").textContent = recThr.toFixed(1) + "%";
+    document.getElementById("ml-base-thr").textContent = "Базовый порог: " + Number(mlc.base_ml_threshold_pct || 58).toFixed(1) + "%";
+    document.getElementById("ml-port-pf").textContent = (pStats.profit_factor == null ? "—" : Number(pStats.profit_factor).toFixed(2));
+    document.getElementById("ml-port-wr").textContent = Number(pStats.win_rate_pct || 0).toFixed(1) + "%";
+    document.getElementById("ml-port-wl").textContent = "Побед: " + (pStats.wins || 0) + " / Стопов: " + (pStats.losses || 0);
+    const netP = Number(pStats.net_pnl_usd || 0);
+    const netEl = document.getElementById("ml-port-net");
+    netEl.textContent = (netP >= 0 ? "+$" : "-$") + Math.abs(netP).toFixed(2);
+    netEl.className = "kpi-mini-val " + (netP >= 0 ? "pos-green" : "pos-red");
+    document.getElementById("ml-top-strat").textContent = sList.length > 0 ? (sList[0].strategy_name + " (" + sList[0].weight_multiplier + "x)") : "—";
+    document.getElementById("ml-last-ts").textContent = mlc.last_calibrated_at || "—";
+
+    document.getElementById("ml-cal-tbody").innerHTML = sList.map(function(sr) {
+      const bCls = sr.status === "BOOST" ? "badge-green" : (sr.status === "QUARANTINE" ? "badge-red" : (sr.status === "COOLING" ? "badge-amber" : "badge-blue"));
+      const np = Number(sr.net_pnl_usd || 0);
+      const padj = Number(sr.prob_adjustment_pct || 0);
+      return "<tr><td><b>" + escapeHtml(sr.strategy_name) + "</b></td><td><span class=\"badge " + bCls + "\">" + sr.badge + "</span></td><td>" + sr.trades + " (" + sr.wins + "W / " + sr.losses + "L)</td><td><b>" + sr.win_rate_pct + "%</b></td><td><b>" + (sr.profit_factor == null ? "—" : sr.profit_factor) + "</b></td><td class=" + (sr.streak >= 0 ? "pos-green" : "pos-red") + "><b>" + sr.streak_str + "</b></td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+$" : "-$") + Math.abs(np).toFixed(2) + "</td><td class=" + (padj >= 0 ? "pos-green" : "pos-red") + ">" + (padj >= 0 ? "+" : "") + padj + "%</td></tr>";
+    }).join("");
+  }
+
+  document.getElementById("closed-pnl-tbody").innerHTML = cList.map(function(c) {
+    const p = Number(c.closedPnl || 0);
+    return "<tr><td><b>" + c.symbol + "</b></td><td>" + c.side + "</td><td>" + c.qty + "</td><td>" + c.avgEntryPrice + "</td><td>" + c.avgExitPrice + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + (c.updatedTime ? new Date(Number(c.updatedTime)).toLocaleTimeString("ru-RU") : "—") + "</td></tr>";
+  }).join("");
+}
+
+refreshState();
+setInterval(refreshState, 3500);
+</script>
 </body>
 </html>

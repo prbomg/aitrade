@@ -85,7 +85,7 @@ class BybitDemoExecutor:
                     if total_eq > 0:
                         return total_eq
             except Exception:
-                pass
+                if not self.settings.get("offline_simulation", False): raise
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute("SELECT COALESCE(SUM(pnl_usd), 0.0) FROM demo_trades").fetchone()
             realized_pnl = float(row[0]) if row else 0.0
@@ -93,6 +93,8 @@ class BybitDemoExecutor:
 
     def execute_signal(self, signal: TradeSignal) -> Dict[str, Any]:
         """Исполняет одобренный сигнал на Bybit Demo API или в локальном трекере."""
+        if not self.settings.get("offline_simulation", False):
+            raise RuntimeError("Исполнение разрешено только через общий контроллер риска")
         now_iso = datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         venue = "LOCAL_BYBIT_DEMO_SIM"
         order_id = f"sim_{signal.symbol}_{int(datetime.datetime.now().timestamp())}"
