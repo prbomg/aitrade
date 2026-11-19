@@ -139,28 +139,40 @@ class _PurePythonCalibratedLogReg:
                 w[d] -= lr * (gw[d] * inv_n + l2 * w[d] * inv_n)
         return w, b
 
+    @staticmethod
+    def _standardize_fold(X_tr: List[List[float]], X_te: List[List[float]]) -> Tuple[List[List[float]], List[List[float]]]:
+        dim = len(X_tr[0])
+        n = len(X_tr)
+        means = [sum(r[d] for r in X_tr) / n for d in range(dim)]
+        stds = [max(1e-6, math.sqrt(sum((r[d] - means[d]) ** 2 for r in X_tr) / n)) for d in range(dim)]
+        tr_s = [[(r[d] - means[d]) / stds[d] for d in range(dim)] for r in X_tr]
+        te_s = [[(r[d] - means[d]) / stds[d] for d in range(dim)] for r in X_te]
+        return tr_s, te_s
+
     def fit(
         self,
         X: List[List[float]],
         y: List[float],
         intervals: List[Tuple[int, int]],
     ) -> None:
-        Xs = self._fit_standardizer(X)
-        self.weights, self.bias = self._fit_raw_logreg(Xs, y, self.l2, self.lr, self.epochs)
-
-        # Out-of-fold Platt-калибровка на Purged K-Fold
+        # Out-of-fold Platt-калибровка со стандартизацией строго внутри train каждого фолда (без утечки)
         splits = purged_kfold_splits(intervals, n_splits=5, embargo_pct=0.01)
         oof_logits: List[float] = []
         oof_y: List[float] = []
         for tr_idx, te_idx in splits:
-            x_tr = [Xs[i] for i in tr_idx]
+            raw_tr = [X[i] for i in tr_idx]
+            raw_te = [X[i] for i in te_idx]
             y_tr = [y[i] for i in tr_idx]
             if len(set(y_tr)) < 2:
                 continue
-            w_f, b_f = self._fit_raw_logreg(x_tr, y_tr, self.l2, self.lr, self.epochs // 2)
-            for i in te_idx:
-                oof_logits.append(sum(wi * xi for wi, xi in zip(w_f, Xs[i])) + b_f)
+            x_tr_s, x_te_s = self._standardize_fold(raw_tr, raw_te)
+            w_f, b_f = self._fit_raw_logreg(x_tr_s, y_tr, self.l2, self.lr, self.epochs // 2)
+            for row_te, i in zip(x_te_s, te_idx):
+                oof_logits.append(sum(wi * xi for wi, xi in zip(w_f, row_te)) + b_f)
                 oof_y.append(y[i])
+
+        Xs = self._fit_standardizer(X)
+        self.weights, self.bias = self._fit_raw_logreg(Xs, y, self.l2, self.lr, self.epochs)
 
         if len(oof_logits) >= 20 and len(set(oof_y)) >= 2:
             a, b_p = 1.0, 0.0
@@ -224,6 +236,12 @@ class WalkForwardMetaLabeler:
         if n < 45:
             return [], [], []
 
+        # Кросс-секционная 1h стратегия не должна обучаться на псевдо-сэмплах 15m ATR-барьеров
+        if strategy_id == "AUTOTRADE_MOMENTUM_FUNDING":
+            self._candidate_samples = []
+            return [], [], []
+
+        from aitrade.strategies.booster_breakout import generate_booster_breakout_signal
         from aitrade.strategies.regime_s1_s3 import generate_s1_s3_signal
         from aitrade.backtest.walk_forward import WalkForwardBacktester
 
@@ -236,19 +254,23 @@ class WalkForwardMetaLabeler:
         returns_pct: List[float] = []
         self._candidate_samples = []
 
-        intraday = strategy_id in ("S1_TREND_RETEST", "S3_VWAP_RANGE")
+        intraday = strategy_id in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT")
         start_idx = 219 if intraday else 18
         end_idx = n - (27 if intraday else self.label_horizon)
         last_exit = 0
 
         for i in range(start_idx, end_idx):
-            feat = self._feature_vector(candles[: i + 1])
+            hist = candles[max(0, i + 1 - 520) : i + 1]
+            feat = self._feature_vector(hist)
             if intraday:
                 if candles[i].timestamp < last_exit:
                     continue
-                sig = generate_s1_s3_signal(
-                    "TRAIN", candles[: i + 1], reference_open_px=candles[i + 1].open, min_rr_s3=1.15
-                )
+                if strategy_id == "B1_SQUEEZE_BREAKOUT":
+                    sig = generate_booster_breakout_signal("TRAIN", hist, reference_open_px=candles[i + 1].open)
+                else:
+                    sig = generate_s1_s3_signal(
+                        "TRAIN", hist, reference_open_px=candles[i + 1].open, min_rr_s3=1.15
+                    )
                 if not sig or sig.strategy_id != strategy_id or (sig.side == "Buy") != (direction_sign > 0):
                     continue
                 trade = replay.replay_signal(candles, i + 1, sig)

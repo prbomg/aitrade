@@ -88,12 +88,13 @@ def compute_daily_sharpe_and_dsr(
     # Моменты для DSR (skewness, kurtosis)
     m3 = sum(((r - mean_r) / std_r) ** 3 for r in daily_returns) / n
     m4 = sum(((r - mean_r) / std_r) ** 4 for r in daily_returns) / n
-    # Ожидаемый максимальный Sharpe при n_trials (при n_trials=1 -> 0.0)
+    # Масштабно-инвариантный ожидаемый максимальный дневной Sharpe при n_trials (Bailey & Lopez de Prado)
     if n_trials <= 1:
         sr_star = 0.0
     else:
         euler_gamma = 0.5772156649
-        sr_star = math.sqrt(var_r) * (
+        sr_trial_std = 1.0 / math.sqrt(max(n - 1, 1))
+        sr_star = sr_trial_std * (
             (1.0 - euler_gamma) * _norm_ppf(1.0 - 1.0 / n_trials)
             + euler_gamma * _norm_ppf(1.0 - 1.0 / (n_trials * math.e))
         )
@@ -345,7 +346,7 @@ class WalkForwardBacktester:
         trades_2x: List[Tuple[int, float, float, str, int, str, float]] = []
         fn = strategy_fn or (
             lambda sym, hist, ref_open: generate_s1_s3_signal(
-                sym, hist, reference_open_px=ref_open, min_rr_s3=0.50
+                sym, hist, reference_open_px=ref_open, min_rr_s3=1.15
             )
         )
         i = 220
@@ -379,7 +380,7 @@ class WalkForwardBacktester:
         trades: List[Tuple[int, float, float, str, int, str, float]] = []
         fn = strategy_fn or (
             lambda sym, hist, ref_open: generate_s1_s3_signal(
-                sym, hist, reference_open_px=ref_open, min_rr_s3=0.50
+                sym, hist, reference_open_px=ref_open, min_rr_s3=1.15
             )
         )
         i = 220
@@ -586,12 +587,20 @@ class WalkForwardBacktester:
 
         mean_ann_is = sum(ann_is_list) / len(ann_is_list) if ann_is_list else 0.0
         mean_ann_oos = sum(ann_oos_list) / len(ann_oos_list) if ann_oos_list else 0.0
-        wfe = round(mean_ann_oos / mean_ann_is, 3) if abs(mean_ann_is) > 1e-6 else None
+        # WFE валиден только при положительной средней годовой доходности IS
+        wfe = round(mean_ann_oos / mean_ann_is, 3) if (mean_ann_is > 1e-6) else None
 
         oos_summary = self._summarize("Rolling WFA OOS (1x)", oos_trades_1x, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
         oos_pnls, _, _, _ = self._portfolio(oos_trades_1x, risk_per_trade_frac=risk_per_trade_frac)
         oos_stress_2x = self._summarize("Rolling WFA OOS (2x Stress)", oos_trades_2x, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
         mc = run_monte_carlo_permutation(oos_pnls, initial_equity=1000.0, iterations=mc_iterations)
+        wfe_ok = bool(
+            wfe is not None
+            and wfe >= 0.50
+            and oos_summary.net_return_pct > 0.0
+            and oos_summary.avg_r_multiple > 0.0
+            and oos_stress_2x.avg_r_multiple > 0.0
+        )
 
         return {
             "status": "ok",
@@ -599,7 +608,7 @@ class WalkForwardBacktester:
             "is_ratio": is_ratio,
             "n_trials": n_trials,
             "wfe": wfe,
-            "wfe_passed": (wfe is not None and wfe >= 0.50),
+            "wfe_passed": wfe_ok,
             "cycles": cycles_out,
             "oos_summary": asdict(oos_summary),
             "oos_stress_2x": asdict(oos_stress_2x),

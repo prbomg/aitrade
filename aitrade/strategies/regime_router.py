@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from aitrade.exchange.bybit_v5 import Candle
 from aitrade.features.indicators import (
@@ -48,9 +48,6 @@ def has_recent_gaps(candles: List[Candle], step_ms: int, check_bars: int = 60) -
         return False
     tail = candles[-min(len(candles), check_bars) :]
     return any((b.timestamp - a.timestamp) != step_ms for a, b in zip(tail, tail[1:]))
-
-
-_REGIME_CACHE: Dict[Tuple[int, float, int, int, bool], RegimeDecision] = {}
 
 
 def classify_regime(
@@ -88,12 +85,7 @@ def classify_regime(
             reason="Пропуск свечей в последних 60 барах 1h",
         )
 
-    cache_key = None
-    if hmm_model is None:
-        cache_key = (int(bars_1h[-1].timestamp), float(bars_1h[-1].close), int(bars_1h[0].timestamp), len(bars_1h), bool(use_hmm))
-        cached = _REGIME_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
+
 
     closes = [c.close for c in bars_1h]
     adx_val, plus_di, minus_di = calc_adx(bars_1h, 14)
@@ -150,7 +142,7 @@ def classify_regime(
     else:
         allowed = ["AUTOTRADE_CARRY"]
 
-    dec = RegimeDecision(
+    return RegimeDecision(
         regime=regime,
         adx_14=round(adx_val, 2),
         atr_percentile=round(atr_pct, 2),
@@ -164,8 +156,3 @@ def classify_regime(
         allowed_modules=allowed,
         reason=reason,
     )
-    if cache_key is not None:
-        if len(_REGIME_CACHE) >= 4096:
-            _REGIME_CACHE.clear()
-        _REGIME_CACHE[cache_key] = dec
-    return dec

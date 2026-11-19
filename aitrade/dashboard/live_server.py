@@ -300,10 +300,11 @@ class BybitV5DirectController:
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
             hold_min=480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (360 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))
-            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.5','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
+            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.6','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
             if hasattr(self.spm,'ensure_isolated_margin') and 'FUNDING_CARRY' not in str(strategy_id):
-                try:self.spm.ensure_isolated_margin(symbol,int(leverage))
-                except Exception:pass
+                iso_res=self.spm.ensure_isolated_margin(symbol,int(leverage))
+                if isinstance(iso_res,dict) and iso_res.get('ok') is False:
+                    raise ValueError('Не удалось подтвердить режим Isolated Margin: '+str(iso_res.get('retMsg','')))
             self.spm.signed_post('/v5/position/set-leverage',{'category':'linear','symbol':symbol,'buyLeverage':str(leverage),'sellLeverage':str(leverage)})
             # Read position mode explicitly, never resubmit the same entry to another positionIdx.
             modes=self.spm.paged_get('/v5/position/list',{'category':'linear','symbol':symbol})
@@ -569,6 +570,105 @@ class ControlCenterState:
             self.add_log(f"🚨 [Dead-Man Switch] Потеря WS ({age:.0f}с) — отменено {cancelled} входных лимитных ордеров!")
         return cancelled
 
+    @staticmethod
+    def _is_active_market_close_order(o: Dict[str, Any], sym: str) -> bool:
+        """Отличает реальную активную Market-заявку на закрытие от условных Untriggered SL/TP ордеров."""
+        if o.get("symbol") != sym or not bool(o.get("reduceOnly")) or o.get("orderType") != "Market":
+            return False
+        stop_type = str(o.get("stopOrderType") or "").strip()
+        if stop_type and stop_type.lower() != "unknown":
+            return False
+        st = str(o.get("orderStatus") or "").strip()
+        if st in ("Untriggered", "Deactivated", "Cancelled", "Rejected", "Filled"):
+            return False
+        return True
+
+    def _run_guard_cycle_for_controller(self, ctrl: BybitV5DirectController) -> set:
+        ctrl.get_closed_pnl()
+        ctrl.spm.split_tp_enabled = self.split_tp_enabled
+        actions = ctrl.spm.audit_and_protect_open_positions()
+        for act in actions:
+            if not act.get("ok"):
+                self.add_log("ОШИБКА ЗАЩИТЫ: " + str(act))
+                self.entry_paused.set()
+            if act.get("ok"):
+                self.add_log("🛡 Smart Guard (фон): " + str(act.get("action")) + " для " + str(act.get("symbol")))
+
+        now_ms = int(time.time() * 1000)
+        open_orders = ctrl.get_open_orders()
+        for o in open_orders:
+            if bool(o.get("reduceOnly")) or o.get("orderType") != "Limit":
+                continue
+            o_sym = str(o.get("symbol", ""))
+            o_side = str(o.get("side", ""))
+            o_strat = ctrl.ledger.pending_strategy(o_sym, o_side)
+            c_ms = int(o.get("createdTime", 0) or 0)
+            ttl_min = 45 if "S1_TREND_RETEST" in o_strat else (20 if o_strat.startswith("BOOSTER:") else 0)
+            if ttl_min > 0 and c_ms > 0 and (now_ms - c_ms) >= ttl_min * 60 * 1000:
+                c_ord = ctrl.cancel_order(o_sym, str(o.get("orderId", "")))
+                if c_ord.get("ok"):
+                    self.add_log(f"⏱ [Limit TTL] Отменён неисполненный лимит {o_sym} (>{ttl_min} мин)")
+
+        positions = ctrl.get_positions()
+        active_syms = {str(p.get("symbol", "")) for p in positions}
+        for p in positions:
+            sym = str(p.get("symbol", ""))
+            side = str(p.get("side", "Buy"))
+            size_str = str(p.get("size", "0"))
+            avg_px = float(p.get("avgPrice", 0) or 0)
+            mark_px = float(p.get("markPrice", 0) or avg_px)
+            cur_sl = float(p.get("stopLoss", 0) or 0)
+            p_idx = int(p.get("positionIdx", 0) or 0)
+            if avg_px <= 0 or not p.get("entry_intent_id"):
+                continue
+            intent = ctrl.ledger.active_intent(sym, side, size_str)
+            plan = (intent or {}).get("exit_plan", {})
+            strat_s = str(p.get("strategy_id") or "")
+            hold = plan.get(
+                "max_hold_minutes",
+                480 if "AUTOTRADE_MOMENTUM_FUNDING" in strat_s else (
+                    360 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")) else (
+                        240 if "S3_VWAP_RANGE" in strat_s else (180 if strat_s.startswith("BOOSTER") else 0)
+                    )
+                ),
+            )
+            if hold and p.get("opened_ms") and (time.time() * 1000 - p["opened_ms"]) >= hold * 60000:
+                pending = [o for o in open_orders if self._is_active_market_close_order(o, sym)]
+                if not pending:
+                    ctrl.close_position(sym, side, size_str, p_idx)
+                    self.add_log("⏱ Лимит времени стратегии: отправлено закрытие " + sym)
+                continue
+            move_pct = ((mark_px - avg_px) / avg_px) * 100.0 if side == "Buy" else ((avg_px - mark_px) / avg_px) * 100.0
+            is_be = (side == "Buy" and cur_sl >= avg_px) or (side == "Sell" and 0 < cur_sl <= avg_px)
+
+            if hasattr(self, "x_radar") and self.x_radar.enabled and hasattr(self.x_radar, "evaluate_open_position"):
+                n_eval = self.x_radar.evaluate_open_position(sym, side)
+                n_act = n_eval.get("action", "HOLD")
+                if n_act == "CLOSE_FULL":
+                    c_res = ctrl.close_position(sym, side, size_str, p_idx)
+                    if c_res.get("ok"):
+                        self.add_log("🚨 [News Guard] Экстренное закрытие " + sym + " (" + side + "): " + str(n_eval.get("reason")))
+                    continue
+                elif n_act == "PROTECT" and not is_be and move_pct >= 0.18:
+                    p_strat = str(p.get("strategy_id") or ctrl.ledger.latest_strategy(sym, side))
+                    if not any(x in p_strat for x in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT")):
+                        be_res = ctrl.spm.move_sl_to_breakeven(sym, side, avg_px, p_idx)
+                        ctrl.spm.activate_trailing_stop(sym, mark_px, ctrl.spm.trailing_step_pct, p_idx)
+                        if be_res.get("ok"):
+                            self.add_log("🛡 [News Guard] Досрочный БУ + Трейлинг для " + sym + ": " + str(n_eval.get("reason")))
+                            is_be = True
+
+            if self.regime_guard.time_stop_enabled and not is_be and not any(x in strat_s for x in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT", "BOOSTER:")):
+                age_min = self.get_position_age_minutes(p)
+                if age_min >= self.regime_guard.time_stop_minutes and abs(move_pct) <= self.regime_guard.time_stop_band_pct:
+                    c_res = ctrl.close_position(sym, side, size_str, p_idx)
+                    if c_res.get("ok"):
+                        self.add_log(
+                            "⏱ Time-Stop сработал для " + sym + ": сделка висела " + str(age_min)
+                            + " мин без импульса (" + "{:+.2f}%".format(move_pct) + ") — отправлена заявка на закрытие."
+                        )
+        return active_syms
+
     def _smart_guard_loop(self) -> None:
         while True:
             time.sleep(5)
@@ -577,89 +677,12 @@ class ControlCenterState:
                 continue
             try:
                 self._check_dead_mans_switch()
+                active_syms: set = set()
                 for ctrl in self._active_controllers():
-                    ctrl.get_closed_pnl()
-                    ctrl.spm.split_tp_enabled = self.split_tp_enabled
-                    actions = ctrl.spm.audit_and_protect_open_positions()
-                    for act in actions:
-                        if not act.get("ok"):
-                            self.add_log("ОШИБКА ЗАЩИТЫ: " + str(act))
-                            self.entry_paused.set()
-                        if act.get("ok"):
-                            self.add_log("🛡 Smart Guard (фон): " + str(act.get("action")) + " для " + str(act.get("symbol")))
-
-                now_ms = int(time.time() * 1000)
-                for o in self.bybit.get_open_orders():
-                    if bool(o.get("reduceOnly")) or o.get("orderType") != "Limit":
-                        continue
-                    o_sym = str(o.get("symbol", ""))
-                    o_side = str(o.get("side", ""))
-                    o_strat = self.bybit.ledger.pending_strategy(o_sym, o_side)
-                    c_ms = int(o.get("createdTime", 0) or 0)
-                    ttl_min = 45 if "S1_TREND_RETEST" in o_strat else (20 if o_strat.startswith("BOOSTER:") else 0)
-                    if ttl_min > 0 and c_ms > 0 and (now_ms - c_ms) >= ttl_min * 60 * 1000:
-                        c_ord = self.bybit.cancel_order(o_sym, str(o.get("orderId", "")))
-                        if c_ord.get("ok"):
-                            self.add_log(f"⏱ [Limit TTL] Отменён неисполненный лимит {o_sym} (>{ttl_min} мин)")
-
-                positions = self.bybit.get_positions()
-                active_syms = {str(p.get("symbol", "")) for p in positions}
+                    active_syms |= self._run_guard_cycle_for_controller(ctrl)
                 for old_s in list(self.position_opened_ts.keys()):
                     if old_s not in active_syms:
                         del self.position_opened_ts[old_s]
-
-                # News network refresh runs independently of position protection.
-
-                for p in positions:
-                    sym = str(p.get("symbol", ""))
-                    side = str(p.get("side", "Buy"))
-                    size_str = str(p.get("size", "0"))
-                    avg_px = float(p.get("avgPrice", 0) or 0)
-                    mark_px = float(p.get("markPrice", 0) or avg_px)
-                    cur_sl = float(p.get("stopLoss", 0) or 0)
-                    p_idx = int(p.get("positionIdx", 0) or 0)
-                    if avg_px <= 0 or not p.get('entry_intent_id'):
-                        continue
-                    intent=self.bybit.ledger.active_intent(sym,side,size_str)
-                    plan=(intent or {}).get('exit_plan',{})
-                    hold=plan.get('max_hold_minutes',360 if 'S1_TREND_RETEST' in str(p.get('strategy_id')) else (240 if 'S3_VWAP_RANGE' in str(p.get('strategy_id')) else (180 if str(p.get('strategy_id','')).startswith('BOOSTER') else 0)))
-                    if hold and p.get('opened_ms') and (time.time()*1000-p['opened_ms'])>=hold*60000:
-                        pending=[o for o in self.bybit.get_open_orders() if o.get('symbol')==sym and o.get('reduceOnly') and o.get('orderType')=='Market']
-                        if not pending:
-                            self.bybit.close_position(sym,side,size_str,p_idx)
-                            self.add_log('⏱ Лимит времени стратегии: отправлено закрытие '+sym)
-                        continue
-                    move_pct = ((mark_px - avg_px) / avg_px) * 100.0 if side == "Buy" else ((avg_px - mark_px) / avg_px) * 100.0
-                    is_be = (side == "Buy" and cur_sl >= avg_px) or (side == "Sell" and 0 < cur_sl <= avg_px)
-
-                    # 1. Защита и закрытие открытых позиций по радару новостей X/News
-                    if hasattr(self, "x_radar") and self.x_radar.enabled and hasattr(self.x_radar, "evaluate_open_position"):
-                        n_eval = self.x_radar.evaluate_open_position(sym, side)
-                        n_act = n_eval.get("action", "HOLD")
-                        if n_act == "CLOSE_FULL":
-                            c_res = self.bybit.close_position(sym, side, size_str, p_idx)
-                            if c_res.get("ok"):
-                                self.add_log("🚨 [News Guard] Экстренное закрытие " + sym + " (" + side + "): " + str(n_eval.get("reason")))
-                            continue
-                        elif n_act == "PROTECT" and not is_be and move_pct >= 0.18:
-                            p_strat = str(p.get("strategy_id") or self.bybit.ledger.latest_strategy(sym, side))
-                            if not any(x in p_strat for x in ("S1_TREND_RETEST","S3_VWAP_RANGE")):
-                                be_res = self.bybit.spm.move_sl_to_breakeven(sym, side, avg_px, p_idx)
-                                self.bybit.spm.activate_trailing_stop(sym, mark_px, self.bybit.spm.trailing_step_pct, p_idx)
-                                if be_res.get("ok"):
-                                    self.add_log("🛡 [News Guard] Досрочный БУ + Трейлинг для " + sym + ": " + str(n_eval.get("reason")))
-                                    is_be = True
-
-                    # 2. Time-Stop для сделок без импульса
-                    if self.regime_guard.time_stop_enabled and not is_be and not any(x in str(p.get("strategy_id")) for x in ("S1_TREND_RETEST","S3_VWAP_RANGE","BOOSTER:")):
-                        age_min = self.get_position_age_minutes(p)
-                        if age_min >= self.regime_guard.time_stop_minutes and abs(move_pct) <= self.regime_guard.time_stop_band_pct:
-                            c_res = self.bybit.close_position(sym, side, size_str, p_idx)
-                            if c_res.get("ok"):
-                                self.add_log(
-                                    "⏱ Time-Stop сработал для " + sym + ": сделка висела " + str(age_min)
-                                    + " мин без импульса (" + "{:+.2f}%".format(move_pct) + ") — отправлена заявка на закрытие."
-                                )
                 self.guard_status.update(last_success=time.time(),last_error='')
             except Exception as exc:
                 self.guard_status['last_error']=str(exc)[:200]
@@ -791,7 +814,10 @@ class ControlCenterState:
             cal_summary = self.ml_calibrator.calibrate_from_closed_pnl(closed_pnl)
             if self.ml_calibrator.state.get("enabled", True):
                 self.core_min_prob_pct = float(cal_summary.get("recommended_ml_threshold_pct", self.core_min_prob_pct))
-            b_metrics = self.booster.compute_metrics(closed_pnl, positions)
+            b_ctrl_m = getattr(self, "booster_bybit", self.bybit)
+            b_pos_m = b_ctrl_m.get_positions() if b_ctrl_m is not self.bybit else positions
+            b_closed_m = b_ctrl_m.get_closed_pnl() if b_ctrl_m is not self.bybit else closed_pnl
+            b_metrics = self.booster.compute_metrics(b_closed_m, b_pos_m)
 
             # Обогащаем сигналы OI Squeeze и ИИ-ансамбля весами из AdaptiveMLCalibrator
             for s in squeeze_list:
@@ -931,8 +957,14 @@ class ControlCenterState:
     def get_full_state(self) -> Dict[str, Any]:
         acct = self.bybit.get_account_summary()
         closed_pnl = self.bybit.get_closed_pnl()
-        positions = self.bybit.get_positions()
-        open_orders = self.bybit.get_open_orders()
+        positions = list(self.bybit.get_positions())
+        open_orders = list(self.bybit.get_open_orders())
+        b_ctrl = getattr(self, "booster_bybit", self.bybit)
+        b_closed = b_ctrl.get_closed_pnl() if b_ctrl is not self.bybit else closed_pnl
+        b_positions = b_ctrl.get_positions() if b_ctrl is not self.bybit else positions
+        if b_ctrl is not self.bybit:
+            positions.extend(b_positions)
+            open_orders.extend(b_ctrl.get_open_orders())
         ws_sum = self.ws_hub.get_summary()
         btc_reg = self.regime_guard.update_btc_regime(ws_sum)
 
@@ -960,7 +992,7 @@ class ControlCenterState:
         if any_active and self._last_auto_ts > 0:
             next_in_sec = max(0, int(self.autopilot_interval_sec - (time.time() - self._last_auto_ts)))
 
-        booster_metrics = self.booster.compute_metrics(closed_pnl, positions)
+        booster_metrics = self.booster.compute_metrics(b_closed, b_positions)
 
 
         return {

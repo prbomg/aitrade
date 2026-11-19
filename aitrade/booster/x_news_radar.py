@@ -62,7 +62,8 @@ class XNewsSentimentRadar:
         "halt": -40, "halted": -40, "insolvency": -55, "bankrupt": -55, "bankruptcy": -55,
         "unlock": -25, "dump": -25, "selling": -20, "sold": -18, "bearish": -20,
         "crash": -35, "ban": -35, "banned": -35, "reject": -30, "rejected": -30,
-        "outflow": -22, "liquidated": -20, "phishing": -35, "stolen": -45,
+        "outflow": -28, "outflows": -28, "etf outflow": -45, "etf outflows": -45,
+        "liquidated": -20, "phishing": -35, "stolen": -45,
     }
 
     PANIC_TRIGGERS = ["hack", "hacked", "exploit", "drained", "insolvency", "bankrupt", "binance halt", "bybit halt"]
@@ -70,6 +71,7 @@ class XNewsSentimentRadar:
     def __init__(self) -> None:
         self.enabled: bool = True
         self.block_on_panic: bool = True
+        self.allow_emergency_close: bool = False
         self.items: List[Dict[str, Any]] = []
         self.coin_sentiment: Dict[str, Dict[str, Any]] = {}
         self.global_score: float = 0.0
@@ -136,7 +138,10 @@ class XNewsSentimentRadar:
         triggers: List[str] = []
         is_panic = False
 
+        has_outflow = bool(re.search(r"\boutflows?\b", t_low))
         for w, val in self.BULL_WORDS.items():
+            if w == "etf" and has_outflow:
+                continue
             if re.search(r"\b" + re.escape(w) + r"\b", t_low) and not self._is_negated(t_low, w):
                 score += val
                 triggers.append("+" + w)
@@ -349,16 +354,17 @@ class XNewsSentimentRadar:
         trig = str(c_info.get("triggers", "") or "")
         headline = str(c_info.get("last_headline", "") or self.panic_reason or "")[:90]
 
+        close_act = "CLOSE_FULL" if self.allow_emergency_close else "HOLD"
         if is_long:
             if self.panic_active and self.block_on_panic:
                 return {
-                    "action": "CLOSE_FULL",
-                    "reason": "Щит Black-Swan (PANIC): " + (self.panic_reason or "экстренный негатив"),
+                    "action": close_act,
+                    "reason": "Наблюдение PANIC (автозакрытие отключено): " + (self.panic_reason or "экстренный негатив"),
                 }
             if sc <= -40:
                 return {
-                    "action": "CLOSE_FULL",
-                    "reason": f"Критический негатив по {symbol} ({sc}: {trig}) — {headline}",
+                    "action": close_act,
+                    "reason": f"Наблюдение негатива по {symbol} ({sc}: {trig}) — {headline}",
                 }
             if sc <= -25 or self.global_score <= -20.0:
                 return {
@@ -368,8 +374,8 @@ class XNewsSentimentRadar:
         else:
             if sc >= 40:
                 return {
-                    "action": "CLOSE_FULL",
-                    "reason": f"Сильный бычий импульс против SHORT {symbol} (+{sc}: {trig}) — {headline}",
+                    "action": close_act,
+                    "reason": f"Наблюдение бычьего фона против SHORT {symbol} (+{sc}: {trig}) — {headline}",
                 }
             if sc >= 25 or self.global_score >= 20.0:
                 return {

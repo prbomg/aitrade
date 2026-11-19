@@ -113,7 +113,7 @@ class SmartPositionManager:
         return {"ok": resp.get("retCode") == 0, "symbol": symbol, "trailing_dist": trail_str, "retMsg": resp.get("retMsg", "")}
 
     def ensure_isolated_margin(self, symbol: str, leverage: int = 3) -> Dict[str, Any]:
-        """Переводит инструмент в режим Isolated Margin (tradeMode=1) перед направленным входом."""
+        """Подтверждает режим Isolated Margin (поддерживает и Classic/UTA1.0 switch-isolated, и UTA2.0 set-margin-mode)."""
         lev_str = str(int(max(1, min(leverage, 5))))
         try:
             resp = self.signed_post("/v5/position/switch-isolated", {
@@ -123,11 +123,21 @@ class SmartPositionManager:
                 "buyLeverage": lev_str,
                 "sellLeverage": lev_str,
             })
-            return {"ok": resp.get("retCode") == 0, "symbol": symbol, "mode": "ISOLATED", "retMsg": resp.get("retMsg", "")}
+            if resp.get("retCode") == 0:
+                return {"ok": True, "symbol": symbol, "mode": "ISOLATED", "retMsg": resp.get("retMsg", "")}
+            return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(resp.get("retMsg", "margin switch failed"))}
         except ExchangeError as exc:
-            # 110026: Cross/isolated margin mode is not modified (уже Isolated)
+            # 110026: уже Isolated
             if exc.code == 110026 or "110026" in str(exc):
                 return {"ok": True, "symbol": symbol, "mode": "ISOLATED", "retMsg": "Already isolated"}
+            # UTA 2.0 не поддерживает /v5/position/switch-isolated -> используем account-level /v5/account/set-margin-mode
+            if exc.code in (100028, 110044) or "uta" in str(exc).lower() or "unified" in str(exc).lower():
+                try:
+                    u_resp = self.signed_post("/v5/account/set-margin-mode", {"setMarginMode": "ISOLATED_MARGIN"})
+                    if u_resp.get("retCode") == 0:
+                        return {"ok": True, "symbol": symbol, "mode": "ISOLATED_MARGIN", "retMsg": u_resp.get("retMsg", "UTA isolated")}
+                except ExchangeError as u_exc:
+                    return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(u_exc)[:150]}
             return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(exc)[:150]}
 
     def audit_and_protect_open_positions(self):

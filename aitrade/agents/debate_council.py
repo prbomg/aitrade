@@ -92,12 +92,22 @@ class MultiAgentDebateCouncil:
             f"Бычий агент: {'; '.join(bull_args[:2])}.",
             f"Медвежий агент: {'; '.join(bear_args[:2])}.",
         ]
-        if conflict_blocked:
-            summary_parts.append(f"Вердикт судьи: ОТКЛОНЕНО ({reject_note}).")
+        if verdict == "REJECTED":
+            reasons: List[str] = []
+            if conflict_blocked and reject_note:
+                reasons.append(reject_note)
+            if not signal.passed_ml_filter:
+                reasons.append(
+                    f"ML-фильтр отклонён (P={signal.ml_win_probability * 100:.1f}%, "
+                    f"E[R]={signal.expected_return_pct:+.2f}%, DI={signal.dissimilarity_index:.2f})"
+                )
+            if not reasons:
+                reasons.append("отклонено предыдущим риск-фильтром")
+            summary_parts.append(f"Вердикт судьи: ОТКЛОНЕНО ({'; '.join(reasons)}).")
         else:
             summary_parts.append(
                 f"Вердикт судьи: ОДОБРЕНО (ML Winrate={signal.ml_win_probability * 100:.1f}%, "
-                f"E[R]={signal.expected_return_pct:+.2f}% > 2xИздержек={signal.cost_threshold_pct:.2f}%, DI={signal.dissimilarity_index:.2f})."
+                f"E[R]={signal.expected_return_pct:+.2f}% > Издержки={signal.cost_threshold_pct:.2f}%, DI={signal.dissimilarity_index:.2f})."
             )
 
         signal.debate_regime = regime
