@@ -116,7 +116,7 @@ def generate_s1_s3_signal(
     if regime in ("NO_REGIME", "TRANSITION"):
         return None
 
-    atr_s = calc_atr_series(closed_15m, 14)
+    atr_s = calc_atr_series(closed_15m[-60:], 14)
     c_sig = closed_15m[-1]
     atr15 = max(atr_s[-1], c_sig.close * 0.002)
     ref_market = reference_open_px if (reference_open_px and reference_open_px > 0) else c_sig.close

@@ -334,13 +334,48 @@ class WalkForwardBacktester:
             abs(sig.entry_price - sig.stop_loss) / sig.entry_price,
         )
 
+    def _simulate_s1_s3_replay_dual(
+        self,
+        candles: List[Candle],
+        symbol: str = "REPLAY",
+        strategy_fn: Optional[Callable[[str, List[Candle], float], Any]] = None,
+        window_bars: int = 520,
+    ) -> Tuple[List[Tuple[int, float, float, str, int, str, float]], List[Tuple[int, float, float, str, int, str, float]]]:
+        trades_1x: List[Tuple[int, float, float, str, int, str, float]] = []
+        trades_2x: List[Tuple[int, float, float, str, int, str, float]] = []
+        fn = strategy_fn or (
+            lambda sym, hist, ref_open: generate_s1_s3_signal(
+                sym, hist, reference_open_px=ref_open, min_rr_s3=0.50
+            )
+        )
+        i = 220
+        n_bars = len(candles)
+        while i < n_bars - 26:
+            start_idx = max(0, i - window_bars)
+            sig = fn(symbol, candles[start_idx:i], candles[i].open)
+            if sig:
+                t1 = self.replay_signal(candles, i, sig, cost_multiplier=1.0)
+                if t1:
+                    t2 = self.replay_signal(candles, i, sig, cost_multiplier=2.0)
+                    trades_1x.append(t1)
+                    if t2:
+                        trades_2x.append(t2)
+                    while i < n_bars and candles[i].timestamp < t1[4]:
+                        i += 1
+                    continue
+            i += 1
+        return trades_1x, trades_2x
+
     def _simulate_s1_s3_replay(
         self,
         candles: List[Candle],
         symbol: str = "REPLAY",
         cost_multiplier: float = 1.0,
         strategy_fn: Optional[Callable[[str, List[Candle], float], Any]] = None,
+        window_bars: int = 520,
     ) -> List[Tuple[int, float, float, str, int, str, float]]:
+        if abs(cost_multiplier - 1.0) < 1e-9:
+            return self._simulate_s1_s3_replay_dual(candles, symbol=symbol, strategy_fn=strategy_fn, window_bars=window_bars)[0]
         trades: List[Tuple[int, float, float, str, int, str, float]] = []
         fn = strategy_fn or (
             lambda sym, hist, ref_open: generate_s1_s3_signal(
@@ -348,12 +383,14 @@ class WalkForwardBacktester:
             )
         )
         i = 220
-        while i < len(candles) - 26:
-            sig = fn(symbol, candles[:i], candles[i].open)
+        n_bars = len(candles)
+        while i < n_bars - 26:
+            start_idx = max(0, i - window_bars)
+            sig = fn(symbol, candles[start_idx:i], candles[i].open)
             trade = self.replay_signal(candles, i, sig, cost_multiplier=cost_multiplier) if sig else None
             if trade:
                 trades.append(trade)
-                while i < len(candles) and candles[i].timestamp < trade[4]:
+                while i < n_bars and candles[i].timestamp < trade[4]:
                     i += 1
             else:
                 i += 1
@@ -485,8 +522,9 @@ class WalkForwardBacktester:
                 continue
             min_ts = bars[0].timestamp if min_ts is None else min(min_ts, bars[0].timestamp)
             max_ts = bars[-1].timestamp if max_ts is None else max(max_ts, bars[-1].timestamp)
-            all_1x.extend(self._simulate_s1_s3_replay(bars, symbol=sym, cost_multiplier=1.0, strategy_fn=strategy_fn))
-            all_2x.extend(self._simulate_s1_s3_replay(bars, symbol=sym, cost_multiplier=2.0, strategy_fn=strategy_fn))
+            t1x, t2x = self._simulate_s1_s3_replay_dual(bars, symbol=sym, strategy_fn=strategy_fn)
+            all_1x.extend(t1x)
+            all_2x.extend(t2x)
 
         if min_ts is None or max_ts is None or max_ts <= min_ts:
             return {
@@ -582,30 +620,48 @@ class WalkForwardBacktester:
         - S3_VWAP_RANGE (Автотрейдинг Рукав A)
         - AUTOTRADE_MOMENTUM_FUNDING (Автотрейдинг Рукав B)
         """
+        from bisect import bisect_right
         from aitrade.strategies.booster_breakout import generate_booster_breakout_signal
         from aitrade.strategies.momentum_funding import generate_momentum_funding_signals
         from aitrade.strategies.regime_s1_s3 import aggregate_1h
 
         fr_map = funding_rates or {}
+        h1_map = {sym: aggregate_1h(bars) for sym, bars in candles_by_symbol.items() if len(bars) >= 260}
+        h1_ts_map = {sym: [int(b.timestamp) for b in bars] for sym, bars in h1_map.items()}
+
+        def _h1_slice(sym: str, hist: List[Candle]) -> Optional[List[Candle]]:
+            h1_all = h1_map.get(sym)
+            if not h1_all or not hist:
+                return None
+            cutoff = int(hist[-1].timestamp) - 2_700_000
+            pos = bisect_right(h1_ts_map[sym], cutoff)
+            if pos < 55:
+                return None
+            return h1_all[max(0, pos - 125) : pos]
 
         def fn_b1(sym: str, hist: List[Candle], ref_open: float):
-            return generate_booster_breakout_signal(sym, hist, reference_open_px=ref_open, funding_rate=fr_map.get(sym, 0.0))
+            return generate_booster_breakout_signal(
+                sym, hist, reference_open_px=ref_open, bars_1h=_h1_slice(sym, hist), funding_rate=fr_map.get(sym, 0.0)
+            )
 
         def fn_s1(sym: str, hist: List[Candle], ref_open: float):
-            sig = generate_s1_s3_signal(sym, hist, reference_open_px=ref_open, min_rr_s3=1.15)
+            sig = generate_s1_s3_signal(
+                sym, hist, reference_open_px=ref_open, bars_1h=_h1_slice(sym, hist), min_rr_s3=1.15
+            )
             return sig if (sig and sig.strategy_id == "S1_TREND_RETEST") else None
 
         def fn_s3(sym: str, hist: List[Candle], ref_open: float):
-            sig = generate_s1_s3_signal(sym, hist, reference_open_px=ref_open, min_rr_s3=1.15)
+            sig = generate_s1_s3_signal(
+                sym, hist, reference_open_px=ref_open, bars_1h=_h1_slice(sym, hist), min_rr_s3=1.15
+            )
             return sig if (sig and sig.strategy_id == "S3_VWAP_RANGE") else None
 
-        h1_map = {sym: aggregate_1h(bars) for sym, bars in candles_by_symbol.items() if len(bars) >= 260}
         mom_1x: List[Tuple[int, float, float, str, int, str, float]] = []
         mom_2x: List[Tuple[int, float, float, str, int, str, float]] = []
         if len(h1_map) >= 2:
             min_len = min(len(v) for v in h1_map.values())
             for idx in range(30, min_len - 10, 4):
-                snap = {s: bars[:idx] for s, bars in h1_map.items()}
+                snap = {s: bars[max(0, idx - 120):idx] for s, bars in h1_map.items()}
                 sigs = generate_momentum_funding_signals(snap, fr_map, top_n=1)
                 for sig in sigs:
                     t1 = self.replay_signal(h1_map[sig.symbol], idx, sig, cost_multiplier=1.0)

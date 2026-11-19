@@ -50,9 +50,10 @@ def generate_booster_breakout_signal(
         return None
 
     # Проверка сжатия BB внутри Keltner на >= 2 из последних 5 баров до пробойной свечи
+    tail_15 = closed_15m[-65:]
     squeeze_hits = 0
     for offset in range(2, 7):
-        sub = closed_15m[:-offset] if offset > 0 else closed_15m
+        sub = tail_15[:-offset] if offset > 0 else tail_15
         if len(sub) < 25:
             continue
         _, _, _, _, _, is_sq = calc_bollinger_keltner_squeeze(sub, period=20, bb_mult=2.0, kc_mult=1.8)
@@ -62,14 +63,14 @@ def generate_booster_breakout_signal(
         return None
 
     bb_u, bb_l, kc_u, kc_l, ema20_15, _ = calc_bollinger_keltner_squeeze(
-        closed_15m[:-1], period=20, bb_mult=2.0, kc_mult=1.8
+        tail_15[:-1], period=20, bb_mult=2.0, kc_mult=1.8
     )
     c_sig = closed_15m[-1]
-    rvol = calc_rvol(closed_15m[-25:], lookback=20)
+    rvol = calc_rvol(tail_15[-25:], lookback=20)
     if rvol < 1.35:
         return None
 
-    atr15 = max(calc_atr_series(closed_15m, 14)[-1], c_sig.close * 0.002)
+    atr15 = max(calc_atr_series(tail_15, 14)[-1], c_sig.close * 0.002)
     ref_px = reference_open_px if (reference_open_px and reference_open_px > 0) else c_sig.close
 
     side: Optional[str] = None
