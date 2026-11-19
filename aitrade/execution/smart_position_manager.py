@@ -112,6 +112,24 @@ class SmartPositionManager:
         })
         return {"ok": resp.get("retCode") == 0, "symbol": symbol, "trailing_dist": trail_str, "retMsg": resp.get("retMsg", "")}
 
+    def ensure_isolated_margin(self, symbol: str, leverage: int = 3) -> Dict[str, Any]:
+        """Переводит инструмент в режим Isolated Margin (tradeMode=1) перед направленным входом."""
+        lev_str = str(int(max(1, min(leverage, 5))))
+        try:
+            resp = self.signed_post("/v5/position/switch-isolated", {
+                "category": "linear",
+                "symbol": symbol,
+                "tradeMode": 1,
+                "buyLeverage": lev_str,
+                "sellLeverage": lev_str,
+            })
+            return {"ok": resp.get("retCode") == 0, "symbol": symbol, "mode": "ISOLATED", "retMsg": resp.get("retMsg", "")}
+        except ExchangeError as exc:
+            # 110026: Cross/isolated margin mode is not modified (уже Isolated)
+            if exc.code == 110026 or "110026" in str(exc):
+                return {"ok": True, "symbol": symbol, "mode": "ISOLATED", "retMsg": "Already isolated"}
+            return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(exc)[:150]}
+
     def audit_and_protect_open_positions(self):
         with self.guard_lock:
             return self._audit_positions()
@@ -151,8 +169,9 @@ class SmartPositionManager:
                                 record['tp1_order']=''
                                 record['tp1_link']='tp-'+uuid.uuid4().hex[:30]
                 strat = intent["strategy_id"]
-                is_s1 = "S1_TREND_RETEST" in strat
+                is_s1 = any(x in strat for x in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT"))
                 is_s3 = "S3_VWAP_RANGE" in strat
+                is_booster = strat.startswith("BOOSTER:") or is_s1
                 if self.split_tp_enabled and not (is_s1 or is_s3) and not record["tp1_order"] and not record["tp1_done"]:
                     tp=float(p.get("takeProfit") or 0)
                     if tp<=0:raise ExchangeError("Нет подтверждённого TP для TP1")
@@ -167,12 +186,14 @@ class SmartPositionManager:
                     record["initial_sl"]=float(intent.get("sl") or sl)
                 init_sl=float(record.get("initial_sl") or sl)
                 risk_pct=(abs(avg-init_sl)/avg)*100.0 if (avg>0 and init_sl>0) else self.breakeven_trigger_pct
-                be_trigger=max(self.breakeven_trigger_pct,risk_pct)
+                be_trigger=max(self.breakeven_trigger_pct,risk_pct*(1.2 if is_s1 else 1.0))
                 if not is_s3 and move>=be_trigger:
                     if not be:
                         self.move_sl_to_breakeven(sym,side,avg,idx);actions.append({"ok":True,"symbol":sym,"action":"BREAKEVEN"})
-                    trail_ready = (move >= be_trigger * (1.5 if is_s1 else 1.3))
-                    trail_step = max(self.trailing_step_pct, 0.85)
+                    atr15_raw=float(((intent.get("signal_context") or {}).get("features") or {}).get("atr15") or 0.0)
+                    atr15_pct=(atr15_raw/avg*100.0) if (atr15_raw>0 and avg>0) else 0.0
+                    trail_ready = (move >= risk_pct * (1.8 if is_booster else 1.3))
+                    trail_step = max(self.trailing_step_pct, 1.5, 1.8 * atr15_pct) if is_booster else max(self.trailing_step_pct, 0.85)
                     if trail_ready and float(p.get("trailingStop") or 0)<=0:
                         self.activate_trailing_stop(sym,mark,trail_step,idx);actions.append({"ok":True,"symbol":sym,"action":"TRAILING"})
             except Exception as exc:

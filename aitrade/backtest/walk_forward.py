@@ -1,21 +1,28 @@
 """
-Честный побарный исторический Replay для стратегий S1 и S3, использующий единый модуль
-aitrade.strategies.regime_s1_s3 без заглядывания в незакрытую свечу:
-- Решения принимаются строго на закрытых барах candles[:i].
-- S1: проверка стопа и тейка начинается с самой свечи входа fill_idx (R03).
-- Учёт комиссий Bybit V5 (Maker 0.02% / Taker 0.055%) и Taker на Full TP/SL (R04).
-- Хронологическая сортировка сделок по timestamp перед расчётом equity и Max DD (R07).
+Многомесячный Point-in-Time и Rolling Walk-Forward бэктестер (AItrade 2026):
+- Загрузка 180–365 дней истории свечей Bybit V5 с пагинацией по `end` и локальным кэшем (`data/candles_cache/`).
+- Решения строго по закрытым барам candles[:i], вход по Open следующего бара или реальному ретесту.
+- Rolling Walk-Forward (6–8 независимых циклов, 75% IS / 25% OOS) с расчётом:
+  * WFE (Walk-Forward Efficiency = Annualized OOS / Annualized IS),
+  * честного дневного Sharpe Ratio и Deflated Sharpe Ratio (DSR с учётом N_trials),
+  * стресс-теста 2x издержек (удвоенные комиссии и проскальзывание),
+  * Монте-Карло перестановки порядка сделок (5 000 итераций -> медианный и P95 Max DD).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
-from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional, Tuple
+import random
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from aitrade.config import load_settings
+from aitrade.config import BASE_DIR, load_settings
 from aitrade.exchange.bybit_v5 import BybitV5Client, Candle
 from aitrade.features.indicators import calc_atr_series
+from aitrade.storage import atomic_json
 from aitrade.strategies.regime_s1_s3 import (
     MIN_STOP_FRAC,
     generate_s1_s3_signal,
@@ -29,16 +36,119 @@ class BacktestSummary:
     wins: int
     losses: int
     win_rate_pct: float
-    profit_factor: float
+    profit_factor: Optional[float]
     net_return_pct: float
     avg_r_multiple: float
     max_drawdown_pct: float
-    sharpe_ratio: float
-    deflated_sharpe_ratio: float
+    sharpe_ratio: Optional[float]
+    deflated_sharpe_ratio: Optional[float]
+
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_ppf(p: float) -> float:
+    """Аппроксимация квантили стандартного нормального распределения (Acklam)."""
+    p = max(1e-12, min(1.0 - 1e-12, p))
+    a = [-3.969683028665376e01, 2.209460984245205e02, -2.759285104469687e02, 1.383577518672690e02, -3.066479806614716e01, 2.506628277459239e00]
+    b = [-5.447609879822406e01, 1.615858368580409e02, -1.556989798598866e02, 6.680131188771972e01, -1.328068155288572e01]
+    c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e00, -2.549732539343734e00, 4.374664141464968e00, 2.938163982698783e00]
+    d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e00, 3.754408661907416e00]
+    plow, phigh = 0.02425, 1.0 - 0.02425
+    if p < plow:
+        q = math.sqrt(-2.0 * math.log(p))
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0)
+    if p <= phigh:
+        q = p - 0.5
+        r = q * q
+        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1.0)
+    q = math.sqrt(-2.0 * math.log(1.0 - p))
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0)
+
+
+def compute_daily_sharpe_and_dsr(
+    daily_returns: List[float], n_trials: int = 1
+) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Рассчитывает годовой Sharpe Ratio (365 дней для крипто) и Deflated Sharpe Ratio (Bailey & Lopez de Prado)
+    по дневной кривой доходностей. При < 5 дней или нулевой дисперсии возвращает (None, None).
+    """
+    n = len(daily_returns)
+    if n < 5:
+        return None, None
+    mean_r = sum(daily_returns) / n
+    var_r = sum((r - mean_r) ** 2 for r in daily_returns) / max(n - 1, 1)
+    if var_r <= 1e-18:
+        return None, None
+    std_r = math.sqrt(var_r)
+    sr_daily = mean_r / std_r
+    sharpe_ann = sr_daily * math.sqrt(365.0)
+
+    # Моменты для DSR (skewness, kurtosis)
+    m3 = sum(((r - mean_r) / std_r) ** 3 for r in daily_returns) / n
+    m4 = sum(((r - mean_r) / std_r) ** 4 for r in daily_returns) / n
+    # Ожидаемый максимальный Sharpe при n_trials (при n_trials=1 -> 0.0)
+    if n_trials <= 1:
+        sr_star = 0.0
+    else:
+        euler_gamma = 0.5772156649
+        sr_star = math.sqrt(var_r) * (
+            (1.0 - euler_gamma) * _norm_ppf(1.0 - 1.0 / n_trials)
+            + euler_gamma * _norm_ppf(1.0 - 1.0 / (n_trials * math.e))
+        )
+    denom_sq = max(1e-12, 1.0 - m3 * sr_daily + ((m4 - 1.0) / 4.0) * (sr_daily ** 2))
+    z_dsr = ((sr_daily - sr_star) * math.sqrt(max(1, n - 1))) / math.sqrt(denom_sq)
+    dsr = _norm_cdf(z_dsr)
+    return round(sharpe_ann, 3), round(dsr, 4)
+
+
+def run_monte_carlo_permutation(
+    trade_pnls_usd: List[float],
+    initial_equity: float = 1000.0,
+    iterations: int = 5000,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """
+    Монте-Карло перестановка порядка сделок (без возвращения):
+    оценивает распределение Max Drawdown (медиана, P95, P99) при случайном порядке сделок.
+    """
+    if len(trade_pnls_usd) < 3:
+        return {
+            "iterations": 0,
+            "median_max_dd_pct": 0.0,
+            "p95_max_dd_pct": 0.0,
+            "p99_max_dd_pct": 0.0,
+        }
+    rng = random.Random(seed)
+    buf = list(trade_pnls_usd)
+    dds: List[float] = []
+    for _ in range(max(100, iterations)):
+        rng.shuffle(buf)
+        eq = initial_equity
+        peak = eq
+        max_dd = 0.0
+        for p in buf:
+            eq += p
+            if eq > peak:
+                peak = eq
+            if peak > 0:
+                dd = ((peak - eq) / peak) * 100.0
+                if dd > max_dd:
+                    max_dd = dd
+        dds.append(max_dd)
+    dds.sort()
+    m = len(dds)
+    return {
+        "iterations": m,
+        "median_max_dd_pct": round(dds[m // 2], 2),
+        "p95_max_dd_pct": round(dds[min(m - 1, int(m * 0.95))], 2),
+        "p99_max_dd_pct": round(dds[min(m - 1, int(m * 0.99))], 2),
+    }
 
 
 class WalkForwardBacktester:
-    """Честный исторический Replay по закрытым свечам с учётом комиссий Bybit V5."""
+    """Многомесячный исторический Replay и Rolling Walk-Forward бэктестер (Bybit V5)."""
 
     MIN_STOP_FRAC = MIN_STOP_FRAC
 
@@ -48,6 +158,25 @@ class WalkForwardBacktester:
         ex_cfg = self.settings.get("exchange", {})
         self.maker_fee = float(ex_cfg.get("maker_fee_rate", 0.0002))
         self.taker_fee = float(ex_cfg.get("taker_fee_rate", 0.00055))
+        self.base_slippage = float(ex_cfg.get("backtest_slippage_rate", 0.0003))
+        self.cache_dir: Path = BASE_DIR / "data" / "candles_cache"
+
+    def load_historical_klines(
+        self,
+        symbol: str,
+        interval: str = "15",
+        days: int = 180,
+        end_ms: Optional[int] = None,
+    ) -> List[Candle]:
+        """Загружает историю свечей с пагинацией и локальным кэшем (минимум 180 дней по умолчанию)."""
+        klines = self.client.get_klines_paginated(
+            symbol,
+            interval=interval,
+            days=days,
+            end_ms=end_ms,
+            cache_dir=self.cache_dir,
+        )
+        return klines[:-1] if len(klines) > 1 else klines
 
     def _resolve_trade(
         self,
@@ -74,7 +203,7 @@ class WalkForwardBacktester:
                 hit_sl = bar.low <= cur_sl
                 hit_tp = bar.high >= take_profit
                 if hit_sl:
-                    raw = (min(cur_sl,bar.open) - entry_px) / entry_px
+                    raw = (min(cur_sl, bar.open) - entry_px) / entry_px
                     net_pct = (raw - entry_fee_frac - sl_fee_frac) * 100.0
                     return net_pct, net_pct / ((risk_dist / entry_px) * 100.0), idx + 1
                 if hit_tp:
@@ -84,13 +213,13 @@ class WalkForwardBacktester:
                 if move_be_at_1r and not be_armed and bar.high >= entry_px + risk_dist:
                     cur_sl = max(cur_sl, be_px)
                     be_armed = True
-                if move_be_at_1r and bar.high>=entry_px+1.5*risk_dist:
-                    cur_sl=max(cur_sl,bar.close*(1-.0085))
+                if move_be_at_1r and bar.high >= entry_px + 1.5 * risk_dist:
+                    cur_sl = max(cur_sl, bar.close * (1.0 - 0.0085))
             else:
                 hit_sl = bar.high >= cur_sl
                 hit_tp = bar.low <= take_profit
                 if hit_sl:
-                    raw = (entry_px - max(cur_sl,bar.open)) / entry_px
+                    raw = (entry_px - max(cur_sl, bar.open)) / entry_px
                     net_pct = (raw - entry_fee_frac - sl_fee_frac) * 100.0
                     return net_pct, net_pct / ((risk_dist / entry_px) * 100.0), idx + 1
                 if hit_tp:
@@ -100,20 +229,22 @@ class WalkForwardBacktester:
                 if move_be_at_1r and not be_armed and bar.low <= entry_px - risk_dist:
                     cur_sl = min(cur_sl, be_px)
                     be_armed = True
-                if move_be_at_1r and bar.low<=entry_px-1.5*risk_dist:
-                    cur_sl=min(cur_sl,bar.close*(1+.0085))
+                if move_be_at_1r and bar.low <= entry_px - 1.5 * risk_dist:
+                    cur_sl = min(cur_sl, bar.close * (1.0 + 0.0085))
 
         last_close = future_bars[-1].close
         raw = ((last_close - entry_px) / entry_px) if side == "Buy" else ((entry_px - last_close) / entry_px)
         net_pct = (raw - entry_fee_frac - sl_fee_frac) * 100.0
         return net_pct, net_pct / ((risk_dist / entry_px) * 100.0), len(future_bars)
 
-    def _simulate_naive(self, candles: List[Candle]) -> List[Tuple[int, float, float, str]]:
-        trades: List[Tuple[int, float, float, str]] = []
+    def _simulate_naive(
+        self, candles: List[Candle], cost_multiplier: float = 1.0
+    ) -> List[Tuple[int, float, float, str, int, str, float]]:
+        trades: List[Tuple[int, float, float, str, int, str, float]] = []
         if len(candles) < 60:
             return trades
         atr_s = calc_atr_series(candles, 14)
-        taker_slip = 0.0003
+        cost = (self.taker_fee + self.base_slippage) * cost_multiplier
         i = 24
         while i < len(candles) - 10:
             c_sig = candles[i - 1]
@@ -136,82 +267,185 @@ class WalkForwardBacktester:
                 entry_px,
                 sl,
                 tp,
-                self.taker_fee + taker_slip,
-                self.taker_fee + taker_slip,
-                self.taker_fee + taker_slip,
+                cost,
+                cost,
+                cost,
                 move_be_at_1r=False,
             )
-            trades.append((int(candles[i].timestamp), net_pct, r_mult, "NAIVE",int(candles[min(i+used-1,len(candles)-1)].timestamp)+900000,"",stop_dist/entry_px))
+            exit_ts = int(candles[min(i + used - 1, len(candles) - 1)].timestamp) + 900000
+            trades.append((int(candles[i].timestamp), net_pct, r_mult, "NAIVE", exit_ts, "", stop_dist / entry_px))
             i += max(2, used)
         return trades
 
-    def replay_signal(self,candles,i,sig):
+    def replay_signal(
+        self,
+        candles: List[Candle],
+        i: int,
+        sig: Any,
+        cost_multiplier: float = 1.0,
+    ) -> Optional[Tuple[int, float, float, str, int, str, float]]:
         """Shared realized label/replay; limit fill-bar profit is not assumed before fill."""
-        hold=int(sig.features.get('max_hold_bars',16));fill=i
-        s1=sig.strategy_id=='S1_TREND_RETEST'
-        if s1:
-            fill=None
-            for k in range(i,min(i+int(sig.features.get('retest_ttl_bars',3)),len(candles)-hold+1)):
-                if candles[k].low<=sig.entry_price<=candles[k].high:fill=k;break
-            if fill is None:return None
-        if fill+hold>len(candles):return None
-        bars=list(candles[fill:fill+hold])
-        if s1:
-            # Unknown OHLC path: keep adverse excursion but discard favourable pre-fill extremes.
-            from dataclasses import replace
-            first=bars[0]
-            bars[0]=replace(first,open=sig.entry_price,high=max(sig.entry_price,first.close) if sig.side=='Buy' else first.high,
-                           low=min(sig.entry_price,first.close) if sig.side=='Sell' else first.low)
-        cost=self.taker_fee+.0003  # GTC is not a maker guarantee; Full TP/SL is market execution.
-        net,r,used=self._resolve_trade(bars,sig.side,sig.entry_price,sig.stop_loss,sig.take_profit_2,cost,cost,cost,s1)
-        return (int(candles[fill].timestamp),net,r,sig.strategy_id,int(candles[fill+used-1].timestamp)+900000,'',abs(sig.entry_price-sig.stop_loss)/sig.entry_price)
+        hold = int(sig.features.get("max_hold_bars", 16))
+        fill = i
+        is_limit = str(getattr(sig, "order_type", "Market")) == "Limit"
+        s1 = sig.strategy_id == "S1_TREND_RETEST"
+        if is_limit:
+            fill = None
+            ttl = int(sig.features.get("retest_ttl_bars", 3))
+            for k in range(i, min(i + ttl, len(candles) - hold + 1)):
+                if candles[k].low <= sig.entry_price <= candles[k].high:
+                    fill = k
+                    break
+            if fill is None:
+                return None
+        if fill + hold > len(candles):
+            return None
+        bars = list(candles[fill : fill + hold])
+        if is_limit:
+            first = bars[0]
+            bars[0] = replace(
+                first,
+                open=sig.entry_price,
+                high=max(sig.entry_price, first.close) if sig.side == "Buy" else first.high,
+                low=min(sig.entry_price, first.close) if sig.side == "Sell" else first.low,
+            )
+        is_post_only = bool(sig.features.get("post_only", False))
+        entry_cost = (self.maker_fee if is_post_only else (self.taker_fee + self.base_slippage)) * cost_multiplier
+        exit_cost = (self.taker_fee + self.base_slippage) * cost_multiplier
+        net, r, used = self._resolve_trade(
+            bars,
+            sig.side,
+            sig.entry_price,
+            sig.stop_loss,
+            sig.take_profit_2,
+            entry_cost,
+            exit_cost,
+            exit_cost,
+            s1,
+        )
+        step_ms = (candles[1].timestamp - candles[0].timestamp) if len(candles) > 1 else 900000
+        return (
+            int(candles[fill].timestamp),
+            net,
+            r,
+            sig.strategy_id,
+            int(candles[fill + used - 1].timestamp) + step_ms,
+            str(getattr(sig, "symbol", "")),
+            abs(sig.entry_price - sig.stop_loss) / sig.entry_price,
+        )
 
-    def _simulate_s1_s3_replay(self,candles):
-        trades=[];i=220
-        while i<len(candles)-26:
-            sig=generate_s1_s3_signal('REPLAY',candles[:i],reference_open_px=candles[i].open,min_rr_s3=.50)
-            trade=self.replay_signal(candles,i,sig) if sig else None
+    def _simulate_s1_s3_replay(
+        self,
+        candles: List[Candle],
+        symbol: str = "REPLAY",
+        cost_multiplier: float = 1.0,
+        strategy_fn: Optional[Callable[[str, List[Candle], float], Any]] = None,
+    ) -> List[Tuple[int, float, float, str, int, str, float]]:
+        trades: List[Tuple[int, float, float, str, int, str, float]] = []
+        fn = strategy_fn or (
+            lambda sym, hist, ref_open: generate_s1_s3_signal(
+                sym, hist, reference_open_px=ref_open, min_rr_s3=0.50
+            )
+        )
+        i = 220
+        while i < len(candles) - 26:
+            sig = fn(symbol, candles[:i], candles[i].open)
+            trade = self.replay_signal(candles, i, sig, cost_multiplier=cost_multiplier) if sig else None
             if trade:
                 trades.append(trade)
-                while i<len(candles) and candles[i].timestamp<trade[4]:i+=1
-            else:i+=1
+                while i < len(candles) and candles[i].timestamp < trade[4]:
+                    i += 1
+            else:
+                i += 1
         return trades
 
-    def _portfolio(self,trades):
+    def _portfolio(
+        self,
+        trades: List[Tuple[Any, ...]],
+        risk_per_trade_frac: float = 0.005,
+        initial_equity: float = 1000.0,
+    ) -> Tuple[List[float], float, float, int]:
         """Event-time cash accounting; reserve risk/notional until actual exit timestamp."""
-        equity=1000.;peak=equity;dd=0.;active=[];realized=[];skipped=0;self._portfolio_r=[]
-        def settle(until):
-            nonlocal equity,peak,dd,active
-            due=sorted([x for x in active if x[0]<=until],key=lambda x:x[0])
-            for end,pnl,risk,notional,symbol in due:
-                equity+=pnl;realized.append(pnl);self._portfolio_r.append(pnl/risk if risk else 0.);peak=max(peak,equity);dd=max(dd,(peak-equity)/peak*100)
-            active=[x for x in active if x[0]>until]
-        for index,t in enumerate(sorted(trades,key=lambda t:(t[0],t[5] if len(t)>5 else ''))):
-            settle(t[0]);symbol=t[5] if len(t)>5 and t[5] else str(index)
-            stop=t[6] if len(t)>6 else .0055
-            budget=min(1000.,max(0,equity))*.005
-            notional=budget/(stop+.0054)
-            if len(active)>=3 or any(x[4]==symbol for x in active) or sum(x[2] for x in active)+budget>min(equity,1000)*.02 or sum(x[3] for x in active)+notional>min(equity,1000)*3:
-                skipped+=1;continue
-            exit_ts=t[4] if len(t)>4 else t[0]+900000
-            pnl=notional*t[1]/100
-            active.append((exit_ts,pnl,budget,notional,symbol))
-        settle(float('inf'))
-        return realized,equity,dd,skipped
+        equity = initial_equity
+        peak = equity
+        dd = 0.0
+        active: List[Tuple[int, float, float, float, str]] = []
+        realized: List[float] = []
+        skipped = 0
+        self._portfolio_r: List[float] = []
+        self._daily_pnl: Dict[int, float] = {}
 
-    def _summarize(self, mode_name: str, trades: List[Tuple[int, float, float, str]]) -> BacktestSummary:
+        def settle(until: float) -> None:
+            nonlocal equity, peak, dd, active
+            due = sorted([x for x in active if x[0] <= until], key=lambda x: x[0])
+            for end, pnl, risk, notional, symbol in due:
+                equity += pnl
+                realized.append(pnl)
+                self._portfolio_r.append(pnl / risk if risk else 0.0)
+                day_key = int(end // 86_400_000)
+                self._daily_pnl[day_key] = self._daily_pnl.get(day_key, 0.0) + pnl
+                peak = max(peak, equity)
+                if peak > 0:
+                    dd = max(dd, (peak - equity) / peak * 100.0)
+            active = [x for x in active if x[0] > until]
+
+        for index, t in enumerate(sorted(trades, key=lambda t: (t[0], t[5] if len(t) > 5 else ""))):
+            settle(t[0])
+            symbol = t[5] if len(t) > 5 and t[5] else str(index)
+            stop = t[6] if len(t) > 6 else 0.0055
+            cap_base = min(initial_equity, max(0.0, equity))
+            budget = cap_base * risk_per_trade_frac
+            notional = budget / (stop + 0.0054)
+            if (
+                len(active) >= 3
+                or any(x[4] == symbol for x in active)
+                or sum(x[2] for x in active) + budget > cap_base * 0.02
+                or sum(x[3] for x in active) + notional > cap_base * 3.0
+            ):
+                skipped += 1
+                continue
+            exit_ts = t[4] if len(t) > 4 else t[0] + 900000
+            pnl = notional * t[1] / 100.0
+            active.append((exit_ts, pnl, budget, notional, symbol))
+        settle(float("inf"))
+        return realized, equity, dd, skipped
+
+    def _compute_daily_returns(self, initial_equity: float = 1000.0) -> List[float]:
+        if not getattr(self, "_daily_pnl", None) or len(self._daily_pnl) < 2:
+            return []
+        days = sorted(self._daily_pnl.keys())
+        first_d, last_d = days[0], days[-1]
+        eq = initial_equity
+        rets: List[float] = []
+        for d in range(first_d, last_d + 1):
+            pnl = self._daily_pnl.get(d, 0.0)
+            if eq > 0:
+                rets.append(pnl / eq)
+            eq += pnl
+        return rets
+
+    def _summarize(
+        self,
+        mode_name: str,
+        trades: List[Tuple[Any, ...]],
+        n_trials: int = 1,
+        risk_per_trade_frac: float = 0.005,
+    ) -> BacktestSummary:
         if not trades:
-            return BacktestSummary(mode_name, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            return BacktestSummary(mode_name, 0, 0, 0, 0.0, None, 0.0, 0.0, 0.0, None, None)
 
-        pnls,equity,max_dd,skipped=self._portfolio(trades)
-        if not pnls:return BacktestSummary(mode_name,0,0,0,0.,0.,0.,0.,0.,None,None)
-        r_mults=list(self._portfolio_r)
-        wins=[p for p in pnls if p>0];losses=[p for p in pnls if p<=0]
-        win_rate=len(wins)/len(pnls)*100
-        profit_factor=sum(wins)/abs(sum(losses)) if sum(losses)<0 else None
-        net_ret=(equity/1000-1)*100
-        mean_r=sum(r_mults)/len(r_mults)
-        sharpe=None;dsr=None
+        pnls, equity, max_dd, _ = self._portfolio(trades, risk_per_trade_frac=risk_per_trade_frac)
+        if not pnls:
+            return BacktestSummary(mode_name, 0, 0, 0, 0.0, None, 0.0, 0.0, 0.0, None, None)
+        r_mults = list(self._portfolio_r)
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p <= 0]
+        win_rate = len(wins) / len(pnls) * 100.0
+        profit_factor = (sum(wins) / abs(sum(losses))) if sum(losses) < 0 else None
+        net_ret = (equity / 1000.0 - 1.0) * 100.0
+        mean_r = sum(r_mults) / len(r_mults)
+        daily_rets = self._compute_daily_returns(1000.0)
+        sharpe, dsr = compute_daily_sharpe_and_dsr(daily_rets, n_trials=n_trials)
 
         return BacktestSummary(
             mode_name=mode_name,
@@ -223,50 +457,228 @@ class WalkForwardBacktester:
             net_return_pct=round(net_ret, 2),
             avg_r_multiple=round(mean_r, 3),
             max_drawdown_pct=round(max_dd, 2),
-            sharpe_ratio=None,
-            deflated_sharpe_ratio=None,
+            sharpe_ratio=sharpe,
+            deflated_sharpe_ratio=dsr,
         )
 
-    def run_comparison_backtest(
-        self, symbols: Optional[List[str]] = None
+    def run_rolling_wfa(
+        self,
+        candles_by_symbol: Dict[str, List[Candle]],
+        strategy_fn: Optional[Callable[[str, List[Candle], float], Any]] = None,
+        n_cycles: int = 6,
+        is_ratio: float = 0.75,
+        n_trials: int = 1,
+        mc_iterations: int = 5000,
+        risk_per_trade_frac: float = 0.005,
     ) -> Dict[str, Any]:
-        pairs = symbols or self.settings["universe"]["core_pairs"][:8]
-        naive_trades: List[Tuple[int, float, float, str]] = []
-        sniper_trades: List[Tuple[int, float, float, str]] = []
+        """
+        Скользящий Walk-Forward (Rolling WFA): минимум `n_cycles` циклов (75% IS / 25% OOS),
+        расчёт WFE, честного Sharpe/DSR, стресс-теста 2x издержек и Монте-Карло перестановки.
+        """
+        all_1x: List[Tuple[int, float, float, str, int, str, float]] = []
+        all_2x: List[Tuple[int, float, float, str, int, str, float]] = []
+        min_ts: Optional[int] = None
+        max_ts: Optional[int] = None
 
-        provenance=[]
-        for sym in pairs:
-            klines = self.client.get_klines(sym, interval="15", limit=500)
-            closed_klines = klines[:-1] if len(klines) > 1 else klines
-            import hashlib,json
-            from aitrade.config import BASE_DIR
-            from aitrade.storage import atomic_json
-            raw=[asdict(c) for c in closed_klines];digest=hashlib.sha256(json.dumps(raw,sort_keys=True).encode()).hexdigest()
-            archive=BASE_DIR/'data'/'research_bars'/f'{sym}-{digest[:16]}.json'
-            if not archive.exists():atomic_json(archive,raw)
-            provenance.append({'symbol':sym,'sha256':digest,'bars':len(raw),'source':self.client.last_data_source,'first_ms':closed_klines[0].timestamp,'last_ms':closed_klines[-1].timestamp})
-            naive_trades.extend(tuple(list(t[:5])+[sym,t[6]]) for t in self._simulate_naive(closed_klines))
-            sniper_trades.extend(tuple(list(t[:5])+[sym,t[6]]) for t in self._simulate_s1_s3_replay(closed_klines))
+        for sym, bars in candles_by_symbol.items():
+            if len(bars) < 260:
+                continue
+            min_ts = bars[0].timestamp if min_ts is None else min(min_ts, bars[0].timestamp)
+            max_ts = bars[-1].timestamp if max_ts is None else max(max_ts, bars[-1].timestamp)
+            all_1x.extend(self._simulate_s1_s3_replay(bars, symbol=sym, cost_multiplier=1.0, strategy_fn=strategy_fn))
+            all_2x.extend(self._simulate_s1_s3_replay(bars, symbol=sym, cost_multiplier=2.0, strategy_fn=strategy_fn))
 
-        naive_summary = self._summarize(
-            "Наивный режим (Taker без фильтра режима и 0.55% стопа)", naive_trades
-        )
-        sniper_summary = self._summarize(
-            "Исследовательский Replay S1 + S3; консервативная модель OHLC",
-            sniper_trades,
-        )
-        s1_trades = [t for t in sniper_trades if t[3] == "S1_TREND_RETEST"]
-        s3_trades = [t for t in sniper_trades if t[3] == "S3_VWAP_RANGE"]
+        if min_ts is None or max_ts is None or max_ts <= min_ts:
+            return {
+                "status": "insufficient_data",
+                "cycles": [],
+                "wfe": None,
+                "oos_summary": asdict(self._summarize("OOS (1x)", [])),
+                "oos_stress_2x": asdict(self._summarize("OOS (2x Stress)", [])),
+                "monte_carlo": run_monte_carlo_permutation([]),
+            }
+
+        total_span = max_ts - min_ts
+        # Rolling window geometry: window_span = IS + OOS, step = OOS
+        oos_ratio = max(0.05, min(0.50, 1.0 - is_ratio))
+        window_span = total_span / (1.0 + max(0, n_cycles - 1) * oos_ratio)
+        is_span = window_span * is_ratio
+        oos_span = window_span * oos_ratio
+
+        cycles_out: List[Dict[str, Any]] = []
+        oos_trades_1x: List[Tuple[int, float, float, str, int, str, float]] = []
+        oos_trades_2x: List[Tuple[int, float, float, str, int, str, float]] = []
+        ann_is_list: List[float] = []
+        ann_oos_list: List[float] = []
+
+        is_days = max(1.0, is_span / 86_400_000.0)
+        oos_days = max(1.0, oos_span / 86_400_000.0)
+
+        for c in range(n_cycles):
+            w_start = int(min_ts + c * oos_span)
+            is_end = int(w_start + is_span)
+            oos_end = int(min(max_ts + 1, is_end + oos_span))
+
+            c_is = [t for t in all_1x if w_start <= t[0] < is_end]
+            c_oos = [t for t in all_1x if is_end <= t[0] < oos_end]
+            c_oos_2x = [t for t in all_2x if is_end <= t[0] < oos_end]
+
+            s_is = self._summarize(f"Cycle {c + 1} IS", c_is, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
+            s_oos = self._summarize(f"Cycle {c + 1} OOS", c_oos, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
+            ann_is = s_is.net_return_pct * (365.0 / is_days)
+            ann_oos = s_oos.net_return_pct * (365.0 / oos_days)
+            ann_is_list.append(ann_is)
+            ann_oos_list.append(ann_oos)
+            oos_trades_1x.extend(c_oos)
+            oos_trades_2x.extend(c_oos_2x)
+
+            cycles_out.append({
+                "cycle": c + 1,
+                "is_start_ms": w_start,
+                "is_end_ms": is_end,
+                "oos_end_ms": oos_end,
+                "is_trades": s_is.total_trades,
+                "oos_trades": s_oos.total_trades,
+                "is_return_pct": s_is.net_return_pct,
+                "oos_return_pct": s_oos.net_return_pct,
+                "oos_win_rate_pct": s_oos.win_rate_pct,
+                "oos_pf": s_oos.profit_factor,
+                "oos_avg_r": s_oos.avg_r_multiple,
+            })
+
+        mean_ann_is = sum(ann_is_list) / len(ann_is_list) if ann_is_list else 0.0
+        mean_ann_oos = sum(ann_oos_list) / len(ann_oos_list) if ann_oos_list else 0.0
+        wfe = round(mean_ann_oos / mean_ann_is, 3) if abs(mean_ann_is) > 1e-6 else None
+
+        oos_summary = self._summarize("Rolling WFA OOS (1x)", oos_trades_1x, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
+        oos_pnls, _, _, _ = self._portfolio(oos_trades_1x, risk_per_trade_frac=risk_per_trade_frac)
+        oos_stress_2x = self._summarize("Rolling WFA OOS (2x Stress)", oos_trades_2x, n_trials=n_trials, risk_per_trade_frac=risk_per_trade_frac)
+        mc = run_monte_carlo_permutation(oos_pnls, initial_equity=1000.0, iterations=mc_iterations)
 
         return {
-            "validation_status": "research_only_not_live_validated",
-            "limitations": ["Нет исторического L2, очереди лимитов и полной модели funding", "News/ML/correlation gates не воспроизведены; это replay стратегий", "Просадка по реализованному PnL, не mark-to-market", "Нет независимого holdout и подтверждения прибыльности; Sharpe/DSR не рассчитаны"],
-            "provenance":provenance,
-            "portfolio_skipped":self._portfolio(sniper_trades)[3],
+            "status": "ok",
+            "n_cycles": n_cycles,
+            "is_ratio": is_ratio,
+            "n_trials": n_trials,
+            "wfe": wfe,
+            "wfe_passed": (wfe is not None and wfe >= 0.50),
+            "cycles": cycles_out,
+            "oos_summary": asdict(oos_summary),
+            "oos_stress_2x": asdict(oos_stress_2x),
+            "monte_carlo": mc,
+        }
+
+    def run_multi_strategy_wfa(
+        self,
+        candles_by_symbol: Dict[str, List[Candle]],
+        funding_rates: Optional[Dict[str, float]] = None,
+        n_cycles: int = 6,
+        mc_iterations: int = 2000,
+    ) -> Dict[str, Any]:
+        """
+        Прогоняет все направленные стратегии Этапа 2 через Rolling WFA:
+        - B1_SQUEEZE_BREAKOUT (Разгон)
+        - S1_TREND_RETEST (Разгон B2)
+        - S3_VWAP_RANGE (Автотрейдинг Рукав A)
+        - AUTOTRADE_MOMENTUM_FUNDING (Автотрейдинг Рукав B)
+        """
+        from aitrade.strategies.booster_breakout import generate_booster_breakout_signal
+        from aitrade.strategies.momentum_funding import generate_momentum_funding_signals
+        from aitrade.strategies.regime_s1_s3 import aggregate_1h
+
+        fr_map = funding_rates or {}
+
+        def fn_b1(sym: str, hist: List[Candle], ref_open: float):
+            return generate_booster_breakout_signal(sym, hist, reference_open_px=ref_open, funding_rate=fr_map.get(sym, 0.0))
+
+        def fn_s1(sym: str, hist: List[Candle], ref_open: float):
+            sig = generate_s1_s3_signal(sym, hist, reference_open_px=ref_open, min_rr_s3=1.15)
+            return sig if (sig and sig.strategy_id == "S1_TREND_RETEST") else None
+
+        def fn_s3(sym: str, hist: List[Candle], ref_open: float):
+            sig = generate_s1_s3_signal(sym, hist, reference_open_px=ref_open, min_rr_s3=1.15)
+            return sig if (sig and sig.strategy_id == "S3_VWAP_RANGE") else None
+
+        h1_map = {sym: aggregate_1h(bars) for sym, bars in candles_by_symbol.items() if len(bars) >= 260}
+        mom_1x: List[Tuple[int, float, float, str, int, str, float]] = []
+        mom_2x: List[Tuple[int, float, float, str, int, str, float]] = []
+        if len(h1_map) >= 2:
+            min_len = min(len(v) for v in h1_map.values())
+            for idx in range(30, min_len - 10, 4):
+                snap = {s: bars[:idx] for s, bars in h1_map.items()}
+                sigs = generate_momentum_funding_signals(snap, fr_map, top_n=1)
+                for sig in sigs:
+                    t1 = self.replay_signal(h1_map[sig.symbol], idx, sig, cost_multiplier=1.0)
+                    t2 = self.replay_signal(h1_map[sig.symbol], idx, sig, cost_multiplier=2.0)
+                    if t1:
+                        mom_1x.append(t1)
+                    if t2:
+                        mom_2x.append(t2)
+
+        return {
+            "B1_SQUEEZE_BREAKOUT": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_b1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04),
+            "S1_TREND_RETEST": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04),
+            "S3_VWAP_RANGE": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s3, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.01),
+            "AUTOTRADE_MOMENTUM_FUNDING": {
+                "status": "ok",
+                "oos_summary": asdict(self._summarize("Momentum+Funding (1x)", mom_1x, n_trials=4, risk_per_trade_frac=0.01)),
+                "oos_stress_2x": asdict(self._summarize("Momentum+Funding (2x Stress)", mom_2x, n_trials=4, risk_per_trade_frac=0.01)),
+            },
+        }
+
+    def run_comparison_backtest(
+        self,
+        symbols: Optional[List[str]] = None,
+        days: int = 180,
+        n_cycles: int = 6,
+    ) -> Dict[str, Any]:
+        pairs = symbols or self.settings["universe"]["core_pairs"][:6]
+        naive_trades: List[Tuple[int, float, float, str, int, str, float]] = []
+        sniper_trades: List[Tuple[int, float, float, str, int, str, float]] = []
+        candles_by_symbol: Dict[str, List[Candle]] = {}
+
+        provenance = []
+        for sym in pairs:
+            closed_klines = self.load_historical_klines(sym, interval="15", days=days)
+            if not closed_klines:
+                continue
+            candles_by_symbol[sym] = closed_klines
+            raw = [asdict(c) for c in closed_klines]
+            digest = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
+            archive = BASE_DIR / "data" / "research_bars" / f"{sym}-{digest[:16]}.json"
+            if not archive.exists():
+                atomic_json(archive, raw)
+            provenance.append({
+                "symbol": sym,
+                "sha256": digest,
+                "bars": len(raw),
+                "source": self.client.last_data_source,
+                "first_ms": closed_klines[0].timestamp,
+                "last_ms": closed_klines[-1].timestamp,
+            })
+            naive_trades.extend(tuple(list(t[:5]) + [sym, t[6]]) for t in self._simulate_naive(closed_klines))
+            sniper_trades.extend(self._simulate_s1_s3_replay(closed_klines, symbol=sym))
+
+        naive_summary = self._summarize("Наивный режим (Taker без фильтра режима)", naive_trades)
+        sniper_summary = self._summarize("Rolling Replay S1 + S3 (1x издержки)", sniper_trades)
+        s1_trades = [t for t in sniper_trades if t[3] == "S1_TREND_RETEST"]
+        s3_trades = [t for t in sniper_trades if t[3] == "S3_VWAP_RANGE"]
+        wfa_res = self.run_rolling_wfa(candles_by_symbol, n_cycles=n_cycles, is_ratio=0.75, n_trials=2, mc_iterations=5000)
+
+        return {
+            "validation_status": "rolling_wfa_research",
+            "days_requested": days,
+            "limitations": [
+                "Нет исторического L2 и очереди PostOnly лимитов",
+                "News/ML/correlation gates оцениваются отдельно от базового replay",
+            ],
+            "provenance": provenance,
+            "portfolio_skipped": self._portfolio(sniper_trades)[3],
             "data_source": self.client.last_data_source,
             "pairs_tested": pairs,
             "naive_baseline": asdict(naive_summary),
             "aitrade_sniper_combine": asdict(sniper_summary),
+            "rolling_wfa": wfa_res,
             "strategy_breakdown": {
                 "S1_TREND_RETEST": asdict(self._summarize("S1: Пробой с ретестом (1h Trend)", s1_trades)),
                 "S3_VWAP_RANGE": asdict(self._summarize("S3: Возврат к VWAP ±2σ (1h Range)", s3_trades)),

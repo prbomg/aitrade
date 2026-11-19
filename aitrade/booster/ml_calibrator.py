@@ -1,27 +1,41 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from aitrade.storage import atomic_json
-import json, time
+
+import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from aitrade.storage import atomic_json
 
 
 class AdaptiveMLCalibrator:
+    """
+    Калибратор весов стратегий (AItrade 2026):
+    - Никакого вечного QUARANTINE по 3 стопам подряд.
+    - Активация снижения весов только при trades >= 20 (COOLING 0.50x при PF < 0.90 или streak <= -5).
+    - QUARANTINE (0.0x, блок входов) только при trades >= 25 и PF < 0.75.
+    - Автовыход из QUARANTINE в COOLING (0.50x) через 48ч ИЛИ при PF >= 1.10 на последних 10 теневых сделках.
+    - Запись на диск только при фактическом появлении новых закрытых сделок (без паразитных fsync каждые 5с).
+    """
+
     DEFAULT_STRATEGIES = [
+        "B1_SQUEEZE_BREAKOUT",
         "S1_TREND_RETEST",
         "S3_VWAP_RANGE",
+        "AUTOTRADE_MOMENTUM_FUNDING",
         "SHORT SQUEEZE BREAKOUT",
         "LIQ CASCADE REVERSAL",
         "LONG SQUEEZE / DUMP",
-        "VWAP_KELTNER_MR_LONG",
-        "VWAP_KELTNER_MR_SHORT",
     ]
     SESSIONS = ("ASIA", "EUROPE", "US_OVERLAP")
+    QUARANTINE_TTL_SEC = 48 * 3600
 
     def __init__(self, data_dir: Path) -> None:
         self.file_path = data_dir / "ml_calibration.json"
         self.state = self._load()
+        self._last_closed_sig: Optional[Tuple[int, int, float]] = None
 
     @staticmethod
     def detect_session_utc(timestamp_ms: Optional[int] = None) -> str:
@@ -44,6 +58,8 @@ class AdaptiveMLCalibrator:
             "active_session_utc": self.detect_session_utc(),
             "symbol_strategy_map": {},
             "processed_trades": {},
+            "quarantine_timers": {},
+            "shadow_trades": {},
             "last_calibrated_at": "—",
             "portfolio_stats": {
                 "total_trades": 0,
@@ -80,12 +96,21 @@ class AdaptiveMLCalibrator:
         self.state.setdefault("symbol_strategy_map", {})[symbol] = clean_name
         self._save(self.state)
 
+    def record_shadow_trade(self, strategy_name: str, pnl_usd: float) -> None:
+        """Фиксирует виртуальную (теневую) сделку для автовыхода стратегии из QUARANTINE."""
+        clean = strategy_name.split(":", 1)[1].strip() if ":" in strategy_name else strategy_name.strip()
+        shadows = self.state.setdefault("shadow_trades", {}).setdefault(clean, [])
+        shadows.append(float(pnl_usd))
+        self.state["shadow_trades"][clean] = shadows[-20:]
+        self._save(self.state)
+
     def reset_calibration(self, base_threshold_pct: float = 58.0) -> Dict[str, Any]:
         sym_map = self.state.get("symbol_strategy_map", {})
         self.state = self._default_state()
         self.state["base_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
         self.state["recommended_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
         self.state["symbol_strategy_map"] = sym_map
+        self._last_closed_sig = None
         self._save(self.state)
         return self.state
 
@@ -119,14 +144,39 @@ class AdaptiveMLCalibrator:
             "net_pnl_usd": round(gp - gl, 2),
         }
 
-    def calibrate_from_closed_pnl(self, closed_pnl_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _shadow_recovered(self, strategy_name: str) -> bool:
+        shadows = (self.state.get("shadow_trades") or {}).get(strategy_name) or []
+        if len(shadows) < 10:
+            return False
+        m = self._calc_bucket_metrics(shadows[-10:])
+        return m["profit_factor"] is None or m["profit_factor"] >= 1.10
+
+    def calibrate_from_closed_pnl(
+        self,
+        closed_pnl_list: List[Dict[str, Any]],
+        force: bool = False,
+        now_ts: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        now = float(now_ts if now_ts is not None else time.time())
+        rows = closed_pnl_list or []
+        last_upd = max((int(r.get("updatedTime", 0) or 0) for r in rows), default=0)
+        pnl_sum = round(sum(float(r.get("closedPnl", 0) or 0) for r in rows), 4)
+        sig = (len(rows), last_upd, pnl_sum)
+
+        # Не перезаписываем JSON на диск, если закрытые сделки не менялись и не истёк таймер карантина
+        q_timers = self.state.setdefault("quarantine_timers", {})
+        any_expired = any(float(ts or 0) > 0 and now >= float(ts) for ts in q_timers.values())
+        if not force and self._last_closed_sig == sig and not any_expired:
+            return self.get_summary()
+        self._last_closed_sig = sig
+
         strat_buckets: Dict[str, List[float]] = {name: [] for name in self.DEFAULT_STRATEGIES}
         strat_session_buckets: Dict[str, Dict[str, List[float]]] = {
             name: {s: [] for s in self.SESSIONS} for name in self.DEFAULT_STRATEGIES
         }
         global_session_buckets: Dict[str, List[float]] = {s: [] for s in self.SESSIONS}
 
-        ordered = sorted(closed_pnl_list or [], key=lambda r: int(r.get("updatedTime", 0)))
+        ordered = sorted(rows, key=lambda r: int(r.get("updatedTime", 0) or 0))
         total_wins = 0
         total_losses = 0
         gross_profit_all = 0.0
@@ -186,7 +236,9 @@ class AdaptiveMLCalibrator:
 
         strategies_out: Dict[str, Any] = {}
         for s_name, pnls in strat_buckets.items():
-            m = self._calc_bucket_metrics(pnls)
+            # Скользящее окно последних 30 сделок для расчёта актуального статуса
+            recent_pnls = pnls[-30:]
+            m = self._calc_bucket_metrics(recent_pnls)
             cnt = m["trades"]
             wins = m["wins"]
             losses = m["losses"]
@@ -196,7 +248,7 @@ class AdaptiveMLCalibrator:
             net_s = m["net_pnl_usd"]
 
             streak = 0
-            for p in reversed(pnls):
+            for p in reversed(recent_pnls):
                 if p > 0:
                     if streak >= 0:
                         streak += 1
@@ -212,34 +264,49 @@ class AdaptiveMLCalibrator:
             status = "NORMAL"
             badge = "⚖️ НОРМА (1.0x)"
             prob_bonus_pct = 0.0
+            q_until = float(q_timers.get(s_name, 0.0) or 0.0)
 
-            if cnt >= 8 and s_name != "UNATTRIBUTED" and pf is not None:
-                if streak <= -3 or (pf < 0.75 and payoff < 0.65):
-                    weight = 0.35
-                    status = "QUARANTINE"
-                    badge = "🥶 КАРАНТИН (0.35x)"
-                    prob_bonus_pct = -6.0
-                elif pf < 0.90 or payoff < 0.70 or streak == -2:
-                    weight = 0.65
+            if s_name != "UNATTRIBUTED" and pf is not None:
+                if cnt >= 25 and pf < 0.75:
+                    # Проверка автовыхода из QUARANTINE: истёк таймер 48ч ИЛИ теневые сделки дали PF >= 1.10
+                    if (q_until > 0 and now >= q_until) or self._shadow_recovered(s_name):
+                        weight = 0.50
+                        status = "COOLING"
+                        badge = "⚠️ ВЫХОД ИЗ КАРАНТИНА (0.50x)"
+                        prob_bonus_pct = -3.0
+                        q_timers[s_name] = 0.0
+                    else:
+                        if q_until <= 0:
+                            q_until = now + self.QUARANTINE_TTL_SEC
+                            q_timers[s_name] = q_until
+                        weight = 0.0
+                        status = "QUARANTINE"
+                        badge = "🥶 КАРАНТИН (0.0x / 48ч)"
+                        prob_bonus_pct = -6.0
+                elif cnt >= 20 and (pf < 0.90 or streak <= -5):
+                    weight = 0.50
                     status = "COOLING"
-                    badge = "⚠️ ОХЛАЖДЕНИЕ (0.65x)"
+                    badge = "⚠️ ОХЛАЖДЕНИЕ (0.50x)"
                     prob_bonus_pct = -3.0
-                elif pf >= 1.50 and wr >= 55.0 and payoff >= 0.85:
+                    q_timers[s_name] = 0.0
+                elif cnt >= 20 and pf >= 1.50 and wr >= 55.0 and payoff >= 0.85:
                     weight = 1.30
                     status = "BOOST"
                     badge = "🚀 БУСТ ЛИДЕРА (1.30x)"
                     prob_bonus_pct = 3.5
-                elif (pf >= 1.20 or (streak >= 2 and pf >= 1.05)) and payoff >= 0.85:
+                    q_timers[s_name] = 0.0
+                elif cnt >= 20 and (pf >= 1.20 or (streak >= 2 and pf >= 1.05)) and payoff >= 0.85:
                     weight = 1.15
                     status = "BOOST"
                     badge = "🟢 ПОВЫШЕН (1.15x)"
                     prob_bonus_pct = 2.0
+                    q_timers[s_name] = 0.0
 
             sess_map: Dict[str, Any] = {}
             for s_key, s_pnls in strat_session_buckets.get(s_name, {}).items():
-                sm = self._calc_bucket_metrics(s_pnls)
+                sm = self._calc_bucket_metrics(s_pnls[-30:])
                 s_mult = 1.0
-                if sm["trades"] >= 5 and s_name != "UNATTRIBUTED" and sm["profit_factor"] is not None:
+                if sm["trades"] >= 8 and s_name != "UNATTRIBUTED" and sm["profit_factor"] is not None:
                     if sm["profit_factor"] < 0.85 or sm["payoff_ratio"] < 0.70:
                         s_mult = 0.65
                     elif sm["profit_factor"] >= 1.35 and sm["payoff_ratio"] >= 0.90:
@@ -262,6 +329,7 @@ class AdaptiveMLCalibrator:
                 "prob_adjustment_pct": prob_bonus_pct,
                 "status": status,
                 "badge": badge,
+                "quarantine_until_ts": q_timers.get(s_name, 0.0),
                 "sessions": sess_map,
             }
 
@@ -280,6 +348,15 @@ class AdaptiveMLCalibrator:
         for k, v in strats.items():
             if k.lower() == clean_q.lower() or k.lower() in clean_q.lower() or clean_q.lower() in k.lower():
                 base_w = float(v.get("weight_multiplier", 1.0))
+                status = v.get("status", "NORMAL")
+                if status == "QUARANTINE" or base_w <= 0.0:
+                    return {
+                        "weight": 0.0,
+                        "prob_adj": float(v.get("prob_adjustment_pct", 0.0)) / 100.0,
+                        "status": "QUARANTINE",
+                        "badge": v.get("badge", "🥶 КАРАНТИН (0.0x)"),
+                        "session": cur_sess,
+                    }
                 sess_info = (v.get("sessions") or {}).get(cur_sess) or {}
                 sess_mult = float(sess_info.get("session_multiplier", 1.0) or 1.0)
                 eff_w = round(max(0.30, min(1.40, base_w * sess_mult)), 2)
@@ -289,7 +366,7 @@ class AdaptiveMLCalibrator:
                 return {
                     "weight": eff_w,
                     "prob_adj": float(v.get("prob_adjustment_pct", 0.0)) / 100.0,
-                    "status": v.get("status", "NORMAL"),
+                    "status": status,
                     "badge": badge,
                     "session": cur_sess,
                 }

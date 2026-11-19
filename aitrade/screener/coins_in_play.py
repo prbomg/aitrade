@@ -39,6 +39,7 @@ class ScreenerResult:
     active_session: str  # "ASIA" | "EUROPE" | "US_OVERLAP"
     recommended_playbooks: List[str]
     reject_reason: Optional[str] = None
+    last_price: float = 0.0
 
 
 def detect_active_session_utc(timestamp_ms: Optional[int] = None) -> str:
@@ -123,6 +124,7 @@ class CoinsInPlayScreener:
         )
         in_play_score = round(min(100.0, rvol_score + natr_score + spread_score + funding_bonus + vwap_stretch), 1)
 
+        last_px = float(candles_15m[-1].close) if candles_15m else float(ticker_info.get("lastPrice", 0.0) or 0.0)
         return ScreenerResult(
             symbol=symbol,
             passed=(reject_reason is None),
@@ -138,4 +140,5 @@ class CoinsInPlayScreener:
             active_session=session,
             recommended_playbooks=playbooks,
             reject_reason=reject_reason,
+            last_price=round(last_px, 6),
         )

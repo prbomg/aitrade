@@ -837,7 +837,45 @@ if (btnTrainMode) {
     const nextState = !window._boosterTrainingMode;
     await apiPost("/api/booster_config", {training_mode: nextState});
     await refreshState();
-    showToast(nextState ? "🧪 Режим обучения ИИ ВКЛЮЧЕН (торговля 24/7 без стоп-крана дня)" : "🛡 Включен стандартный защитный режим (-3% лимит дня)");
+    showToast(nextState ? "🧪 Режим обучения ИИ ВКЛЮЧЕН (торговля 24/7 без стоп-крана дня)" : "🛡 Включен стандартный защитный режим (Kill-Switch активен)");
+  });
+}
+
+// Обработчики X/News и Adaptive ML Calibrator (исправление 4 кнопок)
+const btnRefXnews = document.getElementById("btn-refresh-xnews");
+if (btnRefXnews) {
+  btnRefXnews.addEventListener("click", async function() {
+    showToast("🐦 Обновление ленты X (Twitter) и новостей...");
+    await apiPost("/api/x_news", {});
+    await refreshState();
+    showToast("✅ Радар X/News обновлён");
+  });
+}
+const btnTogXnews = document.getElementById("btn-toggle-xnews");
+if (btnTogXnews) {
+  btnTogXnews.addEventListener("click", async function() {
+    const nextEn = !(window._xNewsEnabled !== false);
+    await apiPost("/api/x_news", {enabled: nextEn});
+    await refreshState();
+    showToast(nextEn ? "🐦 Фильтр X/News ВКЛЮЧЕН" : "⏸ Фильтр X/News ВЫКЛЮЧЕН");
+  });
+}
+const btnRunMlCal = document.getElementById("btn-run-ml-cal");
+if (btnRunMlCal) {
+  btnRunMlCal.addEventListener("click", async function() {
+    showToast("🧠 Пересчёт весов стратегий по Closed PnL...");
+    await apiPost("/api/ml_calibrate", {});
+    await refreshState();
+    showToast("✅ Калибровка ML завершена");
+  });
+}
+const btnTogMlCal = document.getElementById("btn-toggle-ml-cal");
+if (btnTogMlCal) {
+  btnTogMlCal.addEventListener("click", async function() {
+    const nextEn = !(window._mlCalEnabled !== false);
+    await apiPost("/api/ml_calibrate", {enabled: nextEn});
+    await refreshState();
+    showToast(nextEn ? "🧠 Автокалибровка ML ВКЛЮЧЕНА" : "⏸ Автокалибровка ML ВЫКЛЮЧЕНА");
   });
 }
 
@@ -1123,16 +1161,27 @@ function renderState(st) {
     showToast(task.status==='failed' ? 'Ошибка сканирования: '+task.error : 'Сканирование завершено. Результаты обновлены.', task.status==='failed');
   }
   const b = st.booster || {};
+  window._boosterTrainingMode = Boolean(b.training_unlimited_mode);
+  const trBtn = document.getElementById("btn-training-mode");
+  if (trBtn) {
+    trBtn.textContent = window._boosterTrainingMode
+      ? "🧪 Режим обучения (Без лимита): ВКЛ"
+      : "🛡 Режим обучения (Без лимита): ВЫКЛ";
+    trBtn.className = window._boosterTrainingMode ? "btn-warning btn-sm" : "btn-purple btn-sm";
+  }
   const bLive = Number(b.live_equity || 1000);
-  document.getElementById("kpi-booster-eq").textContent = "$" + bLive.toLocaleString("en-US", {minimumFractionDigits: 2});
-  document.getElementById("kpi-booster-floor").textContent = "Порог капитала: $" + Number(b.floor_usd || 920).toFixed(2) + " (" + (b.phase_name || "Фаза 1") + ")";
-  document.getElementById("booster-phase-title").textContent = "🚀 " + (b.phase_name || "Фаза 1") + " — Капитал: $" + bLive.toFixed(2) + " → Цель: $10,000";
+  const bVault = Number(b.vault_usd || 0);
+  const subAcc = (envSt.subaccounts || {});
+  const isoLbl = (subAcc.booster && subAcc.booster.isolated) ? "Изолирован" : "Общий Demo";
+  document.getElementById("kpi-booster-eq").textContent = "$" + bLive.toLocaleString("en-US", {minimumFractionDigits: 2}) + (bVault > 0 ? (" + $" + bVault.toFixed(0) + " сейф") : "");
+  document.getElementById("kpi-booster-floor").textContent = "Порог: $" + Number(b.floor_usd || 920).toFixed(2) + " · Субаккаунт: " + isoLbl;
+  document.getElementById("booster-phase-title").textContent = "🚀 " + (b.phase_name || "Фаза 1") + " — Капитал: $" + bLive.toFixed(2) + " | Сейф: $" + bVault.toFixed(2) + " → Цель: $10,000";
   document.getElementById("booster-progress-bar").style.width = Math.max(4, Number(b.progress_pct || 0)) + "%";
-  document.getElementById("booster-progress-text").textContent = "Прогресс: $" + bLive.toFixed(2) + " из $10,000 (" + (b.progress_pct || 0) + "% | Рост " + (b.growth_multiple || 1) + "x | Прогноз срока и доходности отсутствует)";
+  document.getElementById("booster-progress-text").textContent = "Прогресс: $" + (bLive + bVault).toFixed(2) + " из $10,000 (" + (b.progress_pct || 0) + "% | Рост " + (b.growth_multiple || 1) + "x | Сейф: $" + bVault.toFixed(2) + ", след. шаг: $" + Number(b.next_ratchet_equity || 1500).toFixed(0) + ")";
   document.getElementById("b-hwm").textContent = "$" + Number(b.high_water_mark || 1000).toFixed(2);
-  document.getElementById("b-floor-status").textContent = b.near_floor_protection ? "⚠️ Вблизи дна ($" + b.floor_usd + "): риск 0.5%" : ("Порог капитала: $" + Number(b.floor_usd || 920).toFixed(2));
+  document.getElementById("b-floor-status").textContent = b.near_floor_protection ? "⚠️ Демпфер DD активен ($" + b.floor_usd + ")" : ("Порог капитала: $" + Number(b.floor_usd || 920).toFixed(2));
   document.getElementById("b-risk-usd").textContent = "$" + Number(b.effective_risk_usd ?? 0).toFixed(2) + " (" + (b.effective_risk_pct ?? 0) + "%)";
-  document.getElementById("b-house-bonus").textContent = "Бонус HM: +$" + Number(b.house_money_bonus_usd || 0).toFixed(2);
+  document.getElementById("b-house-bonus").textContent = "🔐 Сейф-храповик: $" + bVault.toFixed(2) + " (DD: " + Number(b.dd_from_hwm_pct || 0).toFixed(1) + "%)";
   const dPnl = Number(b.realized_today_usd || 0);
   const dEl = document.getElementById("b-daily-pnl");
   dEl.textContent = (dPnl >= 0 ? "+$" : "-$") + Math.abs(dPnl).toFixed(2);
@@ -1140,7 +1189,14 @@ function renderState(st) {
   document.getElementById("b-daily-limit").textContent = "Стоп-кран дня: -$" + Number(b.daily_loss_limit_usd || 30).toFixed(2);
   const cbB = document.getElementById("booster-cb-badge");
   cbB.className = b.circuit_breaker_tripped ? "badge badge-red" : "badge badge-green";
-  cbB.textContent = b.circuit_breaker_tripped ? "🛑 Дневной стоп-кран СРАБОТАЛ (Пауза)" : "🛡 Дневной стоп-кран (-3%): В НОРМЕ";
+  cbB.textContent = b.circuit_breaker_tripped ? "🛑 Дневной стоп-кран СРАБОТАЛ (Пауза)" : "🛡 Дневной стоп-кран: В НОРМЕ";
+  const wfa = (st.backtest || {}).rolling_wfa || {};
+  if (wfa.status === "ok" && document.getElementById("ml-base-thr")) {
+    const wfeStr = wfa.wfe == null ? "—" : Number(wfa.wfe).toFixed(2);
+    const dsrStr = (wfa.oos_summary && wfa.oos_summary.deflated_sharpe_ratio != null) ? Number(wfa.oos_summary.deflated_sharpe_ratio).toFixed(2) : "—";
+    const s2x = (wfa.oos_stress_2x && wfa.oos_stress_2x.avg_r_multiple != null) ? Number(wfa.oos_stress_2x.avg_r_multiple).toFixed(3) : "—";
+    document.getElementById("ml-base-thr").title = "Rolling WFA: WFE=" + wfeStr + " | DSR=" + dsrStr + " | 2x Stress E[R]=" + s2x;
+  }
   renderEquitySvg(b.equity_curve || [1000, bLive], b.floor_usd || 920, b.high_water_mark || 1000);
 
   // Пульт Стратегий

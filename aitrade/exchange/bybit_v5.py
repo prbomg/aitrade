@@ -235,14 +235,23 @@ class BybitV5Client:
             return self._synthetic_tickers(symbol)
 
     def get_klines(
-        self, symbol: str, interval: str = "15", limit: int = 200
+        self,
+        symbol: str,
+        interval: str = "15",
+        limit: int = 200,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
     ) -> List[Candle]:
-        params = {
+        params: Dict[str, Any] = {
             "category": self.category,
             "symbol": symbol,
             "interval": str(interval),
             "limit": min(limit, 1000),
         }
+        if start is not None:
+            params["start"] = int(start)
+        if end is not None:
+            params["end"] = int(end)
         try:
             res = self._public_get("/v5/market/kline", params)
             raw_list = res.get("list", [])
@@ -264,6 +273,80 @@ class BybitV5Client:
                 raise
             self.last_data_source = "deterministic_market_replay"
             return self._synthetic_klines(symbol, interval, limit)
+
+    def get_klines_paginated(
+        self,
+        symbol: str,
+        interval: str = "15",
+        days: int = 180,
+        end_ms: Optional[int] = None,
+        cache_dir: Optional[Any] = None,
+        max_pages: int = 40,
+    ) -> List[Candle]:
+        """
+        Загружает многомесячную историю свечей Bybit V5 с пагинацией по `end`
+        и опциональным локальным кэшированием в `cache_dir` (data/candles_cache/).
+        """
+        from pathlib import Path
+        from dataclasses import asdict
+        from aitrade.storage import atomic_json
+
+        iv_map = {"1": 1, "3": 3, "5": 5, "15": 15, "30": 30, "60": 60, "120": 120, "240": 240, "D": 1440}
+        step_min = iv_map.get(str(interval), int(interval) if str(interval).isdigit() else 15)
+        step_ms = step_min * 60 * 1000
+        target_bars = max(200, int((days * 1440) / step_min))
+        now_ms = int(end_ms if end_ms is not None else time.time() * 1000)
+        start_cutoff = now_ms - target_bars * step_ms
+
+        cache_file: Optional[Path] = None
+        by_ts: Dict[int, Candle] = {}
+        if cache_dir is not None:
+            cdir = Path(cache_dir)
+            cdir.mkdir(parents=True, exist_ok=True)
+            cache_file = cdir / f"{symbol}_{interval}_{days}d.json"
+            if cache_file.exists():
+                try:
+                    cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                    for row in cached:
+                        c = Candle(
+                            timestamp=int(row["timestamp"]),
+                            open=float(row["open"]),
+                            high=float(row["high"]),
+                            low=float(row["low"]),
+                            close=float(row["close"]),
+                            volume=float(row["volume"]),
+                            turnover=float(row["turnover"]),
+                        )
+                        by_ts[c.timestamp] = c
+                except Exception:
+                    by_ts.clear()
+
+        if len(by_ts) >= int(target_bars * 0.95):
+            ordered = [by_ts[k] for k in sorted(by_ts.keys())]
+            if now_ms - ordered[-1].timestamp <= step_ms * 4:
+                return ordered[-target_bars:]
+
+        cursor_end = now_ms
+        pages = 0
+        while pages < max_pages and len(by_ts) < target_bars:
+            batch = self.get_klines(symbol, interval=str(interval), limit=1000, end=cursor_end)
+            if not batch:
+                break
+            prev_len = len(by_ts)
+            for c in batch:
+                by_ts[c.timestamp] = c
+            oldest_ts = min(c.timestamp for c in batch)
+            pages += 1
+            if oldest_ts <= start_cutoff or len(by_ts) == prev_len or len(batch) < 1000:
+                break
+            cursor_end = oldest_ts - step_ms
+
+        ordered = [by_ts[k] for k in sorted(by_ts.keys()) if k >= start_cutoff - step_ms * 2]
+        if len(ordered) > target_bars:
+            ordered = ordered[-target_bars:]
+        if cache_file is not None and ordered:
+            atomic_json(cache_file, [asdict(c) for c in ordered])
+        return ordered
 
     def get_orderbook(self, symbol: str, limit: int = 50) -> OrderBookSnapshot:
         params = {

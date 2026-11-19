@@ -1,18 +1,29 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from aitrade.storage import atomic_json
-import hashlib, hmac, json, os, subprocess, time
+
+import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
+
 from aitrade.exchange.transport import request
+from aitrade.storage import atomic_json
 
 
 class BybitEnvManager:
+    """
+    Менеджер контуров и изолированных субаккаунтов Bybit V5:
+    - Поддерживает отдельные пары ключей для субаккаунтов `booster` и `autotrade`
+      (как в `demo`, так и в `mainnet`).
+    - Fallback на общий demo-ключ допускается только при `shared_demo_account=True`.
+    """
+
     URLS = {
         "demo": "https://api-demo.bybit.com",
         "mainnet": "https://api.bybit.com",
     }
+    ACCOUNTS = ("booster", "autotrade")
 
     def __init__(self, data_dir: Path, default_demo_key: str = "", default_demo_secret: str = "") -> None:
         self.vault_path = data_dir / "env_vault.json"
@@ -21,6 +32,7 @@ class BybitEnvManager:
     def _default_state(self, d_key: str, d_sec: str) -> Dict[str, Any]:
         return {
             "active_mode": "demo",
+            "shared_demo_account": True,
             "demo": {
                 "api_key": d_key,
                 "api_secret": d_sec,
@@ -30,6 +42,16 @@ class BybitEnvManager:
                 "api_key": "",
                 "api_secret": "",
                 "base_url": self.URLS["mainnet"],
+            },
+            "subaccounts": {
+                "booster": {
+                    "demo": {"api_key": "", "api_secret": ""},
+                    "mainnet": {"api_key": "", "api_secret": ""},
+                },
+                "autotrade": {
+                    "demo": {"api_key": "", "api_secret": ""},
+                    "mainnet": {"api_key": "", "api_secret": ""},
+                },
             },
             "last_checklist": {
                 "mode": "mainnet",
@@ -46,6 +68,11 @@ class BybitEnvManager:
             try:
                 raw = json.loads(self.vault_path.read_text(encoding="utf-8"))
                 st.update(raw)
+                st.setdefault("subaccounts", self._default_state("", "")["subaccounts"])
+                for acc in self.ACCOUNTS:
+                    st["subaccounts"].setdefault(
+                        acc, {"demo": {"api_key": "", "api_secret": ""}, "mainnet": {"api_key": "", "api_secret": ""}}
+                    )
                 if not st.get("demo", {}).get("api_key") and d_key:
                     st["demo"]["api_key"] = d_key
                     st["demo"]["api_secret"] = d_sec
@@ -80,6 +107,68 @@ class BybitEnvManager:
             "base_url": self.URLS.get(mode, self.URLS["demo"]),
         }
 
+    def get_account_credentials(self, account: str = "autotrade") -> Dict[str, Any]:
+        """
+        Возвращает ключи конкретного субаккаунта (`booster` или `autotrade`).
+        Если отдельные ключи субаккаунта не заданы и активен `demo` с `shared_demo_account=True`,
+        выполняется явный fallback на общий demo-ключ с пометкой `isolated=False`.
+        """
+        acc = account if account in self.ACCOUNTS else "autotrade"
+        mode = self.state.get("active_mode", "demo")
+        if mode not in ("demo", "mainnet"):
+            mode = "demo"
+        sub = ((self.state.get("subaccounts") or {}).get(acc) or {}).get(mode) or {}
+        sk = str(sub.get("api_key", "") or "").strip()
+        ss = str(sub.get("api_secret", "") or "").strip()
+        if sk and ss:
+            return {
+                "account": acc,
+                "mode": mode,
+                "api_key": sk,
+                "api_secret": ss,
+                "base_url": self.URLS[mode],
+                "isolated": True,
+            }
+        if mode == "demo" and bool(self.state.get("shared_demo_account", True)):
+            base = self.get_active_credentials()
+            return {
+                "account": acc,
+                "mode": mode,
+                "api_key": base["api_key"],
+                "api_secret": base["api_secret"],
+                "base_url": base["base_url"],
+                "isolated": False,
+            }
+        return {
+            "account": acc,
+            "mode": mode,
+            "api_key": "",
+            "api_secret": "",
+            "base_url": self.URLS[mode],
+            "isolated": False,
+        }
+
+    def save_subaccount_keys(
+        self, account: str, target_mode: str, api_key: str, api_secret: str
+    ) -> Dict[str, Any]:
+        if account not in self.ACCOUNTS or target_mode not in ("demo", "mainnet"):
+            return {"ok": False, "retMsg": "Некорректный субаккаунт или контур"}
+        sub = self.state.setdefault("subaccounts", {}).setdefault(
+            account, {"demo": {"api_key": "", "api_secret": ""}, "mainnet": {"api_key": "", "api_secret": ""}}
+        )
+        cur = sub.setdefault(target_mode, {})
+        if api_key and "••••" not in api_key:
+            cur["api_key"] = api_key.strip()
+        if api_secret and "••••" not in api_secret:
+            cur["api_secret"] = api_secret.strip()
+        self._save(self.state)
+        return {
+            "ok": True,
+            "account": account,
+            "mode": target_mode,
+            "masked_key": self.mask_key(cur.get("api_key", "")),
+        }
+
     def save_keys(self, target_mode: str, api_key: str, api_secret: str) -> Dict[str, Any]:
         if target_mode not in ("demo", "mainnet"):
             return {"ok": False, "retMsg": "Некорректный контур"}
@@ -94,8 +183,10 @@ class BybitEnvManager:
 
     @staticmethod
     def _signed_get(base_url: str, api_key: str, api_secret: str, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        try:return request(base_url,api_key,api_secret,"GET",endpoint,params)
-        except Exception as exc:return {"retCode":-1,"retMsg":str(exc)}
+        try:
+            return request(base_url, api_key, api_secret, "GET", endpoint, params)
+        except Exception as exc:
+            return {"retCode": -1, "retMsg": str(exc)}
 
     def run_preflight_checklist(self, target_mode: str = "mainnet") -> Dict[str, Any]:
         block = self.state.get(target_mode, {})
@@ -106,7 +197,6 @@ class BybitEnvManager:
         checks = []
         all_passed = True
 
-        # 1. Наличие ключей в хранилище
         has_keys = bool(api_key and api_secret)
         checks.append({
             "id": "keys_present",
@@ -126,7 +216,6 @@ class BybitEnvManager:
             self._save(self.state)
             return res
 
-        # 2. Проверка прав API-ключа (/v5/user/query-api)
         key_info_resp = self._signed_get(base_url, api_key, api_secret, "/v5/user/query-api", {})
         ret_code = key_info_resp.get("retCode", -1)
         k_res = key_info_resp.get("result", {}) or {}
@@ -142,7 +231,6 @@ class BybitEnvManager:
         if not auth_ok:
             all_passed = False
 
-        # 3. Разрешения на торговлю деривативами (ContractTrade) и ReadOnly == 0
         contract_perms = perms.get("ContractTrade", []) or []
         derivatives_perms = perms.get("Derivatives", []) or []
         read_only = int(k_res.get("readOnly", 0) or 0)
@@ -156,7 +244,6 @@ class BybitEnvManager:
         if not can_trade_futures:
             all_passed = False
 
-        # 4. Отсутствие прав на вывод средств (Security Check: No Withdraw Permission)
         wallet_perms = perms.get("Wallet", []) or []
         has_withdraw = any("withdraw" in str(p).lower() for p in wallet_perms)
         no_withdraw_ok = auth_ok and (not has_withdraw)
@@ -169,7 +256,6 @@ class BybitEnvManager:
         if not no_withdraw_ok:
             all_passed = False
 
-        # 5. Проверка Единого Торгового Аккаунта (UTA) и баланса USDT
         bal_resp = self._signed_get(base_url, api_key, api_secret, "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
         bal_ok = (bal_resp.get("retCode") == 0)
         lst = bal_resp.get("result", {}).get("list", []) if bal_ok else []
@@ -209,7 +295,6 @@ class BybitEnvManager:
             self._save(self.state)
             return {"ok": True, "active_mode": "demo", "retMsg": "Переключено на учебный контур 🧪 Bybit Demo"}
 
-        # Для перехода в Real Mainnet обязательно прогоняем чек-лист
         chk = self.run_preflight_checklist("mainnet")
         if not chk.get("passed"):
             return {
@@ -229,12 +314,25 @@ class BybitEnvManager:
 
     def get_public_status(self) -> Dict[str, Any]:
         act = self.state.get("active_mode", "demo")
+        b_creds = self.get_account_credentials("booster")
+        a_creds = self.get_account_credentials("autotrade")
         return {
             "active_mode": act,
             "is_mainnet": act == "mainnet",
+            "shared_demo_account": bool(self.state.get("shared_demo_account", True)),
             "active_url": self.URLS.get(act, self.URLS["demo"]),
             "demo_key_masked": self.mask_key(self.state.get("demo", {}).get("api_key", "")),
             "mainnet_key_masked": self.mask_key(self.state.get("mainnet", {}).get("api_key", "")),
             "mainnet_configured": bool(self.state.get("mainnet", {}).get("api_key")),
+            "subaccounts": {
+                "booster": {
+                    "isolated": b_creds["isolated"],
+                    "key_masked": self.mask_key(b_creds["api_key"]),
+                },
+                "autotrade": {
+                    "isolated": a_creds["isolated"],
+                    "key_masked": self.mask_key(a_creds["api_key"]),
+                },
+            },
             "last_checklist": self.state.get("last_checklist", {}),
         }

@@ -280,6 +280,9 @@ class BybitV5DirectController:
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
             self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':'intraday.2','signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':360 if 'S1_TREND_RETEST' in strategy_id else (240 if 'S3_VWAP_RANGE' in strategy_id else (180 if strategy_id.startswith('BOOSTER') else 0))}})
+            if hasattr(self.spm,'ensure_isolated_margin') and 'FUNDING_CARRY' not in str(strategy_id):
+                try:self.spm.ensure_isolated_margin(symbol,int(leverage))
+                except Exception:pass
             self.spm.signed_post('/v5/position/set-leverage',{'category':'linear','symbol':symbol,'buyLeverage':str(leverage),'sellLeverage':str(leverage)})
             # Read position mode explicitly, never resubmit the same entry to another positionIdx.
             modes=self.spm.paged_get('/v5/position/list',{'category':'linear','symbol':symbol})
@@ -290,7 +293,9 @@ class BybitV5DirectController:
                 submitted=True
                 result=chaser.execute_chased_entry(symbol,side,qty,ref,tp,sl,leverage,split_tp,intent_id,idx)
             else:
-                payload={'category':'linear','symbol':symbol,'side':side,'qty':str(qty),'orderType':order_type,'positionIdx':idx,'orderLinkId':intent_id,'timeInForce':'GTC' if order_type=='Limit' else 'IOC','stopLoss':self.spm.fmt_step(sl,spec['tick_size'],False),'takeProfit':self.spm.fmt_step(tp,spec['tick_size'],False),'tpslMode':'Full'}
+                want_post_only=(order_type=='Limit') and (bool(((signal_context or {}).get('features') or {}).get('post_only')) or any(k in str(strategy_id) for k in ('S1_TREND_RETEST','S3_VWAP_RANGE','B1_SQUEEZE_BREAKOUT','AUTOTRADE_MOMENTUM_FUNDING')))
+                tif='PostOnly' if want_post_only else ('GTC' if order_type=='Limit' else 'IOC')
+                payload={'category':'linear','symbol':symbol,'side':side,'qty':str(qty),'orderType':order_type,'positionIdx':idx,'orderLinkId':intent_id,'timeInForce':tif,'stopLoss':self.spm.fmt_step(sl,spec['tick_size'],False),'takeProfit':self.spm.fmt_step(tp,spec['tick_size'],False),'tpslMode':'Full'}
                 if order_type=='Limit':payload['price']=self.spm.fmt_step(ref,spec['tick_size'],side=='Buy')
                 else:
                     cap=ref*(1.0015 if side=='Buy' else .9985)
@@ -322,11 +327,14 @@ class ControlCenterState:
         self.limit_chaser = SmartLimitChaser(self.bybit.spm, self.ws_hub, BASE_DIR / "data")
         self.bybit.attach_chaser(self.limit_chaser)
         self.booster = DepositBoosterManager(BASE_DIR / "data")
+        self.booster_ledger = Ledger(BASE_DIR / "data" / "execution_ledger_booster.sqlite3")
+        self.autotrade_ledger = Ledger(BASE_DIR / "data" / "execution_ledger_autotrade.sqlite3")
         self.oi_scanner = OISqueezeScanner()
         self.regime_guard = RegimeAndCorrelationGuard()
         self.ml_calibrator = AdaptiveMLCalibrator(BASE_DIR / "data")
         self.x_radar = XNewsSentimentRadar()
         self.env_manager = BybitEnvManager(BASE_DIR / "data", self.engine.client.api_key, self.engine.client.api_secret)
+        self.booster.state["isolated_subaccount"] = bool(self.env_manager.get_account_credentials("booster").get("isolated", False))
         active_creds = self.env_manager.get_active_credentials()
         if active_creds.get("api_key"):
             self.bybit.apply_credentials(active_creds["api_key"], active_creds["api_secret"], active_creds["base_url"])
@@ -673,6 +681,16 @@ class ControlCenterState:
             finally:self.scan_status['running']=False
 
     def _run_scan(self, trade_booster: bool = False, trade_core: bool = False) -> Dict[str, Any]:
+        # Сетевой опрос OISqueezeScanner выполняется ВНЕ глобального self._lock (информационная панель)
+        core_pairs_pre = self.settings.get("universe", {}).get("core_pairs", [])
+        ws_sum_pre = self.ws_hub.get_summary()
+        try:
+            squeeze_list = self.oi_scanner.scan_squeeze_setups(core_pairs_pre, ws_sum_pre)
+        except Exception:
+            squeeze_list = []
+        for s in squeeze_list:
+            s["sector"] = self.regime_guard.get_sector(s.get("symbol", ""))
+
         with self._lock:
             try:
                 self.funding_rates = {
@@ -687,9 +705,6 @@ class ControlCenterState:
             ws_sum = self.ws_hub.get_summary()
             btc_reg = self.regime_guard.update_btc_regime(ws_sum)
             news_sum = self.x_radar.refresh_feed()
-            squeeze_list = self.oi_scanner.scan_squeeze_setups(core_pairs, ws_sum)
-            for s in squeeze_list:
-                s["sector"] = self.regime_guard.get_sector(s.get("symbol", ""))
 
             scan_res = self.engine.scan_market(auto_execute_demo=False)
             scan_res["oi_squeeze_signals"] = squeeze_list
@@ -741,51 +756,28 @@ class ControlCenterState:
 
             if trade_booster and self.booster.state.get("enabled", True) and not self.entry_paused.is_set():
                 if b_metrics["circuit_breaker_tripped"]:
-                    self.add_log("🛑 [Разгон $1k→$10k] Сработал дневной стоп-кран (-3%). Входы разгона приостановлены.")
+                    self.add_log("🛑 [Разгон $1k→$10k] Сработал дневной стоп-кран или стоп цикла. Входы разгона приостановлены.")
                 else:
-                    booster_slots = max(0, int(b_metrics["max_positions"]) - len(positions))
-                    a_plus_list = [s for s in squeeze_list if s.get("grade") == "A+" and s.get("cal_status") != "QUARANTINE"]
-                    for top_sq in a_plus_list:
-                        if booster_slots <= 0:
-                            break
-                        side = "Buy" if top_sq["direction"] == "LONG" else "Sell"
-                        on_cd, cd_left = self.booster.is_symbol_on_cooldown(top_sq["symbol"])
-                        if on_cd:
-                            self.add_log("⏳ [Кулдаун после стопа] Пропуск " + top_sq["symbol"] + ": карантин еще " + str(cd_left) + " мин")
-                            continue
-                        allowed, guard_msg = self.regime_guard.can_open_position(top_sq["symbol"], side, positions, ws_sum)
-                        n_mod = self.x_radar.get_coin_modifier(top_sq["symbol"], top_sq["direction"])
-                        if not allowed or not n_mod["allowed"]:
-                            why = guard_msg if not allowed else n_mod["reason"]
-                            self.add_log("🛡 [Разгон Фильтр] Пропуск " + top_sq["symbol"] + " (" + side + "): " + why)
-                            continue
-                        sizing = self.booster.calculate_order_qty(top_sq["entry_price"], top_sq["stop_loss"], b_metrics)
-                        w_mult = float(top_sq.get("cal_weight", 1.0) or 1.0)
-                        adj_qty = round(sizing["qty_coins"] * w_mult, 6)
-                        sq_otype = top_sq.get("order_type", order_type)
-                        r = self.bybit.place_order(
-                            top_sq["symbol"], side, sq_otype, adj_qty,
-                            top_sq["entry_price"], top_sq["take_profit"], top_sq["stop_loss"],
-                            sizing["leverage"], self.split_tp_enabled, strategy_id="BOOSTER:" + top_sq.get("setup_type", "UNKNOWN"),
-                            signal_context={"features": {"vwap_zscore": 0.0, "rsi_14": 50.0, "rvol": 1.5, "clv_proxy": float(top_sq.get("obi_top5_pct", 0.0)) / 100.0}, "score": top_sq.get("score"), "cal_weight": w_mult}
-                        )
-                        if not r.get("ok"): self.add_log("Вход Booster отклонён: " + str(r.get("retMsg")))
-                        if r.get("ok"):
-                            booster_slots -= 1
-                            positions = self.bybit.get_positions()
-                            self.mark_position_source(top_sq["symbol"], "🚀 Booster A+")
-                            self.booster.register_booster_symbol(top_sq["symbol"])
-                            self.ml_calibrator.register_entry(top_sq["symbol"], top_sq.get("setup_type", "SHORT SQUEEZE BREAKOUT"))
-                            self.add_log(
-                                "🚀 [Автопилот Разгона] Открыт " + top_sq["symbol"] + " " + side
-                                + " [" + guard_msg + "] qty=" + str(r.get("qty")) + ", риск $" + str(sizing["risk_usd"])
-                            )
-                    if booster_slots > 0 and not trade_core:
-                        s1_cands = [s for s in (scan_res.get("approved_signals") or []) if s.get("strategy_id") == "S1_TREND_RETEST" and s.get("passed_ml_filter") and s.get("debate_verdict") == "APPROVED"]
-                        for s1 in s1_cands:
+                    booster_pos = [p for p in positions if str(p.get("strategy_id", "")).startswith("BOOSTER:")]
+                    booster_slots = max(0, int(b_metrics["max_positions"]) - len(booster_pos))
+                    # OISqueezeScanner отключён от автоторговли до валидации (информационная панель).
+                    # Валидированные трендовые ядра Разгона: B1_SQUEEZE_BREAKOUT и S1_TREND_RETEST (независимо от trade_core).
+                    if booster_slots > 0:
+                        b_cands = [
+                            s for s in (scan_res.get("approved_signals") or [])
+                            if s.get("strategy_id") in ("B1_SQUEEZE_BREAKOUT", "S1_TREND_RETEST")
+                            and s.get("passed_ml_filter")
+                            and s.get("debate_verdict") == "APPROVED"
+                            and s.get("cal_status") != "QUARANTINE"
+                        ]
+                        for s1 in b_cands:
                             if booster_slots <= 0:
                                 break
                             side = s1["side"]
+                            on_cd, cd_left = self.booster.is_symbol_on_cooldown(s1["symbol"])
+                            if on_cd:
+                                self.add_log("⏳ [Кулдаун после стопа] Пропуск " + s1["symbol"] + ": еще " + str(cd_left) + " мин")
+                                continue
                             allowed, guard_msg = self.regime_guard.can_open_position(s1["symbol"], side, positions, ws_sum)
                             n_mod = self.x_radar.get_coin_modifier(s1["symbol"], "LONG" if side == "Buy" else "SHORT")
                             if not allowed or not n_mod["allowed"]:
@@ -793,10 +785,11 @@ class ControlCenterState:
                             sizing = self.booster.calculate_order_qty(float(s1["entry_price"]), float(s1["stop_loss"]), b_metrics)
                             w_mult = float(s1.get("cal_weight", 1.0) or 1.0)
                             adj_qty = round(sizing["qty_coins"] * w_mult, 6)
+                            strat_code = str(s1.get("strategy_id", "S1_TREND_RETEST"))
                             r = self.bybit.place_order(
                                 s1["symbol"], side, "Limit", adj_qty,
                                 float(s1["entry_price"]), float(s1.get("take_profit") or s1["take_profit_2"]), float(s1["stop_loss"]),
-                                sizing["leverage"], False, strategy_id="BOOSTER:S1_TREND_RETEST",
+                                sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,
                                 signal_context={"features": s1.get("features", {}), "ml_score": s1.get("ml_win_probability"), "cal_weight": w_mult, "version": "intraday.2"}
                             )
                             if r.get("ok"):
@@ -804,8 +797,8 @@ class ControlCenterState:
                                 positions = self.bybit.get_positions()
                                 self.mark_position_source(s1["symbol"], "🚀 Booster A+")
                                 self.booster.register_booster_symbol(s1["symbol"])
-                                self.ml_calibrator.register_entry(s1["symbol"], "S1_TREND_RETEST")
-                                self.add_log("🚀 [Разгон S1 Retest] Выставлен лимит " + s1["symbol"] + " " + side + " qty=" + str(r.get("qty")))
+                                self.ml_calibrator.register_entry(s1["symbol"], strat_code)
+                                self.add_log("🚀 [Разгон " + strat_code + "] Выставлен PostOnly лимит " + s1["symbol"] + " " + side + " qty=" + str(r.get("qty")))
 
             if trade_core and not self.entry_paused.is_set():
                 positions = self.bybit.get_positions()
@@ -895,8 +888,8 @@ class ControlCenterState:
             "closed_pnl": closed_pnl[:100],
             "ws": ws_sum,
             "btc_regime": btc_reg,
-            "x_news": self.x_radar.refresh_feed(),
-            "ml_calibration": self.ml_calibrator.calibrate_from_closed_pnl(closed_pnl),
+            "x_news": self.x_radar.get_summary() if hasattr(self.x_radar, "get_summary") else {},
+            "ml_calibration": self.ml_calibrator.get_summary(),
             "regime_guard_config": {
                 "enabled": self.regime_guard.enabled,
                 "max_same_sector": self.regime_guard.max_same_sector,
