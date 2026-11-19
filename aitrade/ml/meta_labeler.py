@@ -206,12 +206,31 @@ class WalkForwardMetaLabeler:
     """
 
     MIN_CALIBRATION_SAMPLES = 100
+    WFA_VALIDATION_PATH: Optional[Any] = None
     WFA_APPROVED_STRATEGIES = {
         "S1_TREND_RETEST",
         "S3_VWAP_RANGE",
         "B1_SQUEEZE_BREAKOUT",
         "AUTOTRADE_MOMENTUM_FUNDING",
     }
+
+    @classmethod
+    def load_wfa_validation_status(cls, strategy_id: str) -> Optional[bool]:
+        """Читает сохранённый артефакт WFA (data/wfa_validation.json), если он существует."""
+        try:
+            from pathlib import Path
+            from aitrade.config import BASE_DIR
+
+            val_path = Path(cls.WFA_VALIDATION_PATH) if cls.WFA_VALIDATION_PATH is not None else (BASE_DIR / "data" / "wfa_validation.json")
+            if not val_path.exists():
+                return None
+            data = json.loads(val_path.read_text(encoding="utf-8"))
+            entry = (data.get("strategies") or {}).get(strategy_id)
+            if isinstance(entry, dict) and "wfe_passed" in entry:
+                return bool(entry["wfe_passed"])
+        except Exception:
+            pass
+        return None
 
     def __init__(self, settings: Dict[str, Any]) -> None:
         ml_cfg = settings.get("ml_filter", {})
@@ -559,18 +578,20 @@ class WalkForwardMetaLabeler:
         else:
             req_prob = self.min_win_prob
 
-        # Холодный старт (< 100 реальных сэмплов): честный статус WARMING_UP без фейковой вероятности
+        # Холодный старт (< 100 реальных сэмплов): честный статус WARMING_UP с проверкой артефакта WFA
         if len(X_train) < self.min_samples:
             emp_wr = round(sum(y_train) / len(y_train), 4) if y_train else 0.50
             exp_ret = round(
                 emp_wr * target_tp1_pct - (1.0 - emp_wr) * stop_pct - total_roundtrip_cost_pct, 3
             )
-            is_wfa_ok = (
-                wfa_validated
-                if wfa_validated is not None
-                else (signal.strategy_id in self.WFA_APPROVED_STRATEGIES)
-            )
-            signal.features["ml_calibration_status"] = "WARMING_UP"
+            wfa_artifact_ok = self.load_wfa_validation_status(signal.strategy_id)
+            if wfa_validated is not None:
+                is_wfa_ok = bool(wfa_validated)
+            elif wfa_artifact_ok is not None:
+                is_wfa_ok = bool(wfa_artifact_ok)
+            else:
+                is_wfa_ok = signal.strategy_id in self.WFA_APPROVED_STRATEGIES
+            signal.features["ml_calibration_status"] = "WARMING_UP" if is_wfa_ok else "WARMING_UP_BLOCKED_BY_WFA"
             signal.ml_win_probability = emp_wr
             signal.expected_return_pct = exp_ret
             signal.cost_threshold_pct = cost_threshold_pct

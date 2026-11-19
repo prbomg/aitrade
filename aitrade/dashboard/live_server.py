@@ -999,24 +999,39 @@ class ControlCenterState:
     def get_full_state(self) -> Dict[str, Any]:
         acct = self.bybit.get_account_summary()
         closed_pnl = self.bybit.get_closed_pnl()
-        positions = list(self.bybit.get_positions())
-        open_orders = list(self.bybit.get_open_orders())
+        positions = [dict(p, account="autotrade") for p in self.bybit.get_positions()]
+        open_orders = [dict(o, account="autotrade") for o in self.bybit.get_open_orders()]
         b_ctrl = getattr(self, "booster_bybit", self.bybit)
+        b_acct = None
         b_closed = b_ctrl.get_closed_pnl() if b_ctrl is not self.bybit else closed_pnl
-        b_positions = b_ctrl.get_positions() if b_ctrl is not self.bybit else positions
+        b_positions = [dict(p, account="booster") for p in b_ctrl.get_positions()] if b_ctrl is not self.bybit else positions
         if b_ctrl is not self.bybit:
+            try:
+                b_acct = b_ctrl.get_account_summary()
+            except Exception:
+                b_acct = None
             positions.extend(b_positions)
-            open_orders.extend(b_ctrl.get_open_orders())
+            open_orders.extend([dict(o, account="booster") for o in b_ctrl.get_open_orders()])
         ws_sum = self.ws_hub.get_summary()
         btc_reg = self.regime_guard.update_btc_regime(ws_sum)
 
         for p in positions:
             sym = p.get("symbol", "")
+            acc_id = p.get("account", "autotrade")
+            p_idx = int(p.get("positionIdx", 0) or 0)
             side = p.get("side", "Buy")
             avg_px = float(p.get("avgPrice", 0) or 0)
             cur_sl = float(p.get("stopLoss", 0) or 0)
             cur_trail = float(p.get("trailingStop", 0) or 0)
-            tp1_ord = next((o for o in open_orders if o.get("symbol") == sym and bool(o.get("reduceOnly"))), None)
+            tp1_ord = next((
+                o for o in open_orders
+                if o.get("account", "autotrade") == acc_id
+                and o.get("symbol") == sym
+                and int(o.get("positionIdx", 0) or 0) == p_idx
+                and bool(o.get("reduceOnly"))
+                and o.get("orderType") == "Limit"
+                and not str(o.get("stopOrderType") or "").strip()
+            ), None)
             p["tp1_order_price"] = tp1_ord.get("price", "") if tp1_ord else ""
             p["tp1_order_qty"] = tp1_ord.get("qty", "") if tp1_ord else ""
             p["is_breakeven"] = (side == "Buy" and cur_sl >= avg_px) or (side == "Sell" and 0 < cur_sl <= avg_px)
@@ -1041,6 +1056,7 @@ class ControlCenterState:
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "last_scan_ts": self.last_scan_ts,
             "account": acct,
+            "booster_account": b_acct,
             "env_status": self.env_manager.get_public_status(),
             "realized_pnl_recent": round(realized_sum, 2),
             "closed_trades_count": len(closed_pnl),
