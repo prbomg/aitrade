@@ -4,17 +4,19 @@
 Скрипт воспроизводимой WFA-валидации (180 дней, 6 пар) и MFE/MAE-диагностики выходов AItrade.
 Запуск на VPS:
     cd /opt/AItrade && sudo -u aitrade python3 -u scripts/run_wfa_research.py --save-validation
+    cd /opt/AItrade && sudo -u aitrade python3 -u scripts/run_wfa_research.py --momentum-only --save-validation
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from bisect import bisect_right
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -90,6 +92,36 @@ def eval_exit_policy(bt: WalkForwardBacktester, entries: List[Any], hold_bars: i
     return n, wr, pf, sum(rs) / n, mfes[n // 2], maes[n // 2], hit_12 / n * 100.0, hit_20 / n * 100.0, hit_30 / n * 100.0
 
 
+def _fmt_wfa_row(name: str, v: Dict[str, Any], elapsed_s: float) -> str:
+    o1, o2, mc = v["oos_summary"], v["oos_stress_2x"], v["monte_carlo"]
+    return (
+        f"{name:28s} | N={o1['total_trades']:3d} | WR={o1['win_rate_pct']:5.1f}% | PF={str(o1['profit_factor']):4s} | "
+        f"Net={o1['net_return_pct']:+6.1f}% | 1xR={o1['avg_r_multiple']:+.3f} | 2xR={o2['avg_r_multiple']:+.3f} | "
+        f"WFE={str(v.get('wfe')):5s}({str(v.get('wfe_passed')):5s}) | SR={str(o1['sharpe_ratio']):5s} | "
+        f"DSR={str(o1['deflated_sharpe_ratio']):6s} | DD={o1['max_drawdown_pct']:5.1f}% | MC95={mc['p95_max_dd_pct']:5.1f}% | {elapsed_s:.1f}s"
+    )
+
+
+def _merge_and_save_validation(days: int, strategies_updates: Dict[str, Any]) -> Path:
+    out_path = BASE_DIR / "data" / "wfa_validation.json"
+    existing: Dict[str, Any] = {}
+    if out_path.exists():
+        try:
+            existing = json.loads(out_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+    merged_strategies = dict(existing.get("strategies") or {})
+    merged_strategies.update(strategies_updates)
+    payload: Dict[str, Any] = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "days": days,
+        "symbols": DEFAULT_SYMBOLS,
+        "strategies": merged_strategies,
+    }
+    atomic_json(out_path, payload)
+    return out_path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=180)
@@ -97,6 +129,7 @@ def main() -> None:
     ap.add_argument("--mc", type=int, default=2000)
     ap.add_argument("--save-validation", action="store_true")
     ap.add_argument("--skip-wfa", action="store_true")
+    ap.add_argument("--momentum-only", action="store_true")
     args = ap.parse_args()
 
     bt = WalkForwardBacktester()
@@ -105,6 +138,62 @@ def main() -> None:
         t0 = time.time()
         candles[s] = bt.load_historical_klines(s, interval="15", days=args.days)
         print(f"[DATA] {s:8s}: {len(candles[s])} bars ({time.time() - t0:.1f}s)", flush=True)
+
+    funding_hist: Dict[str, List[Tuple[int, float]]] = {}
+    for s in DEFAULT_SYMBOLS:
+        t0 = time.time()
+        funding_hist[s] = bt.load_historical_funding(s, days=args.days)
+        print(f"[FUND] {s:8s}: {len(funding_hist[s])} rates ({time.time() - t0:.1f}s)", flush=True)
+
+    val_updates: Dict[str, Any] = {}
+
+    if args.momentum_only:
+        print(f"\n[WFA] {args.cycles}-цикловой Rolling WFA для AUTOTRADE_MOMENTUM_FUNDING ({args.days}д, {len(DEFAULT_SYMBOLS)} пар):", flush=True)
+        t0 = time.time()
+        v_base = bt.run_momentum_funding_wfa(
+            candles,
+            funding_history_by_symbol=funding_hist,
+            n_cycles=args.cycles,
+            n_trials=4,
+            mc_iterations=args.mc,
+            liquid_window_only=True,
+            hold_bars_override=None,
+        )
+        print(_fmt_wfa_row("AUTOTRADE_MOMENTUM (8h, Liq)", v_base, time.time() - t0), flush=True)
+        o1, o2 = v_base["oos_summary"], v_base["oos_stress_2x"]
+        val_updates["AUTOTRADE_MOMENTUM_FUNDING"] = {
+            "wfe": v_base.get("wfe"),
+            "wfe_passed": bool(v_base.get("wfe_passed", False)),
+            "oos_trades": o1["total_trades"],
+            "oos_avg_r": o1["avg_r_multiple"],
+            "oos_2x_avg_r": o2["avg_r_multiple"],
+            "oos_pf": o1["profit_factor"],
+        }
+
+        print("\n[DIAG] Чувствительность AUTOTRADE_MOMENTUM_FUNDING (hold / ликвидное окно):", flush=True)
+        for label, hold_h, liq in [
+            ("Momentum (18h, Liq 07-20)", 18, True),
+            ("Momentum (24h, Liq 07-20)", 24, True),
+            ("Momentum (8h,  24/7)     ", 8, False),
+            ("Momentum (18h, 24/7)     ", 18, False),
+            ("Momentum (24h, 24/7)     ", 24, False),
+        ]:
+            t0 = time.time()
+            v_alt = bt.run_momentum_funding_wfa(
+                candles,
+                funding_history_by_symbol=funding_hist,
+                n_cycles=args.cycles,
+                n_trials=4,
+                mc_iterations=args.mc,
+                liquid_window_only=liq,
+                hold_bars_override=hold_h,
+            )
+            print(_fmt_wfa_row(label, v_alt, time.time() - t0), flush=True)
+
+        if args.save_validation:
+            out_path = _merge_and_save_validation(args.days, val_updates)
+            print(f"\n[SAVED] {out_path}", flush=True)
+        return
 
     h1_map = {s: aggregate_1h(b) for s, b in candles.items()}
     h1_ts = {s: [int(x.timestamp) for x in b] for s, b in h1_map.items()}
@@ -123,12 +212,6 @@ def main() -> None:
 
     if not args.skip_wfa:
         print(f"\n[WFA] {args.cycles}-цикловой Rolling WFA ({args.days}д, {len(DEFAULT_SYMBOLS)} пар):", flush=True)
-        val_payload: Dict[str, Any] = {
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "days": args.days,
-            "symbols": DEFAULT_SYMBOLS,
-            "strategies": {},
-        }
         configs = [
             ("B1_SQUEEZE_BREAKOUT", dict(risk_per_trade_frac=0.04, max_total_risk_frac=0.07, max_leverage=5.0, max_positions=2, allow_compounding=True), fn_b1),
             ("S1_TREND_RETEST", dict(risk_per_trade_frac=0.04, max_total_risk_frac=0.07, max_leverage=5.0, max_positions=2, allow_compounding=True), fn_s1),
@@ -137,15 +220,9 @@ def main() -> None:
         for name, kw, fn in configs:
             t0 = time.time()
             v = bt.run_rolling_wfa(candles, strategy_fn=fn, n_cycles=args.cycles, n_trials=4, mc_iterations=args.mc, **kw)
-            o1, o2, mc = v["oos_summary"], v["oos_stress_2x"], v["monte_carlo"]
-            print(
-                f"{name:22s} | N={o1['total_trades']:3d} | WR={o1['win_rate_pct']:5.1f}% | PF={str(o1['profit_factor']):4s} | "
-                f"Net={o1['net_return_pct']:+6.1f}% | 1xR={o1['avg_r_multiple']:+.3f} | 2xR={o2['avg_r_multiple']:+.3f} | "
-                f"WFE={str(v.get('wfe')):5s}({str(v.get('wfe_passed')):5s}) | SR={str(o1['sharpe_ratio']):5s} | "
-                f"DSR={str(o1['deflated_sharpe_ratio']):6s} | DD={o1['max_drawdown_pct']:5.1f}% | MC95={mc['p95_max_dd_pct']:5.1f}% | {time.time()-t0:.1f}s",
-                flush=True,
-            )
-            val_payload["strategies"][name] = {
+            print(_fmt_wfa_row(name, v, time.time() - t0), flush=True)
+            o1, o2 = v["oos_summary"], v["oos_stress_2x"]
+            val_updates[name] = {
                 "wfe": v.get("wfe"),
                 "wfe_passed": bool(v.get("wfe_passed", False)),
                 "oos_trades": o1["total_trades"],
@@ -153,9 +230,29 @@ def main() -> None:
                 "oos_2x_avg_r": o2["avg_r_multiple"],
                 "oos_pf": o1["profit_factor"],
             }
+
+        t0 = time.time()
+        v_mom = bt.run_momentum_funding_wfa(
+            candles,
+            funding_history_by_symbol=funding_hist,
+            n_cycles=args.cycles,
+            n_trials=4,
+            mc_iterations=args.mc,
+            liquid_window_only=True,
+        )
+        print(_fmt_wfa_row("AUTOTRADE_MOMENTUM_FUNDING", v_mom, time.time() - t0), flush=True)
+        o1, o2 = v_mom["oos_summary"], v_mom["oos_stress_2x"]
+        val_updates["AUTOTRADE_MOMENTUM_FUNDING"] = {
+            "wfe": v_mom.get("wfe"),
+            "wfe_passed": bool(v_mom.get("wfe_passed", False)),
+            "oos_trades": o1["total_trades"],
+            "oos_avg_r": o1["avg_r_multiple"],
+            "oos_2x_avg_r": o2["avg_r_multiple"],
+            "oos_pf": o1["profit_factor"],
+        }
+
         if args.save_validation:
-            out_path = BASE_DIR / "data" / "wfa_validation.json"
-            atomic_json(out_path, val_payload)
+            out_path = _merge_and_save_validation(args.days, val_updates)
             print(f"\n[SAVED] {out_path}", flush=True)
 
     print("\n[MFE/MAE] Диагностика политик выхода (B1 и S1):", flush=True)

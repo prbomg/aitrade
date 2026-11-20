@@ -179,6 +179,20 @@ class WalkForwardBacktester:
         )
         return klines[:-1] if len(klines) > 1 else klines
 
+    def load_historical_funding(
+        self,
+        symbol: str,
+        days: int = 180,
+        end_ms: Optional[int] = None,
+    ) -> List[Tuple[int, float]]:
+        """Загружает историю ставок финансирования (8h) с пагинацией и локальным кэшем."""
+        return self.client.get_funding_history_paginated(
+            symbol,
+            days=days,
+            end_ms=end_ms,
+            cache_dir=self.cache_dir,
+        )
+
     def _resolve_trade(
         self,
         future_bars: List[Candle],
@@ -518,6 +532,119 @@ class WalkForwardBacktester:
             deflated_sharpe_ratio=dsr,
         )
 
+    def _evaluate_rolling_wfa_from_trades(
+        self,
+        all_1x: List[Tuple[int, float, float, str, int, str, float]],
+        all_2x: List[Tuple[int, float, float, str, int, str, float]],
+        min_ts: Optional[int],
+        max_ts: Optional[int],
+        n_cycles: int = 6,
+        is_ratio: float = 0.75,
+        n_trials: int = 1,
+        mc_iterations: int = 5000,
+        risk_per_trade_frac: float = 0.005,
+        max_total_risk_frac: float = 0.02,
+        max_leverage: float = 3.0,
+        max_positions: int = 3,
+        allow_compounding: bool = False,
+    ) -> Dict[str, Any]:
+        if min_ts is None or max_ts is None or max_ts <= min_ts:
+            return {
+                "status": "insufficient_data",
+                "n_cycles": n_cycles,
+                "is_ratio": is_ratio,
+                "n_trials": n_trials,
+                "cycles": [],
+                "wfe": None,
+                "wfe_passed": False,
+                "oos_summary": asdict(self._summarize("OOS (1x)", [])),
+                "oos_stress_2x": asdict(self._summarize("OOS (2x Stress)", [])),
+                "monte_carlo": run_monte_carlo_permutation([]),
+            }
+
+        total_span = max_ts - min_ts
+        oos_ratio = max(0.05, min(0.50, 1.0 - is_ratio))
+        window_span = total_span / (1.0 + max(0, n_cycles - 1) * oos_ratio)
+        is_span = window_span * is_ratio
+        oos_span = window_span * oos_ratio
+
+        cycles_out: List[Dict[str, Any]] = []
+        oos_trades_1x: List[Tuple[int, float, float, str, int, str, float]] = []
+        oos_trades_2x: List[Tuple[int, float, float, str, int, str, float]] = []
+        ann_is_list: List[float] = []
+        ann_oos_list: List[float] = []
+
+        is_days = max(1.0, is_span / 86_400_000.0)
+        oos_days = max(1.0, oos_span / 86_400_000.0)
+        p_kw = dict(
+            risk_per_trade_frac=risk_per_trade_frac,
+            max_total_risk_frac=max_total_risk_frac,
+            max_leverage=max_leverage,
+            max_positions=max_positions,
+            allow_compounding=allow_compounding,
+        )
+
+        for c in range(n_cycles):
+            w_start = int(min_ts + c * oos_span)
+            is_end = int(w_start + is_span)
+            oos_end = int(min(max_ts + 1, is_end + oos_span))
+
+            c_is = [t for t in all_1x if w_start <= t[0] < is_end]
+            c_oos = [t for t in all_1x if is_end <= t[0] < oos_end]
+            c_oos_2x = [t for t in all_2x if is_end <= t[0] < oos_end]
+
+            s_is = self._summarize(f"Cycle {c + 1} IS", c_is, n_trials=n_trials, **p_kw)
+            s_oos = self._summarize(f"Cycle {c + 1} OOS", c_oos, n_trials=n_trials, **p_kw)
+            ann_is = s_is.net_return_pct * (365.0 / is_days)
+            ann_oos = s_oos.net_return_pct * (365.0 / oos_days)
+            ann_is_list.append(ann_is)
+            ann_oos_list.append(ann_oos)
+            oos_trades_1x.extend(c_oos)
+            oos_trades_2x.extend(c_oos_2x)
+
+            cycles_out.append({
+                "cycle": c + 1,
+                "is_start_ms": w_start,
+                "is_end_ms": is_end,
+                "oos_end_ms": oos_end,
+                "is_trades": s_is.total_trades,
+                "oos_trades": s_oos.total_trades,
+                "is_return_pct": s_is.net_return_pct,
+                "oos_return_pct": s_oos.net_return_pct,
+                "oos_win_rate_pct": s_oos.win_rate_pct,
+                "oos_pf": s_oos.profit_factor,
+                "oos_avg_r": s_oos.avg_r_multiple,
+            })
+
+        mean_ann_is = sum(ann_is_list) / len(ann_is_list) if ann_is_list else 0.0
+        mean_ann_oos = sum(ann_oos_list) / len(ann_oos_list) if ann_oos_list else 0.0
+        wfe = round(mean_ann_oos / mean_ann_is, 3) if (mean_ann_is > 1e-6) else None
+
+        oos_summary = self._summarize("Rolling WFA OOS (1x)", oos_trades_1x, n_trials=n_trials, **p_kw)
+        oos_pnls, _, _, _ = self._portfolio(oos_trades_1x, **p_kw)
+        oos_stress_2x = self._summarize("Rolling WFA OOS (2x Stress)", oos_trades_2x, n_trials=n_trials, **p_kw)
+        mc = run_monte_carlo_permutation(oos_pnls, initial_equity=1000.0, iterations=mc_iterations)
+        wfe_ok = bool(
+            wfe is not None
+            and wfe >= 0.50
+            and oos_summary.net_return_pct > 0.0
+            and oos_summary.avg_r_multiple > 0.0
+            and oos_stress_2x.avg_r_multiple > 0.0
+        )
+
+        return {
+            "status": "ok",
+            "n_cycles": n_cycles,
+            "is_ratio": is_ratio,
+            "n_trials": n_trials,
+            "wfe": wfe,
+            "wfe_passed": wfe_ok,
+            "cycles": cycles_out,
+            "oos_summary": asdict(oos_summary),
+            "oos_stress_2x": asdict(oos_stress_2x),
+            "monte_carlo": mc,
+        }
+
     def run_rolling_wfa(
         self,
         candles_by_symbol: Dict[str, List[Candle]],
@@ -550,112 +677,145 @@ class WalkForwardBacktester:
             all_1x.extend(t1x)
             all_2x.extend(t2x)
 
-        if min_ts is None or max_ts is None or max_ts <= min_ts:
-            return {
-                "status": "insufficient_data",
-                "cycles": [],
-                "wfe": None,
-                "oos_summary": asdict(self._summarize("OOS (1x)", [])),
-                "oos_stress_2x": asdict(self._summarize("OOS (2x Stress)", [])),
-                "monte_carlo": run_monte_carlo_permutation([]),
-            }
-
-        total_span = max_ts - min_ts
-        # Rolling window geometry: window_span = IS + OOS, step = OOS
-        oos_ratio = max(0.05, min(0.50, 1.0 - is_ratio))
-        window_span = total_span / (1.0 + max(0, n_cycles - 1) * oos_ratio)
-        is_span = window_span * is_ratio
-        oos_span = window_span * oos_ratio
-
-        cycles_out: List[Dict[str, Any]] = []
-        oos_trades_1x: List[Tuple[int, float, float, str, int, str, float]] = []
-        oos_trades_2x: List[Tuple[int, float, float, str, int, str, float]] = []
-        ann_is_list: List[float] = []
-        ann_oos_list: List[float] = []
-
-        is_days = max(1.0, is_span / 86_400_000.0)
-        oos_days = max(1.0, oos_span / 86_400_000.0)
-
-        for c in range(n_cycles):
-            w_start = int(min_ts + c * oos_span)
-            is_end = int(w_start + is_span)
-            oos_end = int(min(max_ts + 1, is_end + oos_span))
-
-            c_is = [t for t in all_1x if w_start <= t[0] < is_end]
-            c_oos = [t for t in all_1x if is_end <= t[0] < oos_end]
-            c_oos_2x = [t for t in all_2x if is_end <= t[0] < oos_end]
-
-            p_kw = dict(
-                risk_per_trade_frac=risk_per_trade_frac,
-                max_total_risk_frac=max_total_risk_frac,
-                max_leverage=max_leverage,
-                max_positions=max_positions,
-                allow_compounding=allow_compounding,
-            )
-            s_is = self._summarize(f"Cycle {c + 1} IS", c_is, n_trials=n_trials, **p_kw)
-            s_oos = self._summarize(f"Cycle {c + 1} OOS", c_oos, n_trials=n_trials, **p_kw)
-            ann_is = s_is.net_return_pct * (365.0 / is_days)
-            ann_oos = s_oos.net_return_pct * (365.0 / oos_days)
-            ann_is_list.append(ann_is)
-            ann_oos_list.append(ann_oos)
-            oos_trades_1x.extend(c_oos)
-            oos_trades_2x.extend(c_oos_2x)
-
-            cycles_out.append({
-                "cycle": c + 1,
-                "is_start_ms": w_start,
-                "is_end_ms": is_end,
-                "oos_end_ms": oos_end,
-                "is_trades": s_is.total_trades,
-                "oos_trades": s_oos.total_trades,
-                "is_return_pct": s_is.net_return_pct,
-                "oos_return_pct": s_oos.net_return_pct,
-                "oos_win_rate_pct": s_oos.win_rate_pct,
-                "oos_pf": s_oos.profit_factor,
-                "oos_avg_r": s_oos.avg_r_multiple,
-            })
-
-        mean_ann_is = sum(ann_is_list) / len(ann_is_list) if ann_is_list else 0.0
-        mean_ann_oos = sum(ann_oos_list) / len(ann_oos_list) if ann_oos_list else 0.0
-        # WFE валиден только при положительной средней годовой доходности IS
-        wfe = round(mean_ann_oos / mean_ann_is, 3) if (mean_ann_is > 1e-6) else None
-
-        p_kw = dict(
+        return self._evaluate_rolling_wfa_from_trades(
+            all_1x,
+            all_2x,
+            min_ts,
+            max_ts,
+            n_cycles=n_cycles,
+            is_ratio=is_ratio,
+            n_trials=n_trials,
+            mc_iterations=mc_iterations,
             risk_per_trade_frac=risk_per_trade_frac,
             max_total_risk_frac=max_total_risk_frac,
             max_leverage=max_leverage,
             max_positions=max_positions,
             allow_compounding=allow_compounding,
         )
-        oos_summary = self._summarize("Rolling WFA OOS (1x)", oos_trades_1x, n_trials=n_trials, **p_kw)
-        oos_pnls, _, _, _ = self._portfolio(oos_trades_1x, **p_kw)
-        oos_stress_2x = self._summarize("Rolling WFA OOS (2x Stress)", oos_trades_2x, n_trials=n_trials, **p_kw)
-        mc = run_monte_carlo_permutation(oos_pnls, initial_equity=1000.0, iterations=mc_iterations)
-        wfe_ok = bool(
-            wfe is not None
-            and wfe >= 0.50
-            and oos_summary.net_return_pct > 0.0
-            and oos_summary.avg_r_multiple > 0.0
-            and oos_stress_2x.avg_r_multiple > 0.0
-        )
 
-        return {
-            "status": "ok",
-            "n_cycles": n_cycles,
-            "is_ratio": is_ratio,
-            "n_trials": n_trials,
-            "wfe": wfe,
-            "wfe_passed": wfe_ok,
-            "cycles": cycles_out,
-            "oos_summary": asdict(oos_summary),
-            "oos_stress_2x": asdict(oos_stress_2x),
-            "monte_carlo": mc,
+    def run_momentum_funding_wfa(
+        self,
+        candles_by_symbol: Dict[str, List[Candle]],
+        funding_history_by_symbol: Optional[Dict[str, List[Tuple[int, float]]]] = None,
+        n_cycles: int = 6,
+        is_ratio: float = 0.75,
+        n_trials: int = 4,
+        mc_iterations: int = 2000,
+        risk_per_trade_frac: float = 0.01,
+        max_total_risk_frac: float = 0.025,
+        max_leverage: float = 3.0,
+        max_positions: int = 3,
+        allow_compounding: bool = False,
+        liquid_window_only: bool = True,
+        rebalance_step_hours: int = 4,
+        top_n: int = 1,
+        min_mom_threshold: float = 0.8,
+        hold_bars_override: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Честный Rolling WFA для кросс-секционной стратегии AUTOTRADE_MOMENTUM_FUNDING:
+        - Выравнивание 1h баров строго по общему `timestamp` (без смещения индексов).
+        - Point-in-time подстановка исторической ставки фандинга (`ts <= bar_ts`) без заглядывания в будущее.
+        - Опциональная фильтрация по ликвидному окну Автотрейдинга (07:00–20:00 UTC).
+        - 6-цикловой Rolling WFA (WFE, 1x/2x Stress, Sharpe, DSR, MC P95 DD).
+        """
+        from bisect import bisect_right
+        from aitrade.engine import is_in_autotrade_liquid_window
+        from aitrade.strategies.momentum_funding import generate_momentum_funding_signals
+        from aitrade.strategies.regime_s1_s3 import aggregate_1h
+
+        h1_map: Dict[str, List[Candle]] = {}
+        for sym, bars in candles_by_symbol.items():
+            if len(bars) < 40:
+                continue
+            step_ms = (bars[1].timestamp - bars[0].timestamp) if len(bars) > 1 else 900_000
+            h1_bars = bars if step_ms >= 3_600_000 else aggregate_1h(bars)
+            if len(h1_bars) >= 40:
+                h1_map[sym] = h1_bars
+
+        if len(h1_map) < 2:
+            return self._evaluate_rolling_wfa_from_trades([], [], None, None, n_cycles=n_cycles, is_ratio=is_ratio, n_trials=n_trials, mc_iterations=mc_iterations)
+
+        ts_to_idx: Dict[str, Dict[int, int]] = {
+            sym: {int(b.timestamp): i for i, b in enumerate(bars)} for sym, bars in h1_map.items()
         }
+        common_ts = sorted(set.intersection(*(set(m.keys()) for m in ts_to_idx.values())))
+        hold_h = int(hold_bars_override if hold_bars_override is not None else 8)
+        if len(common_ts) < 40 + hold_h:
+            return self._evaluate_rolling_wfa_from_trades([], [], None, None, n_cycles=n_cycles, is_ratio=is_ratio, n_trials=n_trials, mc_iterations=mc_iterations)
+
+        fr_hist = funding_history_by_symbol or {}
+        fr_ts_map: Dict[str, List[int]] = {}
+        fr_val_map: Dict[str, List[float]] = {}
+        for sym in h1_map:
+            pts = sorted(fr_hist.get(sym, []), key=lambda x: int(x[0]))
+            fr_ts_map[sym] = [int(p[0]) for p in pts]
+            fr_val_map[sym] = [float(p[1]) for p in pts]
+
+        def _pit_funding(sym: str, ts_ms: int) -> float:
+            ts_arr = fr_ts_map.get(sym)
+            if not ts_arr:
+                return 0.0
+            pos = bisect_right(ts_arr, ts_ms) - 1
+            return fr_val_map[sym][pos] if pos >= 0 else 0.0
+
+        all_1x: List[Tuple[int, float, float, str, int, str, float]] = []
+        all_2x: List[Tuple[int, float, float, str, int, str, float]] = []
+        next_free_ts: Dict[str, int] = {}
+        step = max(1, int(rebalance_step_hours))
+
+        for k in range(30, len(common_ts) - hold_h - 2, step):
+            sig_ts = common_ts[k]
+            if liquid_window_only and not is_in_autotrade_liquid_window(sig_ts, self.settings):
+                continue
+            snap_1h: Dict[str, List[Candle]] = {}
+            pit_fr: Dict[str, float] = {}
+            for sym, bars in h1_map.items():
+                idx = ts_to_idx[sym][sig_ts]
+                if idx < 30:
+                    continue
+                snap_1h[sym] = bars[max(0, idx - 120) : idx]
+                pit_fr[sym] = _pit_funding(sym, sig_ts)
+            if len(snap_1h) < 2:
+                continue
+            sigs = generate_momentum_funding_signals(
+                snap_1h, pit_fr, top_n=top_n, min_mom_threshold=min_mom_threshold
+            )
+            for sig in sigs:
+                if sig_ts < next_free_ts.get(sig.symbol, 0):
+                    continue
+                if hold_bars_override is not None:
+                    sig.features["max_hold_bars"] = float(hold_bars_override)
+                sym_idx = ts_to_idx[sig.symbol][sig_ts]
+                t1 = self.replay_signal(h1_map[sig.symbol], sym_idx, sig, cost_multiplier=1.0)
+                if t1:
+                    t2 = self.replay_signal(h1_map[sig.symbol], sym_idx, sig, cost_multiplier=2.0)
+                    all_1x.append(t1)
+                    if t2:
+                        all_2x.append(t2)
+                    next_free_ts[sig.symbol] = int(t1[4])
+
+        return self._evaluate_rolling_wfa_from_trades(
+            all_1x,
+            all_2x,
+            common_ts[0],
+            common_ts[-1],
+            n_cycles=n_cycles,
+            is_ratio=is_ratio,
+            n_trials=n_trials,
+            mc_iterations=mc_iterations,
+            risk_per_trade_frac=risk_per_trade_frac,
+            max_total_risk_frac=max_total_risk_frac,
+            max_leverage=max_leverage,
+            max_positions=max_positions,
+            allow_compounding=allow_compounding,
+        )
 
     def run_multi_strategy_wfa(
         self,
         candles_by_symbol: Dict[str, List[Candle]],
         funding_rates: Optional[Dict[str, float]] = None,
+        funding_history_by_symbol: Optional[Dict[str, List[Tuple[int, float]]]] = None,
         n_cycles: int = 6,
         mc_iterations: int = 2000,
     ) -> Dict[str, Any]:
@@ -668,7 +828,6 @@ class WalkForwardBacktester:
         """
         from bisect import bisect_right
         from aitrade.strategies.booster_breakout import generate_booster_breakout_signal
-        from aitrade.strategies.momentum_funding import generate_momentum_funding_signals
         from aitrade.strategies.regime_s1_s3 import aggregate_1h
 
         fr_map = funding_rates or {}
@@ -702,30 +861,26 @@ class WalkForwardBacktester:
             )
             return sig if (sig and sig.strategy_id == "S3_VWAP_RANGE") else None
 
-        mom_1x: List[Tuple[int, float, float, str, int, str, float]] = []
-        mom_2x: List[Tuple[int, float, float, str, int, str, float]] = []
-        if len(h1_map) >= 2:
-            min_len = min(len(v) for v in h1_map.values())
-            for idx in range(30, min_len - 10, 4):
-                snap = {s: bars[max(0, idx - 120):idx] for s, bars in h1_map.items()}
-                sigs = generate_momentum_funding_signals(snap, fr_map, top_n=1)
-                for sig in sigs:
-                    t1 = self.replay_signal(h1_map[sig.symbol], idx, sig, cost_multiplier=1.0)
-                    t2 = self.replay_signal(h1_map[sig.symbol], idx, sig, cost_multiplier=2.0)
-                    if t1:
-                        mom_1x.append(t1)
-                    if t2:
-                        mom_2x.append(t2)
+        fr_hist = funding_history_by_symbol
+        if fr_hist is None and fr_map:
+            fr_hist = {sym: [(0, float(rate))] for sym, rate in fr_map.items()}
 
         return {
             "B1_SQUEEZE_BREAKOUT": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_b1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04, max_total_risk_frac=0.07, max_leverage=5.0, max_positions=2, allow_compounding=True),
             "S1_TREND_RETEST": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s1, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.04, max_total_risk_frac=0.07, max_leverage=5.0, max_positions=2, allow_compounding=True),
             "S3_VWAP_RANGE": self.run_rolling_wfa(candles_by_symbol, strategy_fn=fn_s3, n_cycles=n_cycles, n_trials=4, mc_iterations=mc_iterations, risk_per_trade_frac=0.01, max_total_risk_frac=0.025, max_leverage=3.0, max_positions=3, allow_compounding=False),
-            "AUTOTRADE_MOMENTUM_FUNDING": {
-                "status": "ok",
-                "oos_summary": asdict(self._summarize("Momentum+Funding (1x)", mom_1x, n_trials=4, risk_per_trade_frac=0.01)),
-                "oos_stress_2x": asdict(self._summarize("Momentum+Funding (2x Stress)", mom_2x, n_trials=4, risk_per_trade_frac=0.01)),
-            },
+            "AUTOTRADE_MOMENTUM_FUNDING": self.run_momentum_funding_wfa(
+                candles_by_symbol,
+                funding_history_by_symbol=fr_hist,
+                n_cycles=n_cycles,
+                n_trials=4,
+                mc_iterations=mc_iterations,
+                risk_per_trade_frac=0.01,
+                max_total_risk_frac=0.025,
+                max_leverage=3.0,
+                max_positions=3,
+                allow_compounding=False,
+            ),
         }
 
     def run_comparison_backtest(

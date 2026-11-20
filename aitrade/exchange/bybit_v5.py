@@ -427,6 +427,84 @@ class BybitV5Client:
                 return []
             return [0.0001] * min(limit, 9)
 
+    def get_funding_history_paginated(
+        self,
+        symbol: str,
+        days: int = 180,
+        end_ms: Optional[int] = None,
+        cache_dir: Optional[Any] = None,
+        max_pages: int = 12,
+    ) -> List[Tuple[int, float]]:
+        """
+        Загружает многомесячную историю ставок финансирования Bybit V5 (/v5/market/funding/history)
+        с пагинацией по `endTime` и локальным кэшем `data/candles_cache/{symbol}_funding_{days}d.json`.
+        Возвращает хронологический список `(fundingRateTimestamp_ms, fundingRate)`.
+        """
+        from pathlib import Path
+        from aitrade.storage import atomic_json
+
+        now_ms = int(end_ms if end_ms is not None else time.time() * 1000)
+        start_cutoff = now_ms - int(days * 86_400_000)
+        eight_h_ms = 8 * 3_600_000
+
+        cache_file: Optional[Path] = None
+        by_ts: Dict[int, float] = {}
+        if cache_dir is not None:
+            cdir = Path(cache_dir)
+            cdir.mkdir(parents=True, exist_ok=True)
+            cache_file = cdir / f"{symbol}_funding_{days}d.json"
+            if cache_file.exists():
+                try:
+                    cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                    for row in cached:
+                        if isinstance(row, (list, tuple)) and len(row) >= 2:
+                            by_ts[int(row[0])] = float(row[1])
+                except Exception:
+                    by_ts.clear()
+
+        if by_ts:
+            min_cached = min(by_ts.keys())
+            max_cached = max(by_ts.keys())
+            if min_cached <= start_cutoff + 86_400_000 and (now_ms - max_cached) <= 2 * eight_h_ms:
+                return [(ts, by_ts[ts]) for ts in sorted(by_ts.keys()) if ts >= start_cutoff - 2 * eight_h_ms]
+
+        cursor_end = now_ms
+        pages = 0
+        while pages < max_pages:
+            params: Dict[str, Any] = {
+                "category": self.category,
+                "symbol": symbol,
+                "limit": 200,
+                "endTime": int(cursor_end),
+            }
+            try:
+                res = self._public_get("/v5/market/funding/history", params)
+                rows = res.get("list", [])
+            except Exception:
+                if not self.allow_offline_fallback:
+                    raise
+                break
+            if not rows:
+                break
+            prev_len = len(by_ts)
+            oldest_ts: Optional[int] = None
+            for r in rows:
+                ts_val = int(r.get("fundingRateTimestamp", 0) or 0)
+                if ts_val <= 0:
+                    continue
+                fr_val = float(r.get("fundingRate", 0.0) or 0.0)
+                by_ts[ts_val] = fr_val
+                oldest_ts = ts_val if oldest_ts is None else min(oldest_ts, ts_val)
+            pages += 1
+            if oldest_ts is None or oldest_ts <= start_cutoff - eight_h_ms or len(by_ts) == prev_len or len(rows) < 200:
+                break
+            cursor_end = oldest_ts - 1
+
+        ordered = [(ts, by_ts[ts]) for ts in sorted(by_ts.keys()) if ts >= start_cutoff - 2 * eight_h_ms]
+        if cache_file is not None and ordered:
+            atomic_json(cache_file, [[ts, rate] for ts, rate in ordered])
+        return ordered
+
     # -------------------------------------------------------------------------
     # Приватные методы Bybit Unified Demo Trading (https://api-demo.bybit.com)
     # -------------------------------------------------------------------------
