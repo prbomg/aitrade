@@ -453,8 +453,9 @@ class WalkForwardBacktester:
             settle(t[0])
             symbol = t[5] if len(t) > 5 and t[5] else str(index)
             stop = t[6] if len(t) > 6 else 0.0055
+            size_mult = float(t[7]) if len(t) > 7 and t[7] is not None else 1.0
             cap_base = max(0.0, equity) if allow_compounding else min(initial_equity, max(0.0, equity))
-            budget = cap_base * risk_per_trade_frac
+            budget = cap_base * risk_per_trade_frac * max(0.25, min(2.0, size_mult))
             notional = budget / (stop + 0.0054)
             if (
                 len(active) >= max_positions
@@ -810,6 +811,255 @@ class WalkForwardBacktester:
             max_positions=max_positions,
             allow_compounding=allow_compounding,
         )
+
+    def run_donchian_tsmom_wfa(
+        self,
+        candles_by_symbol: Dict[str, List[Candle]],
+        funding_history_by_symbol: Optional[Dict[str, List[Tuple[int, float]]]] = None,
+        n_cycles: int = 6,
+        is_ratio: float = 0.75,
+        n_trials: int = 4,
+        mc_iterations: int = 2000,
+        horizons: Tuple[int, ...] = (20, 40, 80),
+        max_hold_bars: int = 30,
+        use_vol_targeting: bool = True,
+        target_ann_vol: float = 0.25,
+        risk_per_trade_frac: float = 0.015,
+        max_total_risk_frac: float = 0.06,
+        max_leverage: float = 3.0,
+        max_positions: int = 4,
+        allow_compounding: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        6-цикловой Rolling WFA для тренд-фолловинг ансамбля T1_DONCHIAN_TSMOM на 4h барах
+        с point-in-time фандингом и опциональным Volatility Targeting.
+        """
+        from bisect import bisect_right
+        from aitrade.strategies.donchian_tsmom import aggregate_4h, generate_donchian_tsmom_signal
+
+        fr_hist = funding_history_by_symbol or {}
+        fr_ts_map: Dict[str, List[int]] = {}
+        fr_val_map: Dict[str, List[float]] = {}
+        for sym in candles_by_symbol:
+            pts = sorted(fr_hist.get(sym, []), key=lambda x: int(x[0]))
+            fr_ts_map[sym] = [int(p[0]) for p in pts]
+            fr_val_map[sym] = [float(p[1]) for p in pts]
+
+        def _pit_fr(sym: str, ts_ms: int) -> float:
+            arr = fr_ts_map.get(sym)
+            if not arr:
+                return 0.0
+            pos = bisect_right(arr, ts_ms) - 1
+            return fr_val_map[sym][pos] if pos >= 0 else 0.0
+
+        all_1x: List[Tuple[Any, ...]] = []
+        all_2x: List[Tuple[Any, ...]] = []
+        min_ts: Optional[int] = None
+        max_ts: Optional[int] = None
+        warmup = max(horizons) + 10 if horizons else 90
+
+        for sym, raw_bars in candles_by_symbol.items():
+            h4_bars = aggregate_4h(raw_bars)
+            if len(h4_bars) < warmup + max_hold_bars + 5:
+                continue
+            min_ts = h4_bars[0].timestamp if min_ts is None else min(min_ts, h4_bars[0].timestamp)
+            max_ts = h4_bars[-1].timestamp if max_ts is None else max(max_ts, h4_bars[-1].timestamp)
+
+            i = warmup
+            n_bars = len(h4_bars)
+            while i < n_bars - max_hold_bars - 1:
+                hist = h4_bars[max(0, i - 160) : i]
+                fr = _pit_fr(sym, int(hist[-1].timestamp))
+                sig = generate_donchian_tsmom_signal(
+                    sym,
+                    hist,
+                    reference_open_px=h4_bars[i].open,
+                    funding_rate=fr,
+                    horizons=horizons,
+                    target_ann_vol=target_ann_vol,
+                    max_hold_bars=max_hold_bars,
+                )
+                if sig is not None:
+                    t1 = self.replay_signal(h4_bars, i, sig, cost_multiplier=1.0)
+                    if t1 is not None:
+                        t2 = self.replay_signal(h4_bars, i, sig, cost_multiplier=2.0)
+                        mult = float(sig.features.get("vol_scale", 1.0)) if use_vol_targeting else 1.0
+                        all_1x.append(tuple(list(t1) + [mult]))
+                        if t2 is not None:
+                            all_2x.append(tuple(list(t2) + [mult]))
+                        while i < n_bars and h4_bars[i].timestamp < t1[4]:
+                            i += 1
+                        continue
+                i += 1
+
+        return self._evaluate_rolling_wfa_from_trades(
+            all_1x,
+            all_2x,
+            min_ts,
+            max_ts,
+            n_cycles=n_cycles,
+            is_ratio=is_ratio,
+            n_trials=n_trials,
+            mc_iterations=mc_iterations,
+            risk_per_trade_frac=risk_per_trade_frac,
+            max_total_risk_frac=max_total_risk_frac,
+            max_leverage=max_leverage,
+            max_positions=max_positions,
+            allow_compounding=allow_compounding,
+        )
+
+    def run_funding_carry_backtest(
+        self,
+        funding_history_by_symbol: Dict[str, List[Tuple[int, float]]],
+        leverage: float = 1.5,
+        maker_round_trip_cost: float = 0.0008,
+        entry_threshold_8h: float = 0.00025,
+        exit_threshold_8h: float = 0.00005,
+        min_intervals: int = 9,
+        max_concurrent_pairs: int = 4,
+        initial_equity: float = 1000.0,
+    ) -> Dict[str, Any]:
+        """
+        180-дневный point-in-time бэктест дельта-нейтрального Funding Carry (Long Spot + Short Perp)
+        на реальной 8h истории фандинга Bybit с учётом 1x и 2x Maker-издержек.
+        """
+        from aitrade.strategies.funding_carry import FundingCarryEngine
+
+        engine = FundingCarryEngine()
+        engine.MIN_ENTRY_FUNDING_8H = float(entry_threshold_8h)
+        engine.EXIT_FUNDING_8H = float(exit_threshold_8h)
+        engine.MIN_INTERVALS = int(min_intervals)
+        engine.ROUND_TRIP_MAKER_COST = float(maker_round_trip_cost)
+
+        sym_map: Dict[str, Dict[int, float]] = {}
+        all_ts_set = set()
+        for sym, pts in funding_history_by_symbol.items():
+            if not pts:
+                continue
+            d = {int(ts): float(r) for ts, r in pts}
+            sym_map[sym] = d
+            all_ts_set.update(d.keys())
+
+        timeline = sorted(all_ts_set)
+        if len(timeline) < min_intervals + 2:
+            return {
+                "total_trades": 0,
+                "win_rate_pct": 0.0,
+                "net_return_1x_pct": 0.0,
+                "net_return_2x_pct": 0.0,
+                "apr_1x_pct": 0.0,
+                "avg_hold_days": 0.0,
+                "max_drawdown_pct": 0.0,
+                "sharpe_ratio": None,
+            }
+
+        safe_lev = max(1.0, min(2.0, float(leverage)))
+        # Капитал делится между max_concurrent_pairs слотами; плечо 1.5x на ноге перпа -> номинал = slot * (lev / (1 + 0.5))
+        slot_notional = (initial_equity / max(1, max_concurrent_pairs)) * (safe_lev / 1.5)
+
+        hist_buf: Dict[str, List[float]] = {s: [] for s in sym_map}
+        open_pos: Dict[str, Dict[str, float]] = {}
+        closed_trades_1x: List[float] = []
+        closed_trades_2x: List[float] = []
+        hold_intervals: List[int] = []
+        daily_pnl_1x: Dict[int, float] = {}
+        eq_1x = initial_equity
+        eq_2x = initial_equity
+        peak_1x = eq_1x
+        max_dd_1x = 0.0
+
+        for ts in timeline:
+            day_k = int(ts // 86_400_000)
+            for sym, ts_dict in sym_map.items():
+                if ts not in ts_dict:
+                    continue
+                fr = ts_dict[ts]
+                hist_buf[sym].append(fr)
+
+                # 1) Начисление фандинга по уже открытой позиции
+                if sym in open_pos:
+                    pos = open_pos[sym]
+                    carry_usd = pos["notional"] * fr
+                    pos["accrued_1x"] += carry_usd
+                    pos["accrued_2x"] += carry_usd
+                    pos["bars"] += 1
+                    eq_1x += carry_usd
+                    eq_2x += carry_usd
+                    daily_pnl_1x[day_k] = daily_pnl_1x.get(day_k, 0.0) + carry_usd
+
+                # 2) Оценка сигнала по закрытой истории до текущего ts включительно
+                opp = engine.evaluate_pair(
+                    sym, hist_buf[sym], spot_price=100.0, perp_price=100.0, has_open_carry=(sym in open_pos), leverage=safe_lev
+                )
+                if sym in open_pos and opp.action == "CLOSE_CARRY":
+                    pos = open_pos.pop(sym)
+                    exit_fee_1x = pos["notional"] * (0.5 * maker_round_trip_cost)
+                    exit_fee_2x = pos["notional"] * (1.0 * maker_round_trip_cost)
+                    eq_1x -= exit_fee_1x
+                    eq_2x -= exit_fee_2x
+                    daily_pnl_1x[day_k] = daily_pnl_1x.get(day_k, 0.0) - exit_fee_1x
+                    closed_trades_1x.append(pos["accrued_1x"] - exit_fee_1x)
+                    closed_trades_2x.append(pos["accrued_2x"] - exit_fee_2x)
+                    hold_intervals.append(int(pos["bars"]))
+                elif sym not in open_pos and opp.action == "OPEN_CARRY" and len(open_pos) < max_concurrent_pairs:
+                    entry_fee_1x = slot_notional * (0.5 * maker_round_trip_cost)
+                    entry_fee_2x = slot_notional * (1.0 * maker_round_trip_cost)
+                    eq_1x -= entry_fee_1x
+                    eq_2x -= entry_fee_2x
+                    daily_pnl_1x[day_k] = daily_pnl_1x.get(day_k, 0.0) - entry_fee_1x
+                    open_pos[sym] = {
+                        "notional": slot_notional,
+                        "accrued_1x": -entry_fee_1x,
+                        "accrued_2x": -entry_fee_2x,
+                        "bars": 0,
+                    }
+
+            if eq_1x > peak_1x:
+                peak_1x = eq_1x
+            if peak_1x > 0:
+                max_dd_1x = max(max_dd_1x, (peak_1x - eq_1x) / peak_1x * 100.0)
+
+        # Закрытие остаточных позиций в конце периода
+        last_day = int(timeline[-1] // 86_400_000)
+        for sym, pos in list(open_pos.items()):
+            exit_fee_1x = pos["notional"] * (0.5 * maker_round_trip_cost)
+            exit_fee_2x = pos["notional"] * (1.0 * maker_round_trip_cost)
+            eq_1x -= exit_fee_1x
+            eq_2x -= exit_fee_2x
+            daily_pnl_1x[last_day] = daily_pnl_1x.get(last_day, 0.0) - exit_fee_1x
+            closed_trades_1x.append(pos["accrued_1x"] - exit_fee_1x)
+            closed_trades_2x.append(pos["accrued_2x"] - exit_fee_2x)
+            hold_intervals.append(int(pos["bars"]))
+
+        span_days = max(1.0, (timeline[-1] - timeline[0]) / 86_400_000.0)
+        net_1x_pct = (eq_1x / initial_equity - 1.0) * 100.0
+        net_2x_pct = (eq_2x / initial_equity - 1.0) * 100.0
+        apr_1x = net_1x_pct * (365.0 / span_days)
+        n_tr = len(closed_trades_1x)
+        wr = (sum(1 for x in closed_trades_1x if x > 0) / n_tr * 100.0) if n_tr > 0 else 0.0
+        avg_hold_d = ((sum(hold_intervals) / n_tr) * 8.0 / 24.0) if n_tr > 0 else 0.0
+
+        daily_rets: List[float] = []
+        if daily_pnl_1x:
+            d0, d1 = min(daily_pnl_1x.keys()), max(daily_pnl_1x.keys())
+            cur_eq = initial_equity
+            for d in range(d0, d1 + 1):
+                p = daily_pnl_1x.get(d, 0.0)
+                if cur_eq > 0:
+                    daily_rets.append(p / cur_eq)
+                cur_eq += p
+        sr, _ = compute_daily_sharpe_and_dsr(daily_rets, n_trials=1)
+
+        return {
+            "total_trades": n_tr,
+            "win_rate_pct": round(wr, 2),
+            "net_return_1x_pct": round(net_1x_pct, 2),
+            "net_return_2x_pct": round(net_2x_pct, 2),
+            "apr_1x_pct": round(apr_1x, 2),
+            "avg_hold_days": round(avg_hold_d, 2),
+            "max_drawdown_pct": round(max_dd_1x, 2),
+            "sharpe_ratio": sr,
+        }
 
     def run_multi_strategy_wfa(
         self,
