@@ -197,8 +197,9 @@ class SmartPositionManager:
                     record["initial_sl"]=float(intent.get("sl") or sl)
                 init_sl=float(record.get("initial_sl") or sl)
                 risk_pct=(abs(avg-init_sl)/avg)*100.0 if (avg>0 and init_sl>0) else self.breakeven_trigger_pct
-                be_trigger=max(self.breakeven_trigger_pct,risk_pct*(1.2 if is_s1 else 1.0))
-                if not is_s3 and move>=be_trigger:
+                be_trigger=max(self.breakeven_trigger_pct,risk_pct*1.0)
+                # S1/B1 и S3 работают по чистому SL/TP без раннего БУ/трейлинга (1:1 с WFA MFE/MAE)
+                if not (is_s3 or is_s1) and move>=be_trigger:
                     if not be:
                         self.move_sl_to_breakeven(sym,side,avg,idx);actions.append({"ok":True,"symbol":sym,"action":"BREAKEVEN"})
                     atr15_raw=float(((intent.get("signal_context") or {}).get("features") or {}).get("atr15") or 0.0)

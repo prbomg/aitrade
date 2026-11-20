@@ -103,7 +103,7 @@ class Stage3MlAndCalibratorTests(unittest.TestCase):
 
             # 3) Через 48ч + 1 сек -> автовыход в COOLING (0.50x)
             cal.calibrate_from_closed_pnl(bad_25, force=False, now_ts=now + 48 * 3600 + 10)
-            mod_exit = cal.get_strategy_modifier("S1_TREND_RETEST")
+            mod_exit = cal.get_strategy_modifier("S1_TREND_RETEST", session_utc="EUROPE")
             self.assertEqual(mod_exit["status"], "COOLING")
             self.assertEqual(mod_exit["weight"], 0.50)
 

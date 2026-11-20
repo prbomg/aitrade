@@ -316,9 +316,7 @@ class WalkForwardBacktester:
         is_post_only = bool(sig.features.get("post_only", False))
         entry_cost = (self.maker_fee if is_post_only else (self.taker_fee + self.base_slippage)) * cost_multiplier
         exit_cost = (self.taker_fee + self.base_slippage) * cost_multiplier
-        atr15_val = float((sig.features or {}).get("atr15", 0.0) or 0.0)
-        atr15_frac = (atr15_val / sig.entry_price) if (atr15_val > 0 and sig.entry_price > 0) else 0.0
-        trail_f = max(0.015, 1.8 * atr15_frac) if is_booster_trend else 0.0085
+        # Pure SL/TP для B1/S1 (без раннего БУ/трейлинга, 1:1 с SmartPositionManager по данным MFE/MAE)
         net, r, used = self._resolve_trade(
             bars,
             sig.side,
@@ -328,10 +326,7 @@ class WalkForwardBacktester:
             entry_cost,
             exit_cost,
             exit_cost,
-            is_booster_trend,
-            be_trigger_r=1.2 if is_booster_trend else 1.0,
-            trail_trigger_r=1.8 if is_booster_trend else 1.5,
-            trail_frac=trail_f,
+            False,
         )
         step_ms = (candles[1].timestamp - candles[0].timestamp) if len(candles) > 1 else 900000
         return (

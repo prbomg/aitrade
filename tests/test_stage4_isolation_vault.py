@@ -66,13 +66,13 @@ class Stage4IsolationAndVaultTests(unittest.TestCase):
             self.assertEqual(sp.signed_post.call_args.args[0], "/v5/position/switch-isolated")
             self.assertEqual(sp.signed_post.call_args.args[1]["tradeMode"], 1)
 
-            # Проверяем волатильностный трейлинг 1.8 * ATR15 после +1.8R для B1_SQUEEZE_BREAKOUT
+            # 1) B1_SQUEEZE_BREAKOUT работает по чистому SL/TP (без раннего БУ и трейлинга)
             sp.ledger = NS(
                 active_intent=lambda *a: {
                     "intent_id": "b1-entry",
                     "strategy_id": "BOOSTER:B1_SQUEEZE_BREAKOUT",
-                    "sl": 98.0,  # 1R = 2%
-                    "signal_context": {"features": {"atr15": 1.2}},  # ATR15 = 1.2% -> 1.8*ATR = 2.16%
+                    "sl": 98.0,
+                    "signal_context": {"features": {"atr15": 1.2}},
                 }
             )
             pos = {
@@ -81,7 +81,7 @@ class Stage4IsolationAndVaultTests(unittest.TestCase):
                 "positionIdx": 0,
                 "size": "10",
                 "avgPrice": "100",
-                "markPrice": "103.8",  # +1.9R >= +1.8R
+                "markPrice": "103.8",
                 "stopLoss": "98",
                 "takeProfit": "107",
                 "trailingStop": "0",
@@ -90,6 +90,19 @@ class Stage4IsolationAndVaultTests(unittest.TestCase):
             sp.move_sl_to_breakeven = Mock(return_value={"ok": True})
             sp.activate_trailing_stop = Mock(return_value={"ok": True})
 
+            sp.audit_and_protect_open_positions()
+            sp.move_sl_to_breakeven.assert_not_called()
+            sp.activate_trailing_stop.assert_not_called()
+
+            # 2) Прочие BOOSTER:MANUAL сохраняют волатильностный трейлинг 1.8 * ATR15 после +1.8R
+            sp.ledger = NS(
+                active_intent=lambda *a: {
+                    "intent_id": "b-manual",
+                    "strategy_id": "BOOSTER:MANUAL",
+                    "sl": 98.0,
+                    "signal_context": {"features": {"atr15": 1.2}},
+                }
+            )
             sp.audit_and_protect_open_positions()
             sp.move_sl_to_breakeven.assert_called_once()
             sp.activate_trailing_stop.assert_called_once()

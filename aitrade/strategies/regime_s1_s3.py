@@ -169,7 +169,7 @@ def generate_s1_s3_signal(
             "hurst_1h": decision.hurst,
             "post_only": 1.0,
             "retest_ttl_bars": 3.0,
-            "max_hold_bars": 24.0,
+            "max_hold_bars": 72.0,
         })
 
         return TradeSignal(
@@ -185,7 +185,7 @@ def generate_s1_s3_signal(
             take_profit_2=tp2,
             base_winrate_est=0.45,
             rationale=[f"1h={regime}", f"ADX={decision.adx_14:.1f}", "PostOnly Retest Limit"],
-            invalidation_rule="SL >= 1.0-1.2% / 1.5*ATR; БУ после +1.2R; трейлинг после +1.8R; max_hold=24 бара",
+            invalidation_rule="Pure SL/TP (без раннего БУ/трейлинга): SL >= 1.0-1.2% / 1.5*ATR; TP2=+3.0R; max_hold=72 бара (18ч)",
             features=feats,
         )
 

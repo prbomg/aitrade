@@ -300,7 +300,7 @@ class BybitV5DirectController:
             if totalrisk>capital*total_risk_cap:raise ValueError(f'Совокупный риск выше {int(total_risk_cap*100)}%')
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
-            hold_min=480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (360 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))
+            hold_min=1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))
             _rm=getattr(owner,'release_manifest',None)
             rel_ver=_rm.get('version','2026.11.19-intraday.8') if isinstance(_rm,dict) else '2026.11.19-intraday.8'
             self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
@@ -649,8 +649,8 @@ class ControlCenterState:
             strat_s = str(p.get("strategy_id") or "")
             hold = plan.get(
                 "max_hold_minutes",
-                480 if "AUTOTRADE_MOMENTUM_FUNDING" in strat_s else (
-                    360 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")) else (
+                1080 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")) else (
+                    480 if "AUTOTRADE_MOMENTUM_FUNDING" in strat_s else (
                         240 if "S3_VWAP_RANGE" in strat_s else (180 if strat_s.startswith("BOOSTER") else 0)
                     )
                 ),

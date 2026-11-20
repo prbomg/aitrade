@@ -119,7 +119,7 @@ def generate_booster_breakout_signal(
         "funding_rate": float(funding_rate or 0.0),
         "post_only": 1.0,
         "retest_ttl_bars": 3.0,
-        "max_hold_bars": 24.0,
+        "max_hold_bars": 72.0,
     })
 
     return TradeSignal(
@@ -140,6 +140,6 @@ def generate_booster_breakout_signal(
             f"RVOL={rvol:.2f}",
             "Supertrend aligned",
         ],
-        invalidation_rule="SL >= 1.0-1.5% / 1.5*ATR; БУ +1.2R; волатильностный трейлинг 1.8*ATR после +1.8R",
+        invalidation_rule="Pure SL/TP (без раннего БУ/трейлинга): SL >= 1.0-1.5% / 1.5*ATR; TP2=+3.2R; max_hold=72 бара (18ч)",
         features=feats,
     )
