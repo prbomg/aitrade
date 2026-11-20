@@ -130,22 +130,59 @@ def main() -> None:
     ap.add_argument("--save-validation", action="store_true")
     ap.add_argument("--skip-wfa", action="store_true")
     ap.add_argument("--momentum-only", action="store_true")
+    ap.add_argument("--t1-only", action="store_true")
     args = ap.parse_args()
 
-    bt = WalkForwardBacktester()
+    from aitrade.config import load_settings
+    settings = load_settings()
+    bt = WalkForwardBacktester(settings)
+    target_syms = list(settings["universe"]["autotrade_pairs"][:12]) if args.t1_only else DEFAULT_SYMBOLS
     candles: Dict[str, List[Any]] = {}
-    for s in DEFAULT_SYMBOLS:
+    for s in target_syms:
         t0 = time.time()
         candles[s] = bt.load_historical_klines(s, interval="15", days=args.days)
         print(f"[DATA] {s:8s}: {len(candles[s])} bars ({time.time() - t0:.1f}s)", flush=True)
 
     funding_hist: Dict[str, List[Tuple[int, float]]] = {}
-    for s in DEFAULT_SYMBOLS:
+    for s in target_syms:
         t0 = time.time()
         funding_hist[s] = bt.load_historical_funding(s, days=args.days)
         print(f"[FUND] {s:8s}: {len(funding_hist[s])} rates ({time.time() - t0:.1f}s)", flush=True)
 
     val_updates: Dict[str, Any] = {}
+
+    if args.t1_only:
+        print(f"\n[WFA] {args.cycles}-цикловой Rolling WFA для T1_DONCHIAN_TSMOM ({args.days}д, {len(target_syms)} пар):", flush=True)
+        t0 = time.time()
+        v_t1 = bt.run_donchian_tsmom_wfa(
+            candles,
+            funding_history_by_symbol=funding_hist,
+            n_cycles=args.cycles,
+            n_trials=4,
+            mc_iterations=args.mc,
+            horizons=(20, 40, 80),
+            max_hold_bars=30,
+            use_vol_targeting=True,
+            risk_per_trade_frac=0.015,
+            max_total_risk_frac=0.06,
+            max_leverage=3.0,
+            max_positions=4,
+            allow_compounding=False,
+        )
+        print(_fmt_wfa_row("T1_DONCHIAN_TSMOM (Vol 12p)", v_t1, time.time() - t0), flush=True)
+        o1, o2 = v_t1["oos_summary"], v_t1["oos_stress_2x"]
+        val_updates["T1_DONCHIAN_TSMOM"] = {
+            "wfe": v_t1.get("wfe"),
+            "wfe_passed": bool(v_t1.get("wfe_passed", False)),
+            "oos_trades": o1["total_trades"],
+            "oos_avg_r": o1["avg_r_multiple"],
+            "oos_2x_avg_r": o2["avg_r_multiple"],
+            "oos_pf": o1["profit_factor"],
+        }
+        if args.save_validation:
+            out_path = _merge_and_save_validation(args.days, val_updates)
+            print(f"\n[SAVED] {out_path}", flush=True)
+        return
 
     if args.momentum_only:
         print(f"\n[WFA] {args.cycles}-цикловой Rolling WFA для AUTOTRADE_MOMENTUM_FUNDING ({args.days}д, {len(DEFAULT_SYMBOLS)} пар):", flush=True)

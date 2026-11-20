@@ -83,7 +83,13 @@ class RiskEngine:
         if signal.entry_price <= 0 or account_equity_usd <= 0:
             return signal
 
-        risk_budget_usd = account_equity_usd * self.risk_per_trade_pct
+        vol_scale = (
+            max(0.35, min(1.80, float(signal.features.get("vol_scale", 1.0) or 1.0)))
+            if signal.strategy_id == "T1_DONCHIAN_TSMOM"
+            else 1.0
+        )
+        base_risk_pct = 0.015 if signal.strategy_id == "T1_DONCHIAN_TSMOM" else self.risk_per_trade_pct
+        risk_budget_usd = account_equity_usd * base_risk_pct * vol_scale
         stop_frac = abs(signal.entry_price - signal.stop_loss) / signal.entry_price
         stop_frac = max(stop_frac, 0.0055)
 

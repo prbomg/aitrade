@@ -21,6 +21,7 @@ class AdaptiveMLCalibrator:
     """
 
     DEFAULT_STRATEGIES = [
+        "T1_DONCHIAN_TSMOM",
         "B1_SQUEEZE_BREAKOUT",
         "S1_TREND_RETEST",
         "S3_VWAP_RANGE",

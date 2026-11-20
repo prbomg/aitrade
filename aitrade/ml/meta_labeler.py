@@ -208,6 +208,7 @@ class WalkForwardMetaLabeler:
     MIN_CALIBRATION_SAMPLES = 100
     WFA_VALIDATION_PATH: Optional[Any] = None
     WFA_APPROVED_STRATEGIES = {
+        "T1_DONCHIAN_TSMOM",
         "S1_TREND_RETEST",
         "S3_VWAP_RANGE",
         "B1_SQUEEZE_BREAKOUT",
@@ -255,8 +256,8 @@ class WalkForwardMetaLabeler:
         if n < 45:
             return [], [], []
 
-        # Кросс-секционная 1h стратегия не должна обучаться на псевдо-сэмплах 15m ATR-барьеров
-        if strategy_id == "AUTOTRADE_MOMENTUM_FUNDING":
+        # Кросс-секционная 1h и трендовая 4h стратегии не обучаются на псевдо-сэмплах 15m ATR-барьеров
+        if strategy_id in ("AUTOTRADE_MOMENTUM_FUNDING", "T1_DONCHIAN_TSMOM"):
             self._candidate_samples = []
             return [], [], []
 
@@ -570,8 +571,10 @@ class WalkForwardMetaLabeler:
         )
         stop_pct = max(signal.stop_distance_pct, 0.01)
 
-        # Порог P_cal по контуру: 0.52 для Разгона, 0.60 для Автотрейдинга
-        if signal.strategy_id in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT"):
+        # Порог P_cal по контуру: 0.50 для 4h TSMOM, 0.52 для Разгона, 0.60 для прочих стратегий Автотрейдинга
+        if signal.strategy_id == "T1_DONCHIAN_TSMOM":
+            req_prob = 0.50
+        elif signal.strategy_id in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT"):
             req_prob = 0.52
         elif signal.strategy_id in ("S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING"):
             req_prob = 0.60

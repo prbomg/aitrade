@@ -180,9 +180,9 @@ class SmartPositionManager:
                                 record['tp1_order']=''
                                 record['tp1_link']='tp-'+uuid.uuid4().hex[:30]
                 strat = intent["strategy_id"]
-                is_s1 = any(x in strat for x in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT"))
+                is_s1 = any(x in strat for x in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "T1_DONCHIAN_TSMOM"))
                 is_s3 = "S3_VWAP_RANGE" in strat
-                is_booster = strat.startswith("BOOSTER:") or is_s1
+                is_booster = strat.startswith("BOOSTER:") or any(x in strat for x in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT"))
                 if self.split_tp_enabled and not (is_s1 or is_s3) and not record["tp1_order"] and not record["tp1_done"]:
                     tp=float(p.get("takeProfit") or 0)
                     if tp<=0:raise ExchangeError("Нет подтверждённого TP для TP1")

@@ -30,6 +30,7 @@ from aitrade.risk.risk_engine import RiskEngine
 from aitrade.screener.coins_in_play import CoinsInPlayScreener, ScreenerResult
 from aitrade.strategies.base import MarketContext, TradeSignal
 from aitrade.strategies.booster_breakout import generate_booster_breakout_signal
+from aitrade.strategies.donchian_tsmom import generate_donchian_tsmom_signal
 from aitrade.strategies.funding_carry import FundingCarryEngine
 from aitrade.strategies.lead_lag_density import evaluate_lead_lag_density_strategy
 from aitrade.strategies.liquidity_sweep_fvg import evaluate_liquidity_sweep_fvg_strategy
@@ -82,7 +83,7 @@ class AITradeCombineEngine:
         ticker = ticker_map.get(symbol, {"symbol": symbol})
         c15 = self.client.get_klines(symbol, interval="15", limit=600)
         c1h = self.client.get_klines(symbol, interval="60", limit=220)
-        c4h = self.client.get_klines(symbol, interval="240", limit=50)
+        c4h = self.client.get_klines(symbol, interval="240", limit=120)
         c5m = self.client.get_klines(symbol, interval="5", limit=60)
         orderbook = self.client.get_orderbook(symbol, limit=50)
         ob_hist = self.client.get_orderbook_history(symbol)
@@ -181,49 +182,63 @@ class AITradeCombineEngine:
                 rejected_signals.append(sig)
 
         for sym, ctx in ctx_by_sym.items():
-            if not ctx.screener.passed:
-                continue
             sym_signals: List[TradeSignal] = []
-            if self.settings.get("strategy_mode", "s1_s3") == "legacy":
-                sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
-                sym_signals.extend(evaluate_liquidity_sweep_fvg_strategy(ctx))
-                sym_signals.extend(evaluate_oi_cvd_squeeze_strategy(ctx))
-                sym_signals.extend(evaluate_orb_breakout_strategy(ctx))
-                if sym != "BTCUSDT":
-                    sym_signals.extend(evaluate_lead_lag_density_strategy(ctx))
-            else:
-                best_bid = ctx.orderbook.best_bid
-                best_ask = ctx.orderbook.best_ask
-                # 1) S1_TREND_RETEST (Разгон B2) и S3_VWAP_RANGE (Автотрейдинг Рукав A, R:R >= 1.15)
-                s1_s3_sig = generate_s1_s3_signal(
-                    sym,
-                    ctx.candles_15m,
-                    bars_1h=ctx.candles_1h,
-                    min_rr_s3=1.15,
-                    obi_smoothed=ctx.micro.smoothed_obi,
-                    best_bid=best_bid,
-                    best_ask=best_ask,
-                )
-                if s1_s3_sig is not None:
-                    if s1_s3_sig.strategy_id == "S3_VWAP_RANGE":
-                        if sym in autotrade_set and in_liquid_hours:
-                            sym_signals.append(s1_s3_sig)
-                    elif sym in booster_set:
-                        sym_signals.append(s1_s3_sig)
+            if self.settings.get("strategy_mode", "s1_s3") != "legacy":
+                # 0) T1_DONCHIAN_TSMOM (Автотрейдинг Ядро 4h, 24/7, не зависит от 15m скальп-скринера RVOL)
+                if sym in autotrade_set and len(ctx.candles_4h) >= 85 and ctx.screener.spread_pct <= 0.15:
+                    t1_sig = generate_donchian_tsmom_signal(
+                        sym,
+                        ctx.candles_4h,
+                        funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        horizons=(20, 40, 80),
+                        target_ann_vol=0.25,
+                        max_hold_bars=30,
+                    )
+                    if t1_sig is not None:
+                        sym_signals.append(t1_sig)
 
-                # 2) B1_SQUEEZE_BREAKOUT (Разгон Ядро B1)
-                if sym in booster_set:
-                    b1_sig = generate_booster_breakout_signal(
+            if ctx.screener.passed:
+                if self.settings.get("strategy_mode", "s1_s3") == "legacy":
+                    sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
+                    sym_signals.extend(evaluate_liquidity_sweep_fvg_strategy(ctx))
+                    sym_signals.extend(evaluate_oi_cvd_squeeze_strategy(ctx))
+                    sym_signals.extend(evaluate_orb_breakout_strategy(ctx))
+                    if sym != "BTCUSDT":
+                        sym_signals.extend(evaluate_lead_lag_density_strategy(ctx))
+                else:
+                    best_bid = ctx.orderbook.best_bid
+                    best_ask = ctx.orderbook.best_ask
+                    # 1) S1_TREND_RETEST (Разгон B2) и S3_VWAP_RANGE (Автотрейдинг Рукав A, R:R >= 1.15)
+                    s1_s3_sig = generate_s1_s3_signal(
                         sym,
                         ctx.candles_15m,
                         bars_1h=ctx.candles_1h,
-                        funding_rate=ctx.screener.funding_rate,
+                        min_rr_s3=1.15,
                         obi_smoothed=ctx.micro.smoothed_obi,
                         best_bid=best_bid,
                         best_ask=best_ask,
                     )
-                    if b1_sig is not None:
-                        sym_signals.append(b1_sig)
+                    if s1_s3_sig is not None:
+                        if s1_s3_sig.strategy_id == "S3_VWAP_RANGE":
+                            if sym in autotrade_set and in_liquid_hours:
+                                sym_signals.append(s1_s3_sig)
+                        elif sym in booster_set:
+                            sym_signals.append(s1_s3_sig)
+
+                    # 2) B1_SQUEEZE_BREAKOUT (Разгон Ядро B1, с фильтром выходных NoWeekendChop)
+                    if sym in booster_set:
+                        b1_sig = generate_booster_breakout_signal(
+                            sym,
+                            ctx.candles_15m,
+                            bars_1h=ctx.candles_1h,
+                            funding_rate=ctx.screener.funding_rate,
+                            obi_smoothed=ctx.micro.smoothed_obi,
+                            best_bid=best_bid,
+                            best_ask=best_ask,
+                            exclude_weekend_chop=True,
+                        )
+                        if b1_sig is not None:
+                            sym_signals.append(b1_sig)
 
             for sig in sym_signals:
                 evaluate_and_bucket(sig, ctx)

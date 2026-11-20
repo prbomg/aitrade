@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from aitrade.exchange.bybit_v5 import Candle
@@ -28,6 +29,15 @@ from aitrade.strategies.regime_s1_s3 import (
 )
 
 
+def is_weekend_chop_utc(timestamp_ms: int) -> bool:
+    """Фильтр пилы выходного дня (Sat 18:00 – Sun 22:00 UTC, до Monday Asia Open)."""
+    if timestamp_ms <= 0:
+        return False
+    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
+    wd = dt.weekday()  # 5=Sat, 6=Sun
+    return (wd == 5 and dt.hour >= 18) or (wd == 6 and dt.hour < 22)
+
+
 def generate_booster_breakout_signal(
     symbol: str,
     closed_15m: List[Candle],
@@ -39,9 +49,12 @@ def generate_booster_breakout_signal(
     best_ask: Optional[float] = None,
     tick_size: float = 0.0,
     use_hmm: bool = False,
+    exclude_weekend_chop: bool = True,
 ) -> Optional[TradeSignal]:
     """Генерирует сигнал Ядра B1 (Volatility Squeeze + Supertrend Breakout) по закрытым свечам."""
     if len(closed_15m) < 60 or has_recent_gaps(closed_15m, step_ms=900_000, check_bars=60):
+        return None
+    if exclude_weekend_chop and is_weekend_chop_utc(int(closed_15m[-1].timestamp)):
         return None
 
     h1_series = bars_1h if (bars_1h is not None and len(bars_1h) >= 55) else aggregate_1h(closed_15m)

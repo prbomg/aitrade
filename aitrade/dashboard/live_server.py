@@ -215,7 +215,8 @@ class BybitV5DirectController:
             if self.ledger.unresolved(symbol):raise ValueError('Есть неподтверждённая заявка; требуется сверка')
             positions=self.get_positions();orders=[o for o in self.get_open_orders() if not o.get('reduceOnly')]
             busy={p['symbol'] for p in positions}|{o['symbol'] for o in orders}
-            max_busy=2 if is_isolated_booster else 3
+            is_t1_core='T1_DONCHIAN_TSMOM' in str(strategy_id)
+            max_busy=2 if is_isolated_booster else (4 if is_t1_core else 3)
             if symbol in busy or len(busy)>=max_busy:raise ValueError('Лимит позиций/заявок или повторный символ')
             midnight=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()*1000
             if isinstance(b_state,dict):
@@ -273,12 +274,14 @@ class BybitV5DirectController:
             if is_isolated_booster and b_metrics_live:
                 risk_frac=max(0.01,min(0.045,(float(b_metrics_live.get('effective_risk_pct',4.0))/100.0)*min(1.0,c_w)))
             elif strategy_id.startswith('CORE'):
-                base_core_r=float(self.engine.settings.get('risk',{}).get('risk_per_trade_pct',0.005) or 0.005)
+                base_core_r=0.015 if is_t1_core else float(self.engine.settings.get('risk',{}).get('risk_per_trade_pct',0.005) or 0.005)
+                vol_scale=max(0.35,min(1.80,float(((signal_context or {}).get('features') or {}).get('vol_scale',1.0) or 1.0))) if is_t1_core else 1.0
                 dd_mult=1.0
                 if owner and hasattr(owner,'check_autotrade_drawdown'):
                     dd_mult,dd_stop=owner.check_autotrade_drawdown(acct_bal)
                     if dd_stop and not training_mode:raise ValueError('Просадка Автотрейдинга >= 15% от пика: новые входы остановлены')
-                risk_frac=max(0.0035,min(0.010,base_core_r*c_w*dd_mult))
+                max_r_cap=0.027 if is_t1_core else 0.010
+                risk_frac=max(0.0035,min(max_r_cap,base_core_r*vol_scale*c_w*dd_mult))
             else:
                 risk_frac=max(0.0035,min(0.0070,0.005*c_w)) if strategy_id.startswith('BOOSTER') else 0.005
             maxqty=capital*risk_frac/risk_per_coin
@@ -296,11 +299,11 @@ class BybitV5DirectController:
                 ep=float(o.get('price') or 0);osl=float(o.get('stopLoss') or 0)
                 if not ep or not osl:raise ValueError('Непроверенный риск активной заявки')
                 totalrisk+=float(o.get('leavesQty') or o['qty'])*(abs(ep-osl)+ep*.0054)
-            total_risk_cap=0.07 if is_isolated_booster else 0.02
+            total_risk_cap=0.07 if is_isolated_booster else (0.06 if is_t1_core else 0.02)
             if totalrisk>capital*total_risk_cap:raise ValueError(f'Совокупный риск выше {int(total_risk_cap*100)}%')
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
-            hold_min=1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))
+            hold_min=7200 if is_t1_core else (1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0))))
             _rm=getattr(owner,'release_manifest',None)
             rel_ver=_rm.get('version','2026.11.19-intraday.8') if isinstance(_rm,dict) else '2026.11.19-intraday.8'
             self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
@@ -649,9 +652,11 @@ class ControlCenterState:
             strat_s = str(p.get("strategy_id") or "")
             hold = plan.get(
                 "max_hold_minutes",
-                1080 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")) else (
-                    480 if "AUTOTRADE_MOMENTUM_FUNDING" in strat_s else (
-                        240 if "S3_VWAP_RANGE" in strat_s else (180 if strat_s.startswith("BOOSTER") else 0)
+                7200 if "T1_DONCHIAN_TSMOM" in strat_s else (
+                    1080 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")) else (
+                        480 if "AUTOTRADE_MOMENTUM_FUNDING" in strat_s else (
+                            240 if "S3_VWAP_RANGE" in strat_s else (180 if strat_s.startswith("BOOSTER") else 0)
+                        )
                     )
                 ),
             )
@@ -674,14 +679,14 @@ class ControlCenterState:
                     continue
                 elif n_act == "PROTECT" and not is_be and move_pct >= 0.18:
                     p_strat = str(p.get("strategy_id") or ctrl.ledger.latest_strategy(sym, side))
-                    if not any(x in p_strat for x in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT")):
+                    if not any(x in p_strat for x in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT", "T1_DONCHIAN_TSMOM")):
                         be_res = ctrl.spm.move_sl_to_breakeven(sym, side, avg_px, p_idx)
                         ctrl.spm.activate_trailing_stop(sym, mark_px, ctrl.spm.trailing_step_pct, p_idx)
                         if be_res.get("ok"):
                             self.add_log("🛡 [News Guard] Досрочный БУ + Трейлинг для " + sym + ": " + str(n_eval.get("reason")))
                             is_be = True
 
-            if self.regime_guard.time_stop_enabled and not is_be and not any(x in strat_s for x in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT", "BOOSTER:")):
+            if self.regime_guard.time_stop_enabled and not is_be and not any(x in strat_s for x in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT", "T1_DONCHIAN_TSMOM", "BOOSTER:")):
                 age_min = self.get_position_age_minutes(p)
                 if age_min >= self.regime_guard.time_stop_minutes and abs(move_pct) <= self.regime_guard.time_stop_band_pct:
                     c_res = ctrl.close_position(sym, side, size_str, p_idx)
@@ -975,7 +980,7 @@ class ControlCenterState:
                         self.add_log("🛡 [Основная ИИ Фильтр] Пропуск " + str(sig["symbol"]) + " (" + side + "): " + why)
                         continue
                     sig_otype = sig.get("order_type") if sig.get("order_type") in ("Market", "Limit") else order_type
-                    sig_split_tp = False if sig.get("strategy_id") in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING", "B1_SQUEEZE_BREAKOUT") else self.split_tp_enabled
+                    sig_split_tp = False if sig.get("strategy_id") in ("S1_TREND_RETEST", "S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING", "B1_SQUEEZE_BREAKOUT", "T1_DONCHIAN_TSMOM") else self.split_tp_enabled
                     r = self.bybit.place_order(
                         sig["symbol"], side, sig_otype, float(sig.get("position_size_coins", 0) or 0),
                         float(sig.get("entry_price", 0) or 0), float(sig.get("take_profit", 0) or 0),
