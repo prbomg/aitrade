@@ -401,7 +401,7 @@ class ControlCenterState:
         self.bybit.spm.breakeven_trigger_pct = float(saved.get("breakeven_trigger_pct", 0.55) or 0.55)
         self.bybit.spm.trailing_step_pct = float(saved.get("trailing_step_pct", 0.40) or 0.40)
         self.max_leverage = int(saved.get("max_leverage", self.settings.get("risk", {}).get("max_leverage", 3)) or 3)
-        self.core_max_positions = int(saved.get("core_max_positions", 3) or 3)
+        self.core_max_positions = int(saved.get("core_max_positions", 4) or 4)
         self.core_min_prob_pct = float(saved.get("core_min_prob_pct", 58.0) or 58.0)
         self.sound_alerts_enabled = bool(saved.get("sound_alerts_enabled", True))
 
@@ -1001,6 +1001,19 @@ class ControlCenterState:
             self.last_scan_ts = datetime.now().strftime("%H:%M:%S")
             return scan_res
 
+    @staticmethod
+    def _load_wfa_validation_summary() -> Dict[str, Any]:
+        p = BASE_DIR / "data" / "wfa_validation.json"
+        if not p.exists():
+            return {"updated_at": "—", "strategies": {}}
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return {"updated_at": "—", "strategies": {}}
+
     def get_full_state(self) -> Dict[str, Any]:
         acct = self.bybit.get_account_summary()
         closed_pnl = self.bybit.get_closed_pnl()
@@ -1085,6 +1098,7 @@ class ControlCenterState:
             "oi_squeeze": self.oi_scanner.cached_signals,
             "scan": self.last_scan,
             "backtest": self.backtest_cache,
+            "wfa_validation": self._load_wfa_validation_summary(),
             "settings": {
                 "order_type": self.settings.get("execution", {}).get("order_type", "Market"),
                 "max_leverage": self.max_leverage,
