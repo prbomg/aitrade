@@ -132,16 +132,23 @@ class RegimeAndCorrelationGuard:
         return self.last_regime
 
     def can_open_position(
-        self, symbol: str, side: str, open_positions: List[Dict[str, Any]], ws_summary: Dict[str, Any]
+        self,
+        symbol: str,
+        side: str,
+        open_positions: List[Dict[str, Any]],
+        ws_summary: Dict[str, Any],
+        strategy_id: str = "",
     ) -> Tuple[bool, str]:
         if not self.enabled:
             return True, "OK"
 
-        regime = self.update_btc_regime(ws_summary)
-        if side == "Buy" and not regime["allow_long"]:
-            return False, "Блок BTC Guard: " + regime["reason"]
-        if side == "Sell" and not regime["allow_short"]:
-            return False, "Блок BTC Guard: " + regime["reason"]
+        is_t1_4h = "T1_DONCHIAN_TSMOM" in str(strategy_id or "")
+        if not is_t1_4h:
+            regime = self.update_btc_regime(ws_summary)
+            if side == "Buy" and not regime["allow_long"]:
+                return False, "Блок BTC Guard: " + regime["reason"]
+            if side == "Sell" and not regime["allow_short"]:
+                return False, "Блок BTC Guard: " + regime["reason"]
 
         cand_sector = self.get_sector(symbol)
         same_dir_total = 0
@@ -159,16 +166,19 @@ class RegimeAndCorrelationGuard:
                     same_sector_dir += 1
                     same_sector_syms.append(p_sym)
 
-        if same_sector_dir >= self.max_same_sector:
+        eff_max_sector = max(2, self.max_same_sector) if is_t1_4h else self.max_same_sector
+        eff_max_dir = max(4, self.max_same_direction_total) if is_t1_4h else self.max_same_direction_total
+
+        if same_sector_dir >= eff_max_sector:
             return (
                 False,
                 "Блок Корреляции: сектор [" + cand_sector + "] уже занят в " + side + " (" + ", ".join(same_sector_syms) + ")",
             )
 
-        if same_dir_total >= self.max_same_direction_total:
+        if same_dir_total >= eff_max_dir:
             return (
                 False,
                 "Блок Корреляции: уже открыто макс. однонаправленных сделок (" + str(same_dir_total) + " в " + side + ")",
             )
 
-        return True, "OK (" + cand_sector + ")"
+        return True, "OK (" + cand_sector + (", 4h-TSMOM" if is_t1_4h else "") + ")"

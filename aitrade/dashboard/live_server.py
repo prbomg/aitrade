@@ -255,10 +255,13 @@ class BybitV5DirectController:
                 ws_info=owner.ws_hub.get_summary()
                 ws_warm=bool(ws_info.get('flow_window_complete',False)) or training_mode or (time.time()-getattr(owner,'started_at',0)>=120 and int(ws_info.get('symbols_live',0) or 0)>0)
                 if strategy_id.startswith('BOOSTER') and not ws_warm:raise ValueError('Поток CVD/ликвидаций прогревается после подключения (2 мин)')
-                permitted,reason=owner.regime_guard.can_open_position(symbol,side,positions,owner.ws_hub.get_summary())
+                try:
+                    permitted,reason=owner.regime_guard.can_open_position(symbol,side,positions,owner.ws_hub.get_summary(),strategy_id=strategy_id)
+                except TypeError:
+                    permitted,reason=owner.regime_guard.can_open_position(symbol,side,positions,owner.ws_hub.get_summary())
                 if not permitted:raise ValueError(reason)
             else:raise ValueError('Нет подтвержденного потока рынка')
-            max_dev=0.05 if order_type=='Limit' else 0.003
+            max_dev=0.05 if order_type=='Limit' else (0.012 if is_t1_core else 0.003)
             if price and abs(float(price)/ref-1)>max_dev:raise ValueError('Сигнал устарел: цена изменилась')
             ref=float(price) if order_type=='Limit' and price else ref
             if not (sl<ref<tp if side=='Buy' else tp<ref<sl):raise ValueError('Неверное расположение SL/TP')
@@ -525,9 +528,13 @@ class ControlCenterState:
                 except Exception:
                     pass
             try:
-                bt = WalkForwardBacktester(self.settings).run_comparison_backtest()
-                bt["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.backtest_cache = bt
+                wfa_val = self._load_wfa_validation_summary()
+                self.backtest_cache = {
+                    "status": "ok",
+                    "source": "wfa_validation.json",
+                    "updated_at": wfa_val.get("updated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                    "strategies": wfa_val.get("strategies", {}),
+                }
             except Exception as exc:
                 self.backtest_cache = {"status": "error", "note": str(exc)[:200]}
             time.sleep(3600)
@@ -973,7 +980,10 @@ class ControlCenterState:
                         break
                     side = sig["side"]
                     if side not in ("Buy", "Sell"): raise ValueError("Invalid signal side")
-                    allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum)
+                    try:
+                        allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum, strategy_id="CORE:" + str(sig.get("strategy_id", "")))
+                    except TypeError:
+                        allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum)
                     n_mod = self.x_radar.get_coin_modifier(sig["symbol"], sig.get("direction", sig.get("side", "LONG")))
                     if not allowed or not n_mod["allowed"]:
                         why = guard_msg if not allowed else n_mod["reason"]

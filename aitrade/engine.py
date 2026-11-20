@@ -184,18 +184,24 @@ class AITradeCombineEngine:
         for sym, ctx in ctx_by_sym.items():
             sym_signals: List[TradeSignal] = []
             if self.settings.get("strategy_mode", "s1_s3") != "legacy":
-                # 0) T1_DONCHIAN_TSMOM (Автотрейдинг Ядро 4h, 24/7, не зависит от 15m скальп-скринера RVOL)
+                # 0) T1_DONCHIAN_TSMOM (Автотрейдинг Ядро 4h, 24/7, вход только в первые 30 мин после закрытия 4h бара)
                 if sym in autotrade_set and len(ctx.candles_4h) >= 85 and ctx.screener.spread_pct <= 0.15:
-                    t1_sig = generate_donchian_tsmom_signal(
-                        sym,
-                        ctx.candles_4h,
-                        funding_rate=float(ctx.screener.funding_rate or 0.0),
-                        horizons=(20, 40, 80),
-                        target_ann_vol=0.25,
-                        max_hold_bars=30,
-                    )
-                    if t1_sig is not None:
-                        sym_signals.append(t1_sig)
+                    last_4h_close_ms = int(ctx.candles_4h[-1].timestamp) + 14_400_000
+                    last_15m_close_ms = (int(ctx.candles_15m[-1].timestamp) + 900_000) if ctx.candles_15m else last_4h_close_ms
+                    bar_age_ms = last_15m_close_ms - last_4h_close_ms
+                    if -900_000 <= bar_age_ms <= 30 * 60_000:
+                        ref_live_px = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_4h[-1].close
+                        t1_sig = generate_donchian_tsmom_signal(
+                            sym,
+                            ctx.candles_4h,
+                            reference_open_px=ref_live_px,
+                            funding_rate=float(ctx.screener.funding_rate or 0.0),
+                            horizons=(20, 40, 80),
+                            target_ann_vol=0.25,
+                            max_hold_bars=30,
+                        )
+                        if t1_sig is not None:
+                            sym_signals.append(t1_sig)
 
             if ctx.screener.passed:
                 if self.settings.get("strategy_mode", "s1_s3") == "legacy":
