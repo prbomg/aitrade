@@ -131,6 +131,9 @@ class SmartPositionManager:
             # 110026: уже Isolated
             if exc.code == 110026 or "110026" in str(exc):
                 return {"ok": True, "symbol": symbol, "mode": "ISOLATED", "retMsg": "Already isolated"}
+            # На Bybit Demo (api-demo.bybit.com) код 10032 ("Demo trading is not supported") — ограничение эндпоинта на Demo
+            if "api-demo.bybit.com" in self.base_url and (exc.code == 10032 or "10032" in str(exc) or "demo trading" in str(exc).lower()):
+                return {"ok": True, "symbol": symbol, "mode": "DEMO_DEFAULT", "retMsg": "Bybit Demo 10032: margin-mode endpoint unsupported on Demo"}
             # Только явная ошибка UTA 2.0 (100028); 110044 (нехватка маржи) не должна менять режим всего аккаунта
             if exc.code == 100028 or "uta" in str(exc).lower() or "unified" in str(exc).lower():
                 try:
@@ -138,6 +141,8 @@ class SmartPositionManager:
                     if u_resp.get("retCode") == 0:
                         return {"ok": True, "symbol": symbol, "mode": "ISOLATED_MARGIN", "retMsg": u_resp.get("retMsg", "UTA isolated")}
                 except ExchangeError as u_exc:
+                    if "api-demo.bybit.com" in self.base_url and (u_exc.code == 10032 or "10032" in str(u_exc)):
+                        return {"ok": True, "symbol": symbol, "mode": "DEMO_DEFAULT", "retMsg": "Bybit Demo 10032: UTA margin-mode unsupported on Demo"}
                     return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(u_exc)[:150]}
             return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(exc)[:150]}
 

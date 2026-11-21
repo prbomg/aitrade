@@ -161,7 +161,7 @@ def main() -> None:
             n_trials=4,
             mc_iterations=args.mc,
             horizons=(20, 40, 80),
-            max_hold_bars=30,
+            max_hold_bars=60,
             use_vol_targeting=True,
             risk_per_trade_frac=0.015,
             max_total_risk_frac=0.06,

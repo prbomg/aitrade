@@ -198,7 +198,8 @@ class AITradeCombineEngine:
                             funding_rate=float(ctx.screener.funding_rate or 0.0),
                             horizons=(20, 40, 80),
                             target_ann_vol=0.25,
-                            max_hold_bars=30,
+                            max_hold_bars=60,
+                            tp_rr=8.0,
                         )
                         if t1_sig is not None:
                             sym_signals.append(t1_sig)

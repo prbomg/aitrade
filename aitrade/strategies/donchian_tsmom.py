@@ -79,7 +79,8 @@ def generate_donchian_tsmom_signal(
     funding_rate: float = 0.0,
     horizons: Sequence[int] = (20, 40, 80),
     target_ann_vol: float = 0.25,
-    max_hold_bars: int = 30,
+    max_hold_bars: int = 60,
+    tp_rr: float = 8.0,
 ) -> Optional[TradeSignal]:
     """
     Генерирует тренд-фолловинг сигнал `T1_DONCHIAN_TSMOM` строго по закрытым 4h барам.
@@ -142,7 +143,7 @@ def generate_donchian_tsmom_signal(
     sl_dist = max(entry_px * 0.015, 2.5 * atr_4h)
     sl_px = entry_px - sl_dist if side == "Buy" else entry_px + sl_dist
     tp1 = entry_px + 2.0 * sl_dist if side == "Buy" else entry_px - 2.0 * sl_dist
-    tp2 = entry_px + 4.0 * sl_dist if side == "Buy" else entry_px - 4.0 * sl_dist
+    tp2 = entry_px + tp_rr * sl_dist if side == "Buy" else entry_px - tp_rr * sl_dist
 
     return TradeSignal(
         symbol=symbol,

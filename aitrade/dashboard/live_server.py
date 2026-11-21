@@ -243,7 +243,15 @@ class BybitV5DirectController:
             if not training_mode and upnl<=-capital*upnl_cap_frac:raise ValueError(f'Плавающий убыток > {int(upnl_cap_frac*100)}%: новые входы заблокированы')
             if not training_mode and daily+min(upnl,0)<=-capital*daily_cap_frac:raise ValueError(f'Дневной лимит -{int(daily_cap_frac*100)}%: новые входы заблокированы')
             if owner:
-                bid,ask=owner.ws_hub.get_bbo(symbol,5);ref=ask if side=='Buy' else bid
+                bbo_age=30 if is_t1_core else 15
+                try:
+                    bid,ask=owner.ws_hub.get_bbo(symbol,bbo_age)
+                except Exception:
+                    if not is_t1_core:raise
+                    ob_rest=self.engine.client.get_orderbook(symbol,limit=5)
+                    if not ob_rest.best_bid or not ob_rest.best_ask:raise ValueError('Нет свежего стакана '+symbol)
+                    bid,ask=ob_rest.best_bid,ob_rest.best_ask
+                ref=ask if side=='Buy' else bid
                 spread_bps=((ask-bid)/((ask+bid)*0.5))*10000.0 if (bid>0 and ask>0) else 0.0
                 max_spread=8.0 if symbol in ('BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT') else 20.0
                 if spread_bps>max_spread:raise ValueError(f'Спред {spread_bps:.1f} bps > {max_spread:.0f} bps')
@@ -306,7 +314,7 @@ class BybitV5DirectController:
             if totalrisk>capital*total_risk_cap:raise ValueError(f'Совокупный риск выше {int(total_risk_cap*100)}%')
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
-            hold_min=7200 if is_t1_core else (1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0))))
+            hold_min=14400 if is_t1_core else (1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0))))
             _rm=getattr(owner,'release_manifest',None)
             rel_ver=_rm.get('version','2026.11.19-intraday.8') if isinstance(_rm,dict) else '2026.11.19-intraday.8'
             self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
@@ -659,7 +667,7 @@ class ControlCenterState:
             strat_s = str(p.get("strategy_id") or "")
             hold = plan.get(
                 "max_hold_minutes",
-                7200 if "T1_DONCHIAN_TSMOM" in strat_s else (
+                14400 if "T1_DONCHIAN_TSMOM" in strat_s else (
                     1080 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT")) else (
                         480 if "AUTOTRADE_MOMENTUM_FUNDING" in strat_s else (
                             240 if "S3_VWAP_RANGE" in strat_s else (180 if strat_s.startswith("BOOSTER") else 0)
