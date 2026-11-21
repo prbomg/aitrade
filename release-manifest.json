@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.20-intraday.15",
-  "built_at": "2026-11-20T19:48:40.287075+00:00",
+  "version": "2026.11.21-intraday.16",
+  "built_at": "2026-11-21T13:51:37.295633+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
     "aitrade/agents/__init__.py": "8f490c3f80fbc2a59fa6d72e4eff9f82c5567789d6947cbd47fb0fe691eb6282",
@@ -44,6 +44,7 @@
     "aitrade/strategies/base.py": "072014e19db016eba69429af0b83dd7f5841399e9cf1b982c2753ad44159e98a",
     "aitrade/strategies/booster_breakout.py": "f1bd85069a46eac334cee975ba05d1dc9eab69321d21023c7115d4792fd43481",
     "aitrade/strategies/donchian_tsmom.py": "9d01c7c55d74de4e8259f649a0af7794abf0d69caff89046c104b53e78c82341",
+    "aitrade/strategies/extreme_flush_mr.py": "6f54cc91430ab49d3f68dca66f110575e2ca75c6da71e767d6da40fe44cf82cf",
     "aitrade/strategies/funding_carry.py": "2b4e0234da03d89919b273ab7f4194ee484f8f1208a72ccf987ce72ea34cf3ef",
     "aitrade/strategies/lead_lag_density.py": "19784b6fa659cc52eb86084af3b922092d8c3e99628048888e2d7b105eca996d",
     "aitrade/strategies/liquidity_sweep_fvg.py": "ec503e271c84524801d671d1b501c7d4deeb6019c918c482941d83525523e140",
@@ -58,7 +59,9 @@
     "dashboard_report.html": "93ae68ef17ff8a420fa7499dcc4560d37f43d59f0814177cc6eed8f206a541a0",
     "gui_app.py": "3de4e46d5340a147a167292a4bd17d61c8d7c60b03a35b3ec7234f838c1d5f20",
     "run_combine.py": "85b0fbf9ef7bfec5fd99149db9ad317249a8d7fd6c9887ce60195c2d14e830e2",
+    "scripts/live_audit_report.py": "3d54b9b880edbad136537b8a9b4b6d31a9fe5ad41ced8a461453f42aec2a078d",
     "scripts/run_research_intraday12.py": "953f74884fef26b76ab852e5a8c55e3f6de6fd937bd9cfb823f3fe7f0a984b7f",
+    "scripts/run_research_intraday16.py": "4dae2a1c0c88ed25532f71664852b75193153bbe319d6956ee90555936a19299",
     "scripts/run_wfa_research.py": "d136c27bec4d9eb717efc2b6c449958f18b96610d9bbfd77669d6a6a4bcd378b",
     "tests/test_combine.py": "623f89b6cbd8e59f9b576a502dbb0d401b8f8f0c81be700261e3ec8b4f4efb6b",
     "tests/test_final_audit_fixes.py": "9828f3d7fae914d9a26dd25aebe66e0f2f1cb9785cd7048ad6a7db9aa07c89cd",
@@ -66,6 +69,7 @@
     "tests/test_intraday12_research.py": "4ca4492851e8954d57449782f36e71974481a9ebe7d0a32f444d9e192272127a",
     "tests/test_intraday13_live_wiring.py": "ed0a09db468487f08a356ea422f47ca9fdde3eba52b139cf544c5fa011aae445",
     "tests/test_intraday15_t1_live_execution.py": "b4a69704ab867720c88a0228d3b295479c68211de545f084f2c63be11d17264d",
+    "tests/test_intraday16_research_and_audit.py": "b2165750147a1c0e542d5ece6f9d4eb8a56c127bfc4cb5ec41f503717eaeec85",
     "tests/test_intraday6_audit.py": "a2baf5229538ce19447032566e59404c58cebea4b63b0112f5feb3416b47b683",
     "tests/test_intraday7_p0_fixes.py": "cd072f1648d57b74d414d4d283ee94b5f02cfeec26984f03a304e38f400a88df",
     "tests/test_intraday8_infra.py": "ad25951092b6980f98325b04529b314d10e70f9a64052fc3c1c3e3d4ed25e244",
@@ -79,7 +83,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "495a6c7e7428492615468c0eed705c8609f10461eef776dd0b2961d0e2ca8aab"
   },
-  "build_sha256": "0516259a7ac64c96999894445740694cb086324a351668943fe433e5dc1ee490",
+  "build_sha256": "3418cdf85bf3a25b159b6ebd22864a14953ac6b969b332bfea613045203ad244",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"
