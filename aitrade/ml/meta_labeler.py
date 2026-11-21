@@ -264,12 +264,16 @@ class WalkForwardMetaLabeler:
         if strategy_id in (
             "AUTOTRADE_MOMENTUM_FUNDING",
             "T1_DONCHIAN_TSMOM",
+            "T2_RS_BTC_BREAKOUT",
+            "T3_KELTNER_TREND_4H",
             "B2_DONCHIAN_INTRADAY",
             "B3_VWAP_MOMENTUM_IMPULSE",
             "B4_ORB_SESSION_BREAKOUT",
             "B5_OI_TREND_EXPANSION",
-            "T2_RS_BTC_BREAKOUT",
+            "B6_EMA_PULLBACK_TREND",
+            "B7_FUNDING_SQUEEZE_MOMENTUM",
             "C2_MTF_COMBO_BREAKOUT",
+            "C3_ENSEMBLE_VOTE_2OF3",
         ):
             self._candidate_samples = []
             return [], [], []

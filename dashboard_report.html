@@ -150,7 +150,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <h3 class="panel-title">📍 Что происходит сейчас</h3>
         <span class="badge badge-amber" id="stage-service-badge">⏳ Подключение...</span>
-        <span class="badge badge-purple" title="Каждая стратегия торгует от своих $1,000, портфельный потолок на Demo — до $50,000 (20 пар, до 20 позиций)">🧪 Demo Lab: 9 стратегий × $1k (20 пар)</span>
+        <span class="badge badge-purple" title="Каждая стратегия торгует от своих $1,000, портфельный потолок на Demo — до $50,000 (20 пар, до 20 позиций) + безконфликтный Live Shadow">🧪 Demo Lab: 13 стратегий × $1k (20 пар) + Shadow</span>
         <span style="font-size:11.5px;color:var(--muted)" id="runtime-status" role="status">Загрузка состояния сервиса…</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -469,13 +469,25 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     </div>
     <div class="panel">
       <div class="panel-header">
-        <h3 class="panel-title">📈 Раздельный учёт боевых стратегий (изолировано от legacy-истории)</h3>
+        <h3 class="panel-title">📈 Раздельный учёт реальных Demo-ордеров (изолировано от legacy-истории)</h3>
         <span style="font-size:11.5px;color:var(--muted)" id="legacy-isolated-lbl">Legacy: —</span>
       </div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Стратегия / Горизонт</th><th>Закрыто (Открыто)</th><th>Net PnL</th><th>Max DD</th><th>Ср. удержание</th><th>Ср. Realized R</th><th>Ср. слиппедж</th><th>Комиссии</th></tr></thead>
-          <tbody id="live-strat-metrics-tbody"><tr><td colspan="8" style="color:var(--muted)">Загрузка раздельного учёта T1 / B1...</td></tr></tbody>
+          <tbody id="live-strat-metrics-tbody"><tr><td colspan="8" style="color:var(--muted)">Загрузка раздельного учёта...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel" style="border-color:#a78bfa">
+      <div class="panel-header">
+        <h3 class="panel-title">🧪 Live Shadow Полигон — Рейтинг стратегий ($1,000/стратегия · живой стакан · без конфликта тикеров)</h3>
+        <span style="font-size:11.5px;color:#c4b5fd" id="shadow-lab-summary-lbl">Открыто: 0 · Закрыто: 0</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Стратегия</th><th>Баланс $1k-пода</th><th>Открыто / Закрыто</th><th>Win Rate</th><th>Profit Factor</th><th>Net PnL</th><th>Плавающий PnL</th><th>Ср. R</th><th>Max DD</th></tr></thead>
+          <tbody id="shadow-lab-tbody"><tr><td colspan="9" style="color:var(--muted)">Ожидание первых сигналов в Live Shadow...</td></tr></tbody>
         </table>
       </div>
     </div>

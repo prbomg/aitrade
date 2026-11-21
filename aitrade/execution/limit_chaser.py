@@ -5,10 +5,16 @@ from aitrade.exchange.transport import ExchangeError
 class SmartLimitChaser:
     def __init__(self,spm,ws_hub,data_dir):
         self.spm=spm;self.ws_hub=ws_hub;self.stats_path=data_dir/'chaser_stats.json'
-        self.enabled=True;self.strict_post_only=False;self.max_attempts=4;self.step_wait_sec=2.5;self.max_chase_drift_pct=.12
+        self.enabled=True;self.strict_post_only=False;self.max_attempts=4;self.step_wait_sec=2.5;self.max_chase_drift_pct=.60
         self.stats=json.loads(self.stats_path.read_text()) if self.stats_path.exists() else {'total_orders':0,'maker_filled':0,'fallback_taker_filled':0,'fee_saved_usd':0.,'total_notional_usd':0.}
     def _get_live_bbo(self,symbol,fallback_px):
-        return self.ws_hub.get_bbo(symbol,max_age=5)
+        try:
+            return self.ws_hub.get_bbo(symbol,max_age=30)
+        except Exception:
+            if fallback_px and float(fallback_px) > 0:
+                px = float(fallback_px)
+                return px * 0.9999, px * 1.0001
+            raise
     def _status(self,symbol,order_id):
         for path in ('/v5/order/realtime','/v5/order/history'):
             rows=self.spm.signed_get(path,{'category':'linear','symbol':symbol,'orderId':order_id})['result']['list']

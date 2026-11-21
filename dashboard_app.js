@@ -653,6 +653,21 @@ function renderState(st) {
           return "<tr><td><b>" + escapeHtml(k) + "</b><div style=font-size:10.5px;color:var(--muted)>" + escapeHtml(m.horizon_label || "") + "</div></td><td>" + (m.trades ?? 0) + " (" + (m.open_trades ?? 0) + " откр.)</td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + " USDT</td><td>" + Number(m.max_drawdown_usd || 0).toFixed(2) + " USDT</td><td>" + (m.avg_hold_hours == null ? "—" : Number(m.avg_hold_hours).toFixed(1) + " ч") + "</td><td>" + (m.avg_realized_r == null ? "—" : (Number(m.avg_realized_r) >= 0 ? "+" : "") + Number(m.avg_realized_r).toFixed(2) + "R") + "</td><td>" + (m.avg_slippage_bps == null ? "—" : Number(m.avg_slippage_bps).toFixed(1) + " bps") + "</td><td>" + Number(m.total_fees_usd || 0).toFixed(3) + " USDT</td></tr>";
         }).join("");
   }
+  const shLab = st.shadow_lab || {};
+  const shBody = document.getElementById("shadow-lab-tbody");
+  if (shBody) {
+    const shLbl = document.getElementById("shadow-lab-summary-lbl");
+    if (shLbl) shLbl.textContent = "Открыто: " + (shLab.total_open ?? 0) + " · Закрыто: " + (shLab.total_closed ?? 0) + " · Риск: $" + (shLab.risk_per_trade_usd ?? 15) + "/сд.";
+    const shList = shLab.leaderboard || [];
+    shBody.innerHTML = shList.length === 0
+      ? "<tr><td colspan=9 style=color:var(--muted)>Ожидание первых сигналов в Live Shadow...</td></tr>"
+      : shList.map(function(r) {
+          const np = Number(r.net_pnl_usd || 0);
+          const up = Number(r.unrealized_pnl_usd || 0);
+          const eq = Number(r.pod_equity_usd || 1000);
+          return "<tr><td><b>" + escapeHtml(r.strategy_id) + "</b></td><td class=" + (eq >= 1000 ? "pos-green" : "pos-red") + "><b>$" + eq.toFixed(2) + "</b></td><td>" + (r.open_trades ?? 0) + " / " + (r.closed_trades ?? 0) + "</td><td>" + Number(r.win_rate_pct || 0).toFixed(1) + "%</td><td><b>" + (r.profit_factor == null ? "—" : Number(r.profit_factor).toFixed(2)) + "</b></td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + "$</td><td class=" + (up >= 0 ? "pos-green" : "pos-red") + ">" + (up >= 0 ? "+" : "") + up.toFixed(2) + "$</td><td>" + (r.avg_r == null ? "—" : (Number(r.avg_r) >= 0 ? "+" : "") + Number(r.avg_r).toFixed(2) + "R") + "</td><td>" + Number(r.max_dd_usd || 0).toFixed(2) + "$</td></tr>";
+        }).join("");
+  }
   // Живая сводка «📍 Что происходит сейчас» над карточками
   const hNow = st.health || {};
   const svcB = document.getElementById("stage-service-badge");

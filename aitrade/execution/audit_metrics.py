@@ -22,8 +22,12 @@ TRACKED_STRATEGIES = (
     "B3_VWAP_MOMENTUM_IMPULSE",
     "B4_ORB_SESSION_BREAKOUT",
     "B5_OI_TREND_EXPANSION",
+    "B6_EMA_PULLBACK_TREND",
+    "B7_FUNDING_SQUEEZE_MOMENTUM",
     "T2_RS_BTC_BREAKOUT",
+    "T3_KELTNER_TREND_4H",
     "C2_MTF_COMBO_BREAKOUT",
+    "C3_ENSEMBLE_VOTE_2OF3",
     "S1_TREND_RETEST",
     "S3_VWAP_RANGE",
     "AUTOTRADE_MOMENTUM_FUNDING",
@@ -36,8 +40,12 @@ LIVE_ACTIVE_STRATEGIES = (
     "B3_VWAP_MOMENTUM_IMPULSE",
     "B4_ORB_SESSION_BREAKOUT",
     "B5_OI_TREND_EXPANSION",
+    "B6_EMA_PULLBACK_TREND",
+    "B7_FUNDING_SQUEEZE_MOMENTUM",
     "T2_RS_BTC_BREAKOUT",
+    "T3_KELTNER_TREND_4H",
     "C2_MTF_COMBO_BREAKOUT",
+    "C3_ENSEMBLE_VOTE_2OF3",
     "S1_TREND_RETEST",
 )
 
@@ -48,8 +56,12 @@ STRATEGY_HORIZON_LABELS = {
     "B3_VWAP_MOMENTUM_IMPULSE": "Demo Lab $1k (15m VWAP импульс, до 8ч)",
     "B4_ORB_SESSION_BREAKOUT": "Demo Lab $1k (15m Session ORB, до 8ч)",
     "B5_OI_TREND_EXPANSION": "Demo Lab $1k (15m OI-пробой, до 12ч)",
+    "B6_EMA_PULLBACK_TREND": "Demo Lab $1k (15m откат к EMA21, до 12ч)",
+    "B7_FUNDING_SQUEEZE_MOMENTUM": "Demo Lab $1k (1h сквиз фандинга, до 18ч)",
     "T2_RS_BTC_BREAKOUT": "Demo Lab $1k (1h RS vs BTC, до 48ч)",
+    "T3_KELTNER_TREND_4H": "Demo Lab $1k (4h Keltner тренд, до 7д)",
     "C2_MTF_COMBO_BREAKOUT": "Demo Lab $1k (Комбо 4h+RS+VWAP, до 36ч)",
+    "C3_ENSEMBLE_VOTE_2OF3": "Demo Lab $1k (Ансамбль ≥2 голосов, до 24ч)",
     "S1_TREND_RETEST": "Demo Lab $1k (15m ретест тренда, до 18ч)",
 }
 

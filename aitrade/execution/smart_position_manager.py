@@ -188,7 +188,9 @@ class SmartPositionManager:
                 pure_sltp_ids = (
                     "S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY",
                     "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION",
-                    "T1_DONCHIAN_TSMOM", "T2_RS_BTC_BREAKOUT", "C2_MTF_COMBO_BREAKOUT",
+                    "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM",
+                    "T1_DONCHIAN_TSMOM", "T2_RS_BTC_BREAKOUT", "T3_KELTNER_TREND_4H",
+                    "C2_MTF_COMBO_BREAKOUT", "C3_ENSEMBLE_VOTE_2OF3",
                 )
                 is_s1 = any(x in strat for x in pure_sltp_ids)
                 is_s3 = "S3_VWAP_RANGE" in strat

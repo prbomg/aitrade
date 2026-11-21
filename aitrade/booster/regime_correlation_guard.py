@@ -7,10 +7,10 @@ from typing import Any, Dict, List, Tuple
 class RegimeAndCorrelationGuard:
     SECTORS: Dict[str, str] = {
         "BTCUSDT": "MAJORS", "ETHUSDT": "MAJORS", "SOLUSDT": "MAJORS",
-        "XRPUSDT": "MAJORS", "BNBUSDT": "MAJORS", "TRXUSDT": "MAJORS",
+        "XRPUSDT": "MAJORS", "BNBUSDT": "MAJORS", "TRXUSDT": "MAJORS", "LTCUSDT": "MAJORS",
         "SUIUSDT": "L1_L2", "TONUSDT": "L1_L2", "ADAUSDT": "L1_L2",
         "AVAXUSDT": "L1_L2", "DOTUSDT": "L1_L2", "NEARUSDT": "L1_L2",
-        "APTUSDT": "L1_L2", "SEIUSDT": "L1_L2", "TIAUSDT": "L1_L2", "ARBUSDT": "L1_L2",
+        "APTUSDT": "L1_L2", "SEIUSDT": "L1_L2", "TIAUSDT": "L1_L2", "ARBUSDT": "L1_L2", "OPUSDT": "L1_L2",
         "FETUSDT": "AI_DEPIN", "RENDERUSDT": "AI_DEPIN", "TAOUSDT": "AI_DEPIN",
         "WLDUSDT": "AI_DEPIN", "INJUSDT": "AI_DEPIN", "FILUSDT": "AI_DEPIN", "ICPUSDT": "AI_DEPIN",
         "LINKUSDT": "DEFI_RWA", "AAVEUSDT": "DEFI_RWA", "UNIUSDT": "DEFI_RWA",

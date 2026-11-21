@@ -32,6 +32,9 @@ from aitrade.strategies.base import MarketContext, TradeSignal
 from aitrade.strategies.booster_breakout import generate_booster_breakout_signal, is_weekend_chop_utc
 from aitrade.strategies.donchian_intraday import generate_donchian_intraday_signal
 from aitrade.strategies.donchian_tsmom import generate_donchian_tsmom_signal
+from aitrade.strategies.ema_pullback_trend import generate_ema_pullback_signal
+from aitrade.strategies.funding_squeeze_momentum import generate_funding_squeeze_signal
+from aitrade.strategies.keltner_trend_4h import generate_keltner_trend_4h_signal
 from aitrade.strategies.mtf_combo_breakout import generate_mtf_combo_signal
 from aitrade.strategies.oi_trend_expansion import generate_oi_trend_expansion_signal
 from aitrade.strategies.orb_session_breakout import generate_orb_session_signal
@@ -194,8 +197,12 @@ class AITradeCombineEngine:
                 "B3_VWAP_MOMENTUM_IMPULSE",
                 "B4_ORB_SESSION_BREAKOUT",
                 "B5_OI_TREND_EXPANSION",
+                "B6_EMA_PULLBACK_TREND",
+                "B7_FUNDING_SQUEEZE_MOMENTUM",
                 "T2_RS_BTC_BREAKOUT",
+                "T3_KELTNER_TREND_4H",
                 "C2_MTF_COMBO_BREAKOUT",
+                "C3_ENSEMBLE_VOTE_2OF3",
                 "S1_TREND_RETEST",
                 "S3_VWAP_RANGE",
                 "AUTOTRADE_MOMENTUM_FUNDING",
@@ -293,6 +300,35 @@ class AITradeCombineEngine:
                         if c2_sig is not None:
                             sym_signals.append(c2_sig)
 
+                    diag["B7_FUNDING_SQUEEZE_MOMENTUM"]["eligible_window"] = True
+                    diag["B7_FUNDING_SQUEEZE_MOMENTUM"]["pairs_checked"] += 1
+                    b7_sig = generate_funding_squeeze_signal(
+                        sym, ctx.candles_1h, funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        reference_open_px=ref_px_live,
+                    )
+                    if b7_sig is not None:
+                        sym_signals.append(b7_sig)
+
+                    if len(ctx.candles_4h) >= 35:
+                        diag["T3_KELTNER_TREND_4H"]["eligible_window"] = True
+                        diag["T3_KELTNER_TREND_4H"]["pairs_checked"] += 1
+                        t3_sig = generate_keltner_trend_4h_signal(
+                            sym, ctx.candles_4h, funding_rate=float(ctx.screener.funding_rate or 0.0),
+                            reference_open_px=ref_px_live,
+                        )
+                        if t3_sig is not None:
+                            sym_signals.append(t3_sig)
+
+                    if len(ctx.candles_4h) >= 52 and len(ctx.candles_15m) >= 40:
+                        diag["B6_EMA_PULLBACK_TREND"]["eligible_window"] = True
+                        diag["B6_EMA_PULLBACK_TREND"]["pairs_checked"] += 1
+                        b6_sig = generate_ema_pullback_signal(
+                            sym, ctx.candles_15m, ctx.candles_1h, ctx.candles_4h,
+                            funding_rate=float(ctx.screener.funding_rate or 0.0), reference_open_px=ref_px_live,
+                        )
+                        if b6_sig is not None:
+                            sym_signals.append(b6_sig)
+
             if ctx.screener.passed:
                 if self.settings.get("strategy_mode", "s1_s3") == "legacy":
                     sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
@@ -378,6 +414,37 @@ class AITradeCombineEngine:
                     if b5_sig is not None:
                         sym_signals.append(b5_sig)
 
+            diag["C3_ENSEMBLE_VOTE_2OF3"]["eligible_window"] = True
+            diag["C3_ENSEMBLE_VOTE_2OF3"]["pairs_checked"] += 1
+            for v_side in ("Buy", "Sell"):
+                voters = [s for s in sym_signals if s.side == v_side and s.strategy_id != "C3_ENSEMBLE_VOTE_2OF3"]
+                unique_voters = {s.strategy_id for s in voters}
+                if len(unique_voters) >= 2:
+                    ref_s = voters[0]
+                    avg_sl_dist = sum(abs(s.entry_price - s.stop_loss) for s in voters) / len(voters)
+                    c3_entry = ref_s.entry_price
+                    c3_sl = c3_entry - avg_sl_dist if v_side == "Buy" else c3_entry + avg_sl_dist
+                    c3_tp = c3_entry + avg_sl_dist * 3.5 if v_side == "Buy" else c3_entry - avg_sl_dist * 3.5
+                    if c3_sl > 0 and c3_tp > 0:
+                        sym_signals.append(
+                            TradeSignal(
+                                symbol=sym,
+                                strategy_id="C3_ENSEMBLE_VOTE_2OF3",
+                                strategy_name=f"Ensemble Vote ({len(unique_voters)}x)",
+                                timeframe=ref_s.timeframe,
+                                side=v_side,
+                                order_type="Market",
+                                entry_price=round(c3_entry, 6),
+                                stop_loss=round(c3_sl, 6),
+                                take_profit_1=round(c3_tp, 6),
+                                take_profit_2=round(c3_tp, 6),
+                                base_winrate_est=0.52,
+                                rationale=["Согласованный сигнал " + str(len(unique_voters)) + " стратегий: " + ", ".join(sorted(unique_voters))],
+                                invalidation_rule="Pure SL/TP (3.5R) или закрытие через 24ч",
+                                features={"post_only": 0.0, "ensemble_votes": float(len(unique_voters))},
+                            )
+                        )
+
             for sig in sym_signals:
                 evaluate_and_bucket(sig, ctx)
 
@@ -450,6 +517,29 @@ class AITradeCombineEngine:
             p_c2 = diag["C2_MTF_COMBO_BREAKOUT"]["pairs_checked"]
             diag["C2_MTF_COMBO_BREAKOUT"]["idle_reason"] = f"Нет совпадения 4 факторов (4h+RS+VWAP+8h) на {p_c2} парах"
 
+        if diag["B6_EMA_PULLBACK_TREND"]["approved"] > 0:
+            diag["B6_EMA_PULLBACK_TREND"]["idle_reason"] = "Есть одобренный сигнал B6 (EMA21 откат)"
+        elif not diag["B6_EMA_PULLBACK_TREND"]["idle_reason"]:
+            p_b6 = diag["B6_EMA_PULLBACK_TREND"]["pairs_checked"]
+            diag["B6_EMA_PULLBACK_TREND"]["idle_reason"] = f"Нет отката к EMA21 в 4h-тренде на {p_b6} парах"
+
+        if diag["B7_FUNDING_SQUEEZE_MOMENTUM"]["approved"] > 0:
+            diag["B7_FUNDING_SQUEEZE_MOMENTUM"]["idle_reason"] = "Есть одобренный сигнал B7 (Сквиз фандинга)"
+        elif not diag["B7_FUNDING_SQUEEZE_MOMENTUM"]["idle_reason"]:
+            p_b7 = diag["B7_FUNDING_SQUEEZE_MOMENTUM"]["pairs_checked"]
+            diag["B7_FUNDING_SQUEEZE_MOMENTUM"]["idle_reason"] = f"Нет экстремального фандинга + пробоя 4h на {p_b7} парах"
+
+        if diag["T3_KELTNER_TREND_4H"]["approved"] > 0:
+            diag["T3_KELTNER_TREND_4H"]["idle_reason"] = "Есть одобренный сигнал T3 (4h Keltner)"
+        elif not diag["T3_KELTNER_TREND_4H"]["idle_reason"]:
+            p_t3 = diag["T3_KELTNER_TREND_4H"]["pairs_checked"]
+            diag["T3_KELTNER_TREND_4H"]["idle_reason"] = f"Нет свежего пробоя 4h канала Кельтнера на {p_t3} парах"
+
+        if diag["C3_ENSEMBLE_VOTE_2OF3"]["approved"] > 0:
+            diag["C3_ENSEMBLE_VOTE_2OF3"]["idle_reason"] = "Есть ансамблевый сигнал C3 (>=2 голосов)"
+        elif not diag["C3_ENSEMBLE_VOTE_2OF3"]["idle_reason"]:
+            diag["C3_ENSEMBLE_VOTE_2OF3"]["idle_reason"] = "Нет одновременного совпадения >=2 стратегий на одной монете"
+
         if diag["S1_TREND_RETEST"]["approved"] > 0:
             diag["S1_TREND_RETEST"]["idle_reason"] = "Есть одобренный сигнал S1"
         elif not diag["S1_TREND_RETEST"]["idle_reason"]:
@@ -489,7 +579,8 @@ class AITradeCombineEngine:
                 pass
 
         carry_opportunities: List[Dict[str, Any]] = []
-        if self.settings.get("strategy_mode", "s1_s3") != "legacy" and hasattr(self.client, "get_funding_history"):
+        demo_lab_fast = bool((self.settings.get("demo_lab") or {}).get("enabled", False))
+        if not demo_lab_fast and self.settings.get("strategy_mode", "s1_s3") != "legacy" and hasattr(self.client, "get_funding_history"):
             for sym in sorted(autotrade_set):
                 if sym not in ctx_by_sym:
                     continue
@@ -519,6 +610,7 @@ class AITradeCombineEngine:
             "screener_top": [asdict(r) for r in screener_results],
             "approved_signals": [asdict(s) for s in top_signals],
             "rejected_signals": [asdict(s) for s in rejected_signals[:10]],
+            "shadow_candidates": [asdict(s) for s in raw_candidates],
             "strategy_diagnostics": diag,
             "executed_demo_orders": executed_orders,
         }
