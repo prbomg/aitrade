@@ -139,11 +139,43 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
   <div class="kpi-mini"><span class="kpi-mini-lbl">🚀 Капитал Разгона ($1k→$10k)</span><span class="kpi-mini-val pos-green" id="kpi-booster-eq">$1,000.00</span><span class="kpi-mini-sub" id="kpi-booster-floor">Порог снижения риска: $920.00</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Позиции / Ордера)</span><span class="kpi-mini-val" id="kpi-pos-orders">0 поз. / 0 орд.</span><span class="kpi-mini-sub">Защита TP1 50% + БУ активна</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">Нереализованный PnL</span><span class="kpi-mini-val" id="kpi-upnl">$0.00</span><span class="kpi-mini-sub">По текущим сделкам</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">Реализованный PnL (журнал)</span><span class="kpi-mini-val" id="kpi-rpnl">$0.00</span><span class="kpi-mini-sub" id="kpi-winrate">Win Rate: —</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Реализованный PnL (архив + live)</span><span class="kpi-mini-val" id="kpi-rpnl">$0.00</span><span class="kpi-mini-sub" id="kpi-winrate">Win Rate: —</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">Поток WebSocket L2 (20мс)</span><span class="kpi-mini-val" id="kpi-ws">0 тиков</span><span class="kpi-mini-sub" id="kpi-ws-sub">Загрузка потока</span></div>
 </div>
 
-<div class="container"><div id="runtime-status" role="status" style="padding:12px;margin-bottom:10px;border:1px solid #f59e0b;border-radius:6px">Загрузка состояния сервиса…</div>
+<div class="container">
+  <!-- ЖИВАЯ СВОДКА: ЧТО ПРОИСХОДИТ ПРЯМО СЕЙЧАС И НА КАКОЙ СТАДИИ СТРАТЕГИИ -->
+  <div id="live-stage-banner" class="panel" style="border:1px solid #38bdf8;background:linear-gradient(180deg, rgba(14,165,233,0.08), rgba(17,24,39,0.96));margin-bottom:12px">
+    <div class="panel-header" style="margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <h3 class="panel-title">📍 Что происходит сейчас</h3>
+        <span class="badge badge-amber" id="stage-service-badge">⏳ Подключение...</span>
+        <span style="font-size:11.5px;color:var(--muted)" id="runtime-status" role="status">Загрузка состояния сервиса…</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="badge badge-blue" id="stage-version-badge">v—</span>
+        <span style="font-size:11.5px;color:#38bdf8;font-weight:600" id="stage-next-4h-timer">След. 4h-окно T1: —</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px" id="stage-strategies-grid">
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
+          <b style="color:#38bdf8">🎯 T1_DONCHIAN_TSMOM (Автотрейдинг · 4h · 12 пар)</b>
+          <span class="badge badge-blue" id="stage-t1-badge">Ожидание</span>
+        </div>
+        <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-t1-reason">Загрузка статуса T1...</div>
+        <div style="font-size:11px;color:var(--muted)" id="stage-t1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · чистые сделки T1: 0 ($0.00)</div>
+      </div>
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
+          <b style="color:#c4b5fd">🚀 B1_SQUEEZE_BREAKOUT (Разгон · 15m/1h · 6 пар)</b>
+          <span class="badge badge-purple" id="stage-b1-badge">Ожидание</span>
+        </div>
+        <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-b1-reason">Загрузка статуса B1...</div>
+        <div style="font-size:11px;color:var(--muted)" id="stage-b1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · чистые сделки B1: 0 ($0.00)</div>
+      </div>
+    </div>
+  </div>
 
   <!-- ВЫДВИЖНОЙ ЯЩИК 0: ПЕРЕКЛЮЧАТЕЛЬ DEMO <-> REAL MAINNET И ПРЕДТОРГОВЫЙ ЧЕК-ЛИСТ -->
   <div class="drawer-panel" id="drawer-env" style="border-color:#a78bfa">
@@ -344,8 +376,8 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
 
   <!-- НАВИГАЦИОННЫЕ ВКЛАДКИ С ЖИВЫМИ СЧЕТЧИКАМИ -->
   <div class="tabs" id="tabs-bar">
-    <button type="button" class="tab-btn active" data-tab="tab-booster">🚀 Разгон $1k→$10k & OI Squeeze <span class="tab-count" id="cnt-booster">0</span></button>
-    <button type="button" class="tab-btn" data-tab="tab-signals">🎯 Сигналы Основной ИИ <span class="tab-count" id="cnt-signals">0</span></button>
+    <button type="button" class="tab-btn active" data-tab="tab-signals">🎯 Воронка, WFA и Сигналы <span class="tab-count" id="cnt-signals">0</span></button>
+    <button type="button" class="tab-btn" data-tab="tab-booster">🚀 Разгон $1k→$10k & OI Радар <span class="tab-count" id="cnt-booster">0</span></button>
     <button type="button" class="tab-btn" data-tab="tab-positions">📊 Позиции и Ордера <span class="tab-count" id="cnt-pos">0</span></button>
     <button type="button" class="tab-btn" data-tab="tab-ws">⚡ WebSocket L2 + Ликвидации <span class="tab-count" id="cnt-ws">—</span></button>
     <button type="button" class="tab-btn" data-tab="tab-screener">🔥 Скринер «Монеты в игре» <span class="tab-count" id="cnt-scr">—</span></button>
@@ -355,7 +387,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
   </div>
 
   <!-- ВКЛАДКА 1: РАЗГОН $1k -> $10k + SVG EQUITY CURVE + OI SQUEEZE -->
-  <div id="tab-booster" class="tab-content active">
+  <div id="tab-booster" class="tab-content">
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title" id="booster-phase-title">🚀 Стратегия «Deposit Booster: $1,000 → $10,000» (Асимметричный компаундинг + House Money)</h3>
@@ -408,8 +440,8 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     </div>
   </div>
 
-  <!-- ВКЛАДКА 2: СИГНАЛЫ ОСНОВНОЙ ИИ + WFA GATEKEEPER -->
-  <div id="tab-signals" class="tab-content">
+  <!-- ВКЛАДКА 2: СИГНАЛЫ ОСНОВНОЙ ИИ + WFA GATEKEEPER (АКТИВНА ПО УМОЛЧАНИЮ) -->
+  <div id="tab-signals" class="tab-content active">
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">🛡 WFA Gatekeeper — Допуск стратегий по 180-дневному Rolling WFA (data/wfa_validation.json)</h3>
@@ -1245,11 +1277,11 @@ function renderState(st) {
         }).join("");
   }
   const fnl = st.strategy_funnel_24h || {};
+  const fMap = fnl.strategies || {};
   const fnlBody = document.getElementById("strategy-funnel-tbody");
   if (fnlBody) {
     const fnlUpd = document.getElementById("funnel-24h-updated");
     if (fnlUpd) fnlUpd.textContent = "Окно 24ч · обновлено: " + (fnl.updated_at || "—");
-    const fMap = fnl.strategies || {};
     const fKeys = Object.keys(fMap);
     fnlBody.innerHTML = fKeys.length === 0
       ? "<tr><td colspan=8 style=color:var(--muted)>Ожидание первого скана...</td></tr>"
@@ -1259,12 +1291,12 @@ function renderState(st) {
         }).join("");
   }
   const lsm = st.live_strategy_metrics || {};
+  const smMap = lsm.strategies || {};
   const lsmBody = document.getElementById("live-strat-metrics-tbody");
   if (lsmBody) {
     const leg = lsm.legacy_isolated || {};
     const legLbl = document.getElementById("legacy-isolated-lbl");
     if (legLbl) legLbl.textContent = "Legacy изолировано: " + (leg.trades ?? 0) + " сд. (" + (Number(leg.net_pnl_usd || 0) >= 0 ? "+" : "") + Number(leg.net_pnl_usd || 0).toFixed(2) + " USDT)";
-    const smMap = lsm.strategies || {};
     const smKeys = Object.keys(smMap);
     lsmBody.innerHTML = smKeys.length === 0
       ? "<tr><td colspan=8 style=color:var(--muted)>Нет данных раздельного учёта</td></tr>"
@@ -1273,6 +1305,69 @@ function renderState(st) {
           const np = Number(m.net_pnl_usd || 0);
           return "<tr><td><b>" + escapeHtml(k) + "</b><div style=font-size:10.5px;color:var(--muted)>" + escapeHtml(m.horizon_label || "") + "</div></td><td>" + (m.trades ?? 0) + " (" + (m.open_trades ?? 0) + " откр.)</td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + " USDT</td><td>" + Number(m.max_drawdown_usd || 0).toFixed(2) + " USDT</td><td>" + (m.avg_hold_hours == null ? "—" : Number(m.avg_hold_hours).toFixed(1) + " ч") + "</td><td>" + (m.avg_realized_r == null ? "—" : (Number(m.avg_realized_r) >= 0 ? "+" : "") + Number(m.avg_realized_r).toFixed(2) + "R") + "</td><td>" + (m.avg_slippage_bps == null ? "—" : Number(m.avg_slippage_bps).toFixed(1) + " bps") + "</td><td>" + Number(m.total_fees_usd || 0).toFixed(3) + " USDT</td></tr>";
         }).join("");
+  }
+  // Живая сводка «📍 Что происходит сейчас» над карточками
+  const hNow = st.health || {};
+  const svcB = document.getElementById("stage-service-badge");
+  if (svcB) {
+    const isScanRun = Boolean((hNow.scan || {}).running);
+    if (!hNow.ok) {
+      svcB.className = "badge badge-amber";
+      svcB.textContent = isScanRun ? "⏳ Прогрев / Первый скан..." : "⚠️ Требует внимания";
+    } else if (hNow.entry_paused) {
+      svcB.className = "badge badge-amber";
+      svcB.textContent = "⏸ Входы на паузе";
+    } else if (isScanRun) {
+      svcB.className = "badge badge-blue";
+      svcB.textContent = "🔍 Сканирует рынок...";
+    } else {
+      svcB.className = "badge badge-green";
+      svcB.textContent = "🟢 Работает штатно";
+    }
+  }
+  const verB = document.getElementById("stage-version-badge");
+  if (verB && hNow.version) verB.textContent = "v" + hNow.version;
+  const next4hEl = document.getElementById("stage-next-4h-timer");
+  if (next4hEl) {
+    const nowU = new Date();
+    const utcMinOfDay = nowU.getUTCHours() * 60 + nowU.getUTCMinutes();
+    const minSince4h = utcMinOfDay % 240;
+    if (minSince4h <= 30) {
+      next4hEl.textContent = "🟢 Сейчас активно 30-мин окно 4h T1 (осталось " + (30 - minSince4h) + " мин)";
+      next4hEl.style.color = "#34d399";
+    } else {
+      const leftMin = 240 - minSince4h;
+      next4hEl.textContent = "⏳ До след. 4h-окна T1: " + Math.floor(leftMin / 60) + "ч " + (leftMin % 60) + "м";
+      next4hEl.style.color = "#38bdf8";
+    }
+  }
+  const t1F = fMap.T1_DONCHIAN_TSMOM || {};
+  const t1M = smMap.T1_DONCHIAN_TSMOM || {};
+  if (document.getElementById("stage-t1-reason")) {
+    const t1Reason = t1F.last_idle_reason || "Ожидание первого скана";
+    document.getElementById("stage-t1-reason").textContent = t1Reason;
+    const t1B = document.getElementById("stage-t1-badge");
+    if (t1B) {
+      if ((t1M.open_trades || 0) > 0) { t1B.className = "badge badge-green"; t1B.textContent = "🟢 В позиции (" + t1M.open_trades + ")"; }
+      else if (t1Reason.indexOf("Вне 30-мин") !== -1) { t1B.className = "badge badge-blue"; t1B.textContent = "⏳ Ждёт 4h-окно"; }
+      else if (t1Reason.indexOf("Guard") !== -1 || t1Reason.indexOf("Отклон") !== -1) { t1B.className = "badge badge-amber"; t1B.textContent = "🛡 Фильтр"; }
+      else { t1B.className = "badge badge-green"; t1B.textContent = "🔍 Ищет пробой"; }
+    }
+    document.getElementById("stage-t1-stats").textContent = "24ч: окон " + (t1F.scans_eligible ?? 0) + "/" + (t1F.scans_total ?? 0) + " · кандидатов " + (t1F.candidates ?? 0) + " · отправлено " + (t1F.submitted ?? 0) + " · чистых сделок T1: " + (t1M.trades ?? 0) + " (" + (Number(t1M.net_pnl_usd || 0) >= 0 ? "+" : "") + Number(t1M.net_pnl_usd || 0).toFixed(2) + "$)";
+  }
+  const b1F = fMap.B1_SQUEEZE_BREAKOUT || {};
+  const b1M = smMap.B1_SQUEEZE_BREAKOUT || {};
+  if (document.getElementById("stage-b1-reason")) {
+    const b1Reason = b1F.last_idle_reason || "Ожидание первого скана";
+    document.getElementById("stage-b1-reason").textContent = b1Reason;
+    const b1B = document.getElementById("stage-b1-badge");
+    if (b1B) {
+      if ((b1M.open_trades || 0) > 0) { b1B.className = "badge badge-green"; b1B.textContent = "🟢 В позиции (" + b1M.open_trades + ")"; }
+      else if (b1Reason.indexOf("NoWeekendChop") !== -1) { b1B.className = "badge badge-amber"; b1B.textContent = "🌙 Пауза выходных"; }
+      else if (b1Reason.indexOf("Guard") !== -1 || b1Reason.indexOf("Отклон") !== -1) { b1B.className = "badge badge-amber"; b1B.textContent = "🛡 Фильтр"; }
+      else { b1B.className = "badge badge-purple"; b1B.textContent = "🔍 Ищет сжатие"; }
+    }
+    document.getElementById("stage-b1-stats").textContent = "24ч: окон " + (b1F.scans_eligible ?? 0) + "/" + (b1F.scans_total ?? 0) + " · кандидатов " + (b1F.candidates ?? 0) + " · отправлено " + (b1F.submitted ?? 0) + " · чистых сделок B1: " + (b1M.trades ?? 0) + " (" + (Number(b1M.net_pnl_usd || 0) >= 0 ? "+" : "") + Number(b1M.net_pnl_usd || 0).toFixed(2) + "$)";
   }
   const wfa = (st.backtest || {}).rolling_wfa || {};
   if (wfa.status === "ok" && document.getElementById("ml-base-thr")) {

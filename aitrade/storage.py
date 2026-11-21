@@ -83,8 +83,8 @@ class Ledger:
         Quantity conservation replaces symbol/time heuristics. Mixed ownership stays explicit.
         """
         with self.connect() as c:
-            intents={r[0]:dict(json.loads(r[3]),strategy_id=r[2],created=r[1],intent_id=r[0]) for r in c.execute(
-                'SELECT id,created,strategy,payload FROM intents WHERE environment=?',(self.environment,))}
+            intents={r[0]:dict(json.loads(r[4]),strategy_id=r[2],symbol=r[3],created=r[1],intent_id=r[0]) for r in c.execute(
+                'SELECT id,created,strategy,symbol,payload FROM intents WHERE environment=?',(self.environment,))}
             orders=list(c.execute('SELECT link,intent_id,payload FROM orders WHERE environment=?',(self.environment,)))
         links={i:i for i in intents};ids={}
         for i,p in intents.items():

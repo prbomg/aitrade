@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.21-intraday.18",
-  "built_at": "2026-11-21T16:51:05.499679+00:00",
+  "version": "2026.11.21-intraday.19",
+  "built_at": "2026-11-21T17:49:58.365276+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
     "aitrade/agents/__init__.py": "8f490c3f80fbc2a59fa6d72e4eff9f82c5567789d6947cbd47fb0fe691eb6282",
@@ -40,7 +40,7 @@
     "aitrade/risk/risk_engine.py": "594e0a8041e871f70eadf6633ede472efb9a97b8a178b9c65b6f5a4bb677c4da",
     "aitrade/screener/__init__.py": "1dff622deac2a47adc299e20de35a99a2287faf6be08f912ae414112f6146d26",
     "aitrade/screener/coins_in_play.py": "10ce754cc7fbc5acaafe185e003196798d44a4c2dca0de85c16fd35482f3b9c8",
-    "aitrade/storage.py": "2fb31598986acc2a861de2c32e5cc76ca4980fae17ce4b377e31e25d6014da9b",
+    "aitrade/storage.py": "20223dc6c1f87798bd7be5710ffd9128a291bdbf8214f13c946d3f7c51fd7907",
     "aitrade/strategies/__init__.py": "2eaefc953f5494a5f5b21ac7c2c4ccf19d4b05268806ea5d1024807baf7bc8bd",
     "aitrade/strategies/base.py": "072014e19db016eba69429af0b83dd7f5841399e9cf1b982c2753ad44159e98a",
     "aitrade/strategies/booster_breakout.py": "f1bd85069a46eac334cee975ba05d1dc9eab69321d21023c7115d4792fd43481",
@@ -57,7 +57,7 @@
     "aitrade/strategies/vwap_keltner_mr.py": "3f0084ef4519e042b56cff13c0dcb2bc1a6b9014f1584852678727e9214cbd85",
     "config/freqtrade_freqai_bybit.json": "369aa7f060824db84521d2fc744158610eddcac1034cc1cbccba2db6bfa89ca4",
     "config/settings.json": "047bc27e1550a385523bb2597c97732914ae2193de2188bd28bbdb8fcd722d6c",
-    "dashboard_report.html": "9cd6b407d6ea8a4e01d5688933b92d473680319ab9040a995a912c20da7b7a3a",
+    "dashboard_report.html": "c5dcb4cb57e78c80b5965c78b7d35b7058eb725b107869d2cd119de9a45409c7",
     "gui_app.py": "3de4e46d5340a147a167292a4bd17d61c8d7c60b03a35b3ec7234f838c1d5f20",
     "run_combine.py": "85b0fbf9ef7bfec5fd99149db9ad317249a8d7fd6c9887ce60195c2d14e830e2",
     "scripts/live_audit_report.py": "4cad82351df00be6d92d8b511c7066c52e7e60832b731809b35b9c4c76d48d0f",
@@ -86,7 +86,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "495a6c7e7428492615468c0eed705c8609f10461eef776dd0b2961d0e2ca8aab"
   },
-  "build_sha256": "1ef7978d001c926f5f36e92c9c0c875d545e0a0d90382268feb32fdb967c02a1",
+  "build_sha256": "c552d69d4be6345fe20ec99fc2287e6fcf49ed838d4e04c25541ea17ad214a02",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"
