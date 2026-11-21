@@ -581,7 +581,7 @@ class WalkForwardMetaLabeler:
         else:
             req_prob = self.min_win_prob
 
-        # Холодный старт (< 100 реальных сэмплов): честный статус WARMING_UP с проверкой артефакта WFA
+        # Холодный старт (< 100 реальных сэмплов): строгий fail-closed WFA Gatekeeper
         if len(X_train) < self.min_samples:
             emp_wr = round(sum(y_train) / len(y_train), 4) if y_train else 0.50
             exp_ret = round(
@@ -590,11 +590,15 @@ class WalkForwardMetaLabeler:
             wfa_artifact_ok = self.load_wfa_validation_status(signal.strategy_id)
             if wfa_validated is not None:
                 is_wfa_ok = bool(wfa_validated)
+                cal_status = "WARMING_UP" if is_wfa_ok else "WARMING_UP_BLOCKED_BY_WFA"
             elif wfa_artifact_ok is not None:
                 is_wfa_ok = bool(wfa_artifact_ok)
+                cal_status = "WARMING_UP" if is_wfa_ok else "WARMING_UP_BLOCKED_BY_WFA"
             else:
-                is_wfa_ok = signal.strategy_id in self.WFA_APPROVED_STRATEGIES
-            signal.features["ml_calibration_status"] = "WARMING_UP" if is_wfa_ok else "WARMING_UP_BLOCKED_BY_WFA"
+                # Fail-closed: без артефакта data/wfa_validation.json стратегия не допускается
+                is_wfa_ok = False
+                cal_status = "WFA_VALIDATION_UNAVAILABLE"
+            signal.features["ml_calibration_status"] = cal_status
             signal.ml_win_probability = emp_wr
             signal.expected_return_pct = exp_ret
             signal.cost_threshold_pct = cost_threshold_pct

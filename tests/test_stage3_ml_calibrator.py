@@ -54,7 +54,7 @@ class Stage3MlAndCalibratorTests(unittest.TestCase):
             micro=NS(smoothed_obi=0.5, vamp_divergence_bps=1.0, liquidity_behavior_index=0.9),
             screener=NS(rvol=2.0, spread_pct=0.02),
         )
-        out = ml.evaluate_signal(sig, ctx)
+        out = ml.evaluate_signal(sig, ctx, wfa_validated=True)
         self.assertEqual(out.features["ml_calibration_status"], "WARMING_UP")
         self.assertNotAlmostEqual(out.ml_win_probability, 0.95, places=1)
         self.assertTrue(out.passed_ml_filter)

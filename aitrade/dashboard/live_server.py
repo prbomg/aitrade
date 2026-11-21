@@ -23,6 +23,7 @@ from aitrade.booster.env_manager import BybitEnvManager
 from aitrade.config import BASE_DIR, load_settings
 from aitrade.engine import AITradeCombineEngine
 from aitrade.exchange.ws_stream import BybitV5WebSocketHub
+from aitrade.execution.audit_metrics import StrategyFunnel24h, compute_live_strategy_metrics
 from aitrade.execution.smart_position_manager import SmartPositionManager
 from aitrade.execution.limit_chaser import SmartLimitChaser
 
@@ -369,6 +370,7 @@ class ControlCenterState:
         self.booster_ledger = Ledger(BASE_DIR / "data" / "execution_ledger_booster.sqlite3")
         self.autotrade_ledger = Ledger(BASE_DIR / "data" / "execution_ledger_autotrade.sqlite3")
         self.oi_scanner = OISqueezeScanner()
+        self.strategy_funnel = StrategyFunnel24h(BASE_DIR / "data" / "strategy_funnel_24h.json")
         self.regime_guard = RegimeAndCorrelationGuard()
         self.ml_calibrator = AdaptiveMLCalibrator(BASE_DIR / "data")
         self.x_radar = XNewsSentimentRadar()
@@ -868,6 +870,8 @@ class ControlCenterState:
             news_sum = self.x_radar.get_summary() if hasattr(self.x_radar, "get_summary") else {}
 
             scan_res = self.engine.scan_market(auto_execute_demo=False)
+            if hasattr(self, "strategy_funnel"):
+                self.strategy_funnel.record_scan(scan_res.get("strategy_diagnostics") or {})
             scan_res["oi_squeeze_signals"] = squeeze_list
             scan_res["btc_regime"] = btc_reg
 
@@ -938,18 +942,22 @@ class ControlCenterState:
                             if booster_slots <= 0:
                                 break
                             side = s1["side"]
+                            strat_code = str(s1.get("strategy_id", "S1_TREND_RETEST"))
                             on_cd, cd_left = self.booster.is_symbol_on_cooldown(s1["symbol"])
                             if on_cd:
+                                if hasattr(self, "strategy_funnel"):
+                                    self.strategy_funnel.record_guard_block(strat_code, f"Кулдаун {s1['symbol']} ({cd_left} мин)")
                                 self.add_log("⏳ [Кулдаун после стопа] Пропуск " + s1["symbol"] + ": еще " + str(cd_left) + " мин")
                                 continue
                             allowed, guard_msg = self.regime_guard.can_open_position(s1["symbol"], side, positions, ws_sum)
                             n_mod = self.x_radar.get_coin_modifier(s1["symbol"], "LONG" if side == "Buy" else "SHORT")
                             if not allowed or not n_mod["allowed"]:
+                                if hasattr(self, "strategy_funnel"):
+                                    self.strategy_funnel.record_guard_block(strat_code, guard_msg if not allowed else str(n_mod.get("reason", "X/News")))
                                 continue
                             sizing = self.booster.calculate_order_qty(float(s1["entry_price"]), float(s1["stop_loss"]), b_metrics)
                             w_mult = float(s1.get("cal_weight", 1.0) or 1.0)
                             adj_qty = round(sizing["qty_coins"] * w_mult, 6)
-                            strat_code = str(s1.get("strategy_id", "S1_TREND_RETEST"))
                             b_ctrl = getattr(self, "booster_bybit", self.bybit)
                             r = b_ctrl.place_order(
                                 s1["symbol"], side, "Limit", adj_qty,
@@ -957,7 +965,11 @@ class ControlCenterState:
                                 sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,
                                 signal_context={"features": s1.get("features", {}), "ml_score": s1.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", "2026.11.19-intraday.8")}
                             )
+                            if not r.get("ok") and hasattr(self, "strategy_funnel"):
+                                self.strategy_funnel.record_guard_block(strat_code, str(r.get("retMsg", "Ошибка биржи")))
                             if r.get("ok"):
+                                if hasattr(self, "strategy_funnel"):
+                                    self.strategy_funnel.record_submit(strat_code)
                                 booster_slots -= 1
                                 positions = self.bybit.get_positions()
                                 self.mark_position_source(s1["symbol"], "🚀 Booster A+")
@@ -988,13 +1000,16 @@ class ControlCenterState:
                         break
                     side = sig["side"]
                     if side not in ("Buy", "Sell"): raise ValueError("Invalid signal side")
+                    core_strat_id = str(sig.get("strategy_id", "UNKNOWN"))
                     try:
-                        allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum, strategy_id="CORE:" + str(sig.get("strategy_id", "")))
+                        allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum, strategy_id="CORE:" + core_strat_id)
                     except TypeError:
                         allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum)
                     n_mod = self.x_radar.get_coin_modifier(sig["symbol"], sig.get("direction", sig.get("side", "LONG")))
                     if not allowed or not n_mod["allowed"]:
                         why = guard_msg if not allowed else n_mod["reason"]
+                        if hasattr(self, "strategy_funnel"):
+                            self.strategy_funnel.record_guard_block(core_strat_id, why)
                         self.add_log("🛡 [Основная ИИ Фильтр] Пропуск " + str(sig["symbol"]) + " (" + side + "): " + why)
                         continue
                     sig_otype = sig.get("order_type") if sig.get("order_type") in ("Market", "Limit") else order_type
@@ -1002,10 +1017,15 @@ class ControlCenterState:
                     r = self.bybit.place_order(
                         sig["symbol"], side, sig_otype, float(sig.get("position_size_coins", 0) or 0),
                         float(sig.get("entry_price", 0) or 0), float(sig.get("take_profit", 0) or 0),
-                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + str(sig.get("strategy_id", "UNKNOWN")),signal_context={"features":sig.get("features",{}),"ml_score":sig.get("ml_win_probability"),"cal_weight":sig.get("cal_weight",1.0),"version":getattr(self, "release_manifest", {}).get("version", "2026.11.19-intraday.8")}
+                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + core_strat_id,signal_context={"features":sig.get("features",{}),"ml_score":sig.get("ml_win_probability"),"cal_weight":sig.get("cal_weight",1.0),"version":getattr(self, "release_manifest", {}).get("version", "2026.11.19-intraday.8")}
                     )
-                    if not r.get("ok"): self.add_log("Вход Core отклонён: " + str(r.get("retMsg")))
+                    if not r.get("ok"):
+                        if hasattr(self, "strategy_funnel"):
+                            self.strategy_funnel.record_guard_block(core_strat_id, str(r.get("retMsg", "Ошибка биржи")))
+                        self.add_log("Вход Core отклонён: " + str(r.get("retMsg")))
                     if r.get("ok"):
+                        if hasattr(self, "strategy_funnel"):
+                            self.strategy_funnel.record_submit(core_strat_id)
                         core_slots -= 1
                         positions = self.bybit.get_positions()
                         self.mark_position_source(sig["symbol"], "🎯 ML Core")
@@ -1086,7 +1106,15 @@ class ControlCenterState:
             next_in_sec = max(0, int(self.autopilot_interval_sec - (time.time() - self._last_auto_ts)))
 
         booster_metrics = self.booster.compute_metrics(b_closed, b_positions)
-
+        active_ledgers = [("autotrade", self.bybit.ledger)]
+        if b_ctrl is not self.bybit:
+            active_ledgers.append(("booster", b_ctrl.ledger))
+        live_strategy_metrics = compute_live_strategy_metrics(active_ledgers)
+        funnel_summary = (
+            self.strategy_funnel.get_summary(live_strategy_metrics.get("filled_24h_by_strategy"))
+            if hasattr(self, "strategy_funnel")
+            else {"window_hours": 24, "updated_at": "—", "strategies": {}}
+        )
 
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1117,6 +1145,8 @@ class ControlCenterState:
             "scan": self.last_scan,
             "backtest": self.backtest_cache,
             "wfa_validation": self._load_wfa_validation_summary(),
+            "strategy_funnel_24h": funnel_summary,
+            "live_strategy_metrics": live_strategy_metrics,
             "settings": {
                 "order_type": self.settings.get("execution", {}).get("order_type", "Market"),
                 "max_leverage": self.max_leverage,

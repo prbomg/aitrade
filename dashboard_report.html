@@ -424,6 +424,30 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     </div>
     <div class="panel">
       <div class="panel-header">
+        <h3 class="panel-title">📊 Воронка стратегий за 24ч — Причины простоя и отказов</h3>
+        <span style="font-size:11.5px;color:var(--muted)" id="funnel-24h-updated">Обновлено: —</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Стратегия</th><th>Окон допуска</th><th>Кандидаты</th><th>Блок WFA/ML</th><th>Блок Guard/Биржа</th><th>Отправлено</th><th>Исполнено 24ч</th><th>Причина простоя / последнего блока</th></tr></thead>
+          <tbody id="strategy-funnel-tbody"><tr><td colspan="8" style="color:var(--muted)">Ожидание первого скана...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">📈 Раздельный учёт боевых стратегий (изолировано от legacy-истории)</h3>
+        <span style="font-size:11.5px;color:var(--muted)" id="legacy-isolated-lbl">Legacy: —</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Стратегия / Горизонт</th><th>Закрыто (Открыто)</th><th>Net PnL</th><th>Max DD</th><th>Ср. удержание</th><th>Ср. Realized R</th><th>Ср. слиппедж</th><th>Комиссии</th></tr></thead>
+          <tbody id="live-strat-metrics-tbody"><tr><td colspan="8" style="color:var(--muted)">Загрузка раздельного учёта T1 / B1...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
         <h3 class="panel-title">🎯 Сигналы стратегий (T1 Donchian 4h / B1 Squeeze)</h3>
         <span style="font-size:11.5px;color:var(--muted)">Автотрейдинг: <b>T1_DONCHIAN_TSMOM</b> (12 пар) · Разгон: <b>B1_SQUEEZE_BREAKOUT</b> (6 пар)</span>
       </div>
@@ -1211,13 +1235,43 @@ function renderState(st) {
     const stratMap = wfaVal.strategies || {};
     const keys = Object.keys(stratMap);
     wfaBody.innerHTML = keys.length === 0
-      ? "<tr><td colspan=7 style=color:var(--muted)>Артефакт wfa_validation.json не найден</td></tr>"
+      ? "<tr><td colspan=7 style=color:var(--muted)>Артефакт wfa_validation.json не найден (fail-closed: новые входы закрыты)</td></tr>"
       : keys.map(function(k) {
           const e = stratMap[k] || {};
           const ok = Boolean(e.wfe_passed);
           const r1 = Number(e.oos_avg_r || 0);
           const r2 = Number(e.oos_2x_avg_r || 0);
           return "<tr><td><b>" + escapeHtml(k) + "</b></td><td><span class=\"badge " + (ok ? "badge-green" : "badge-red") + "\">" + (ok ? "✅ PASSED (В БОЮ)" : "⛔ BLOCKED") + "</span></td><td>" + (e.oos_trades ?? "—") + "</td><td><b>" + (e.oos_pf == null ? "—" : Number(e.oos_pf).toFixed(2)) + "</b></td><td class=" + (r1 > 0 ? "pos-green" : "pos-red") + ">" + (r1 >= 0 ? "+" : "") + r1.toFixed(3) + "R</td><td class=" + (r2 > 0 ? "pos-green" : "pos-red") + ">" + (r2 >= 0 ? "+" : "") + r2.toFixed(3) + "R</td><td>" + (e.wfe == null ? "—" : Number(e.wfe).toFixed(2)) + "</td></tr>";
+        }).join("");
+  }
+  const fnl = st.strategy_funnel_24h || {};
+  const fnlBody = document.getElementById("strategy-funnel-tbody");
+  if (fnlBody) {
+    const fnlUpd = document.getElementById("funnel-24h-updated");
+    if (fnlUpd) fnlUpd.textContent = "Окно 24ч · обновлено: " + (fnl.updated_at || "—");
+    const fMap = fnl.strategies || {};
+    const fKeys = Object.keys(fMap);
+    fnlBody.innerHTML = fKeys.length === 0
+      ? "<tr><td colspan=8 style=color:var(--muted)>Ожидание первого скана...</td></tr>"
+      : fKeys.map(function(k) {
+          const r = fMap[k] || {};
+          return "<tr><td><b>" + escapeHtml(k) + "</b></td><td>" + (r.scans_eligible ?? 0) + " / " + (r.scans_total ?? 0) + "</td><td>" + (r.candidates ?? 0) + "</td><td>" + (r.blocked_wfa_ml ?? 0) + "</td><td>" + (r.blocked_guard_exchange ?? 0) + "</td><td>" + (r.submitted ?? 0) + "</td><td><b>" + (r.filled_24h ?? 0) + "</b></td><td style=white-space:normal;max-width:420px;color:var(--muted)>" + escapeHtml(r.last_idle_reason || "—") + "</td></tr>";
+        }).join("");
+  }
+  const lsm = st.live_strategy_metrics || {};
+  const lsmBody = document.getElementById("live-strat-metrics-tbody");
+  if (lsmBody) {
+    const leg = lsm.legacy_isolated || {};
+    const legLbl = document.getElementById("legacy-isolated-lbl");
+    if (legLbl) legLbl.textContent = "Legacy изолировано: " + (leg.trades ?? 0) + " сд. (" + (Number(leg.net_pnl_usd || 0) >= 0 ? "+" : "") + Number(leg.net_pnl_usd || 0).toFixed(2) + " USDT)";
+    const smMap = lsm.strategies || {};
+    const smKeys = Object.keys(smMap);
+    lsmBody.innerHTML = smKeys.length === 0
+      ? "<tr><td colspan=8 style=color:var(--muted)>Нет данных раздельного учёта</td></tr>"
+      : smKeys.map(function(k) {
+          const m = smMap[k] || {};
+          const np = Number(m.net_pnl_usd || 0);
+          return "<tr><td><b>" + escapeHtml(k) + "</b><div style=font-size:10.5px;color:var(--muted)>" + escapeHtml(m.horizon_label || "") + "</div></td><td>" + (m.trades ?? 0) + " (" + (m.open_trades ?? 0) + " откр.)</td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + " USDT</td><td>" + Number(m.max_drawdown_usd || 0).toFixed(2) + " USDT</td><td>" + (m.avg_hold_hours == null ? "—" : Number(m.avg_hold_hours).toFixed(1) + " ч") + "</td><td>" + (m.avg_realized_r == null ? "—" : (Number(m.avg_realized_r) >= 0 ? "+" : "") + Number(m.avg_realized_r).toFixed(2) + "R") + "</td><td>" + (m.avg_slippage_bps == null ? "—" : Number(m.avg_slippage_bps).toFixed(1) + " bps") + "</td><td>" + Number(m.total_fees_usd || 0).toFixed(3) + " USDT</td></tr>";
         }).join("");
   }
   const wfa = (st.backtest || {}).rolling_wfa || {};

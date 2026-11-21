@@ -29,7 +29,7 @@ from aitrade.ml.meta_labeler import WalkForwardMetaLabeler
 from aitrade.risk.risk_engine import RiskEngine
 from aitrade.screener.coins_in_play import CoinsInPlayScreener, ScreenerResult
 from aitrade.strategies.base import MarketContext, TradeSignal
-from aitrade.strategies.booster_breakout import generate_booster_breakout_signal
+from aitrade.strategies.booster_breakout import generate_booster_breakout_signal, is_weekend_chop_utc
 from aitrade.strategies.donchian_tsmom import generate_donchian_tsmom_signal
 from aitrade.strategies.funding_carry import FundingCarryEngine
 from aitrade.strategies.lead_lag_density import evaluate_lead_lag_density_strategy
@@ -170,39 +170,84 @@ class AITradeCombineEngine:
                 fr_autotrade[sym] = float(ctx.screener.funding_rate or 0.0)
 
         in_liquid_hours = is_in_autotrade_liquid_window(last_ts_ms, self.settings)
+        in_weekend_chop = is_weekend_chop_utc(last_ts_ms) if last_ts_ms else False
+
+        diag: Dict[str, Dict[str, Any]] = {
+            sid: {
+                "eligible_window": False,
+                "pairs_checked": 0,
+                "raw_candidates": 0,
+                "blocked_wfa_ml": 0,
+                "approved": 0,
+                "idle_reason": "",
+            }
+            for sid in (
+                "T1_DONCHIAN_TSMOM",
+                "B1_SQUEEZE_BREAKOUT",
+                "S1_TREND_RETEST",
+                "S3_VWAP_RANGE",
+                "AUTOTRADE_MOMENTUM_FUNDING",
+            )
+        }
+        t1_out_of_30m_window = 0
+        t1_wide_spread_or_short = 0
+        booster_in_play_pairs = 0
 
         def evaluate_and_bucket(sig: TradeSignal, ctx: MarketContext) -> None:
             raw_candidates.append(sig)
             sig = self.ml_labeler.evaluate_signal(sig, ctx)
             sig = self.risk_engine.size_and_validate_signal(sig, ctx.orderbook, equity_usd)
             sig = self.debate_council.conduct_debate(sig, ctx)
+            d_row = diag.get(sig.strategy_id)
+            if d_row is not None:
+                d_row["raw_candidates"] += 1
             if sig.debate_verdict == "APPROVED" and sig.passed_ml_filter:
                 approved_signals.append(sig)
+                if d_row is not None:
+                    d_row["approved"] += 1
             else:
                 rejected_signals.append(sig)
+                if d_row is not None:
+                    d_row["blocked_wfa_ml"] += 1
+                    cal_st = str((sig.features or {}).get("ml_calibration_status") or "")
+                    if cal_st == "WFA_VALIDATION_UNAVAILABLE":
+                        d_row["idle_reason"] = "Fail-closed: нет data/wfa_validation.json"
+                    elif cal_st == "WARMING_UP_BLOCKED_BY_WFA":
+                        d_row["idle_reason"] = "Заблокирован WFA Gatekeeper (wfe_passed=false)"
+                    elif not sig.passed_ml_filter:
+                        d_row["idle_reason"] = f"Отклонён ML/Cost-фильтром ({cal_st or 'ML'})"
+                    else:
+                        d_row["idle_reason"] = f"Отклонён DebateCouncil ({sig.debate_verdict})"
 
         for sym, ctx in ctx_by_sym.items():
             sym_signals: List[TradeSignal] = []
             if self.settings.get("strategy_mode", "s1_s3") != "legacy":
                 # 0) T1_DONCHIAN_TSMOM (Автотрейдинг Ядро 4h, 24/7, вход только в первые 30 мин после закрытия 4h бара)
-                if sym in autotrade_set and len(ctx.candles_4h) >= 85 and ctx.screener.spread_pct <= 0.15:
-                    last_4h_close_ms = int(ctx.candles_4h[-1].timestamp) + 14_400_000
-                    last_15m_close_ms = (int(ctx.candles_15m[-1].timestamp) + 900_000) if ctx.candles_15m else last_4h_close_ms
-                    bar_age_ms = last_15m_close_ms - last_4h_close_ms
-                    if -900_000 <= bar_age_ms <= 30 * 60_000:
-                        ref_live_px = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_4h[-1].close
-                        t1_sig = generate_donchian_tsmom_signal(
-                            sym,
-                            ctx.candles_4h,
-                            reference_open_px=ref_live_px,
-                            funding_rate=float(ctx.screener.funding_rate or 0.0),
-                            horizons=(20, 40, 80),
-                            target_ann_vol=0.25,
-                            max_hold_bars=60,
-                            tp_rr=8.0,
-                        )
-                        if t1_sig is not None:
-                            sym_signals.append(t1_sig)
+                if sym in autotrade_set:
+                    if len(ctx.candles_4h) >= 85 and ctx.screener.spread_pct <= 0.15:
+                        last_4h_close_ms = int(ctx.candles_4h[-1].timestamp) + 14_400_000
+                        last_15m_close_ms = (int(ctx.candles_15m[-1].timestamp) + 900_000) if ctx.candles_15m else last_4h_close_ms
+                        bar_age_ms = last_15m_close_ms - last_4h_close_ms
+                        if -900_000 <= bar_age_ms <= 30 * 60_000:
+                            diag["T1_DONCHIAN_TSMOM"]["eligible_window"] = True
+                            diag["T1_DONCHIAN_TSMOM"]["pairs_checked"] += 1
+                            ref_live_px = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_4h[-1].close
+                            t1_sig = generate_donchian_tsmom_signal(
+                                sym,
+                                ctx.candles_4h,
+                                reference_open_px=ref_live_px,
+                                funding_rate=float(ctx.screener.funding_rate or 0.0),
+                                horizons=(20, 40, 80),
+                                target_ann_vol=0.25,
+                                max_hold_bars=60,
+                                tp_rr=8.0,
+                            )
+                            if t1_sig is not None:
+                                sym_signals.append(t1_sig)
+                        else:
+                            t1_out_of_30m_window += 1
+                    else:
+                        t1_wide_spread_or_short += 1
 
             if ctx.screener.passed:
                 if self.settings.get("strategy_mode", "s1_s3") == "legacy":
@@ -213,6 +258,17 @@ class AITradeCombineEngine:
                     if sym != "BTCUSDT":
                         sym_signals.extend(evaluate_lead_lag_density_strategy(ctx))
                 else:
+                    if sym in booster_set:
+                        booster_in_play_pairs += 1
+                        diag["S1_TREND_RETEST"]["eligible_window"] = True
+                        diag["S1_TREND_RETEST"]["pairs_checked"] += 1
+                        if not in_weekend_chop:
+                            diag["B1_SQUEEZE_BREAKOUT"]["eligible_window"] = True
+                            diag["B1_SQUEEZE_BREAKOUT"]["pairs_checked"] += 1
+                    if sym in autotrade_set and in_liquid_hours:
+                        diag["S3_VWAP_RANGE"]["eligible_window"] = True
+                        diag["S3_VWAP_RANGE"]["pairs_checked"] += 1
+
                     best_bid = ctx.orderbook.best_bid
                     best_ask = ctx.orderbook.best_ask
                     # 1) S1_TREND_RETEST (Разгон B2) и S3_VWAP_RANGE (Автотрейдинг Рукав A, R:R >= 1.15)
@@ -252,11 +308,51 @@ class AITradeCombineEngine:
 
         # 3) Рукав B Автотрейдинга: кросс-секционный «Моментум + Фандинг» (только в ликвидные часы UTC)
         if in_liquid_hours and len(h1_autotrade) >= 2 and self.settings.get("strategy_mode", "s1_s3") != "legacy":
+            diag["AUTOTRADE_MOMENTUM_FUNDING"]["eligible_window"] = True
+            diag["AUTOTRADE_MOMENTUM_FUNDING"]["pairs_checked"] = len(h1_autotrade)
             mom_sigs = generate_momentum_funding_signals(h1_autotrade, fr_autotrade, top_n=1)
             for m_sig in mom_sigs:
                 m_ctx = ctx_by_sym.get(m_sig.symbol)
                 if m_ctx is not None:
                     evaluate_and_bucket(m_sig, m_ctx)
+
+        # Заполняем явную причину простоя для каждой стратегии без одобренного сигнала
+        if diag["T1_DONCHIAN_TSMOM"]["approved"] > 0:
+            diag["T1_DONCHIAN_TSMOM"]["idle_reason"] = "Есть одобренный сигнал T1"
+        elif not diag["T1_DONCHIAN_TSMOM"]["idle_reason"]:
+            if diag["T1_DONCHIAN_TSMOM"]["eligible_window"]:
+                diag["T1_DONCHIAN_TSMOM"]["idle_reason"] = f"Нет пробоя Donchian 20/40/80 на {diag['T1_DONCHIAN_TSMOM']['pairs_checked']} парах"
+            elif t1_out_of_30m_window > 0:
+                diag["T1_DONCHIAN_TSMOM"]["idle_reason"] = "Вне 30-мин окна закрытия 4h-бара (00/04/08/12/16/20 UTC)"
+            elif t1_wide_spread_or_short > 0:
+                diag["T1_DONCHIAN_TSMOM"]["idle_reason"] = "Мало 4h-баров (<85) или спред > 0.15%"
+            else:
+                diag["T1_DONCHIAN_TSMOM"]["idle_reason"] = "Нет пар Автотрейдинга в контексте"
+
+        if diag["B1_SQUEEZE_BREAKOUT"]["approved"] > 0:
+            diag["B1_SQUEEZE_BREAKOUT"]["idle_reason"] = "Есть одобренный сигнал B1"
+        elif not diag["B1_SQUEEZE_BREAKOUT"]["idle_reason"]:
+            if in_weekend_chop:
+                diag["B1_SQUEEZE_BREAKOUT"]["idle_reason"] = "Окно выходных NoWeekendChop (Сб 18:00–Вс 22:00 UTC)"
+            elif booster_in_play_pairs == 0:
+                diag["B1_SQUEEZE_BREAKOUT"]["idle_reason"] = f"0 из {len(booster_set)} пар Разгона прошли CoinsInPlay"
+            else:
+                diag["B1_SQUEEZE_BREAKOUT"]["idle_reason"] = f"Нет BB/KC-сжатия и пробоя на {booster_in_play_pairs} активных парах"
+
+        if diag["S1_TREND_RETEST"]["approved"] > 0:
+            diag["S1_TREND_RETEST"]["idle_reason"] = "Есть одобренный сигнал S1"
+        elif not diag["S1_TREND_RETEST"]["idle_reason"]:
+            diag["S1_TREND_RETEST"]["idle_reason"] = "Нет ретеста тренда (и стратегия заблокирована WFA)" if booster_in_play_pairs > 0 else "Нет пар Разгона в игре"
+
+        if diag["S3_VWAP_RANGE"]["approved"] > 0:
+            diag["S3_VWAP_RANGE"]["idle_reason"] = "Есть одобренный сигнал S3"
+        elif not diag["S3_VWAP_RANGE"]["idle_reason"]:
+            diag["S3_VWAP_RANGE"]["idle_reason"] = "Вне ликвидного окна 07:00–20:00 UTC" if not in_liquid_hours else "Нет возврата к VWAP (и стратегия заблокирована WFA)"
+
+        if diag["AUTOTRADE_MOMENTUM_FUNDING"]["approved"] > 0:
+            diag["AUTOTRADE_MOMENTUM_FUNDING"]["idle_reason"] = "Есть одобренный сигнал Momentum+Funding"
+        elif not diag["AUTOTRADE_MOMENTUM_FUNDING"]["idle_reason"]:
+            diag["AUTOTRADE_MOMENTUM_FUNDING"]["idle_reason"] = "Вне ликвидного окна 07:00–20:00 UTC" if not in_liquid_hours else "Нет кросс-секционного сигнала (и стратегия заблокирована WFA)"
 
         approved_signals.sort(
             key=lambda s: (s.ml_win_probability, s.expected_return_pct), reverse=True
@@ -312,5 +408,6 @@ class AITradeCombineEngine:
             "screener_top": [asdict(r) for r in screener_results],
             "approved_signals": [asdict(s) for s in top_signals],
             "rejected_signals": [asdict(s) for s in rejected_signals[:10]],
+            "strategy_diagnostics": diag,
             "executed_demo_orders": executed_orders,
         }
