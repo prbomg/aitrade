@@ -168,8 +168,8 @@ class RegimeAndCorrelationGuard:
                     same_sector_syms.append(p_sym)
 
         if self.demo_lab_enabled:
-            eff_max_sector = max(3, self.max_same_sector)
-            eff_max_dir = max(6, self.max_same_direction_total)
+            eff_max_sector = max(6, self.max_same_sector)
+            eff_max_dir = max(14, self.max_same_direction_total)
         else:
             eff_max_sector = max(2, self.max_same_sector) if is_t1_4h else self.max_same_sector
             eff_max_dir = max(4, self.max_same_direction_total) if is_t1_4h else self.max_same_direction_total

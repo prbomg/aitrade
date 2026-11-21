@@ -261,7 +261,16 @@ class WalkForwardMetaLabeler:
             return [], [], []
 
         # Кросс-секционная 1h, трендовая 4h и Demo Lab стратегии не обучаются на псевдо-сэмплах 15m ATR-барьеров
-        if strategy_id in ("AUTOTRADE_MOMENTUM_FUNDING", "T1_DONCHIAN_TSMOM", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE"):
+        if strategy_id in (
+            "AUTOTRADE_MOMENTUM_FUNDING",
+            "T1_DONCHIAN_TSMOM",
+            "B2_DONCHIAN_INTRADAY",
+            "B3_VWAP_MOMENTUM_IMPULSE",
+            "B4_ORB_SESSION_BREAKOUT",
+            "B5_OI_TREND_EXPANSION",
+            "T2_RS_BTC_BREAKOUT",
+            "C2_MTF_COMBO_BREAKOUT",
+        ):
             self._candidate_samples = []
             return [], [], []
 

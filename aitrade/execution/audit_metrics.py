@@ -20,6 +20,10 @@ TRACKED_STRATEGIES = (
     "B1_SQUEEZE_BREAKOUT",
     "B2_DONCHIAN_INTRADAY",
     "B3_VWAP_MOMENTUM_IMPULSE",
+    "B4_ORB_SESSION_BREAKOUT",
+    "B5_OI_TREND_EXPANSION",
+    "T2_RS_BTC_BREAKOUT",
+    "C2_MTF_COMBO_BREAKOUT",
     "S1_TREND_RETEST",
     "S3_VWAP_RANGE",
     "AUTOTRADE_MOMENTUM_FUNDING",
@@ -30,15 +34,23 @@ LIVE_ACTIVE_STRATEGIES = (
     "B1_SQUEEZE_BREAKOUT",
     "B2_DONCHIAN_INTRADAY",
     "B3_VWAP_MOMENTUM_IMPULSE",
+    "B4_ORB_SESSION_BREAKOUT",
+    "B5_OI_TREND_EXPANSION",
+    "T2_RS_BTC_BREAKOUT",
+    "C2_MTF_COMBO_BREAKOUT",
     "S1_TREND_RETEST",
 )
 
 STRATEGY_HORIZON_LABELS = {
     "T1_DONCHIAN_TSMOM": "Многодневный (4h, до 10д · WFA PASSED)",
     "B1_SQUEEZE_BREAKOUT": "Разгон (15m/1h, до 18ч · WFA PASSED)",
-    "B2_DONCHIAN_INTRADAY": "Demo Lab (1h Donchian, до 18ч)",
-    "B3_VWAP_MOMENTUM_IMPULSE": "Demo Lab (15m VWAP импульс, до 8ч)",
-    "S1_TREND_RETEST": "Demo Lab (15m ретест тренда, до 18ч)",
+    "B2_DONCHIAN_INTRADAY": "Demo Lab $1k (1h Donchian, до 18ч)",
+    "B3_VWAP_MOMENTUM_IMPULSE": "Demo Lab $1k (15m VWAP импульс, до 8ч)",
+    "B4_ORB_SESSION_BREAKOUT": "Demo Lab $1k (15m Session ORB, до 8ч)",
+    "B5_OI_TREND_EXPANSION": "Demo Lab $1k (15m OI-пробой, до 12ч)",
+    "T2_RS_BTC_BREAKOUT": "Demo Lab $1k (1h RS vs BTC, до 48ч)",
+    "C2_MTF_COMBO_BREAKOUT": "Demo Lab $1k (Комбо 4h+RS+VWAP, до 36ч)",
+    "S1_TREND_RETEST": "Demo Lab $1k (15m ретест тренда, до 18ч)",
 }
 
 

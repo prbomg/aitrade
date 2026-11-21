@@ -32,6 +32,10 @@ from aitrade.strategies.base import MarketContext, TradeSignal
 from aitrade.strategies.booster_breakout import generate_booster_breakout_signal, is_weekend_chop_utc
 from aitrade.strategies.donchian_intraday import generate_donchian_intraday_signal
 from aitrade.strategies.donchian_tsmom import generate_donchian_tsmom_signal
+from aitrade.strategies.mtf_combo_breakout import generate_mtf_combo_signal
+from aitrade.strategies.oi_trend_expansion import generate_oi_trend_expansion_signal
+from aitrade.strategies.orb_session_breakout import generate_orb_session_signal
+from aitrade.strategies.rs_btc_breakout import generate_rs_btc_signal
 from aitrade.strategies.vwap_momentum_impulse import generate_vwap_momentum_signal
 from aitrade.strategies.funding_carry import FundingCarryEngine
 from aitrade.strategies.lead_lag_density import evaluate_lead_lag_density_strategy
@@ -188,6 +192,10 @@ class AITradeCombineEngine:
                 "B1_SQUEEZE_BREAKOUT",
                 "B2_DONCHIAN_INTRADAY",
                 "B3_VWAP_MOMENTUM_IMPULSE",
+                "B4_ORB_SESSION_BREAKOUT",
+                "B5_OI_TREND_EXPANSION",
+                "T2_RS_BTC_BREAKOUT",
+                "C2_MTF_COMBO_BREAKOUT",
                 "S1_TREND_RETEST",
                 "S3_VWAP_RANGE",
                 "AUTOTRADE_MOMENTUM_FUNDING",
@@ -253,6 +261,38 @@ class AITradeCombineEngine:
                     else:
                         t1_wide_spread_or_short += 1
 
+                # 0b) 1h/4h Demo Lab стратегии (B2 Donchian 1h, T2 RS vs BTC, C2 MTF Combo) — по фильтру спреда на всех 20 парах
+                if ctx.screener.spread_pct <= 0.15 and len(ctx.candles_1h) >= 35:
+                    ref_px_live = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
+                    diag["B2_DONCHIAN_INTRADAY"]["eligible_window"] = True
+                    diag["B2_DONCHIAN_INTRADAY"]["pairs_checked"] += 1
+                    b2_sig = generate_donchian_intraday_signal(
+                        sym, ctx.candles_1h, bars_4h=ctx.candles_4h,
+                        reference_open_px=ref_px_live, funding_rate=float(ctx.screener.funding_rate or 0.0),
+                    )
+                    if b2_sig is not None:
+                        sym_signals.append(b2_sig)
+
+                    if sym != "BTCUSDT" and len(ctx.btc_candles_15m) >= 96:
+                        diag["T2_RS_BTC_BREAKOUT"]["eligible_window"] = True
+                        diag["T2_RS_BTC_BREAKOUT"]["pairs_checked"] += 1
+                        t2_sig = generate_rs_btc_signal(
+                            sym, ctx.candles_1h, ctx.btc_candles_15m,
+                            funding_rate=float(ctx.screener.funding_rate or 0.0), reference_open_px=ref_px_live,
+                        )
+                        if t2_sig is not None:
+                            sym_signals.append(t2_sig)
+
+                    if len(ctx.candles_4h) >= 52 and len(ctx.btc_candles_15m) >= 96:
+                        diag["C2_MTF_COMBO_BREAKOUT"]["eligible_window"] = True
+                        diag["C2_MTF_COMBO_BREAKOUT"]["pairs_checked"] += 1
+                        c2_sig = generate_mtf_combo_signal(
+                            sym, ctx.candles_15m, ctx.candles_1h, ctx.candles_4h, ctx.btc_candles_15m,
+                            funding_rate=float(ctx.screener.funding_rate or 0.0), reference_open_px=ref_px_live,
+                        )
+                        if c2_sig is not None:
+                            sym_signals.append(c2_sig)
+
             if ctx.screener.passed:
                 if self.settings.get("strategy_mode", "s1_s3") == "legacy":
                     sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
@@ -275,7 +315,7 @@ class AITradeCombineEngine:
 
                     best_bid = ctx.orderbook.best_bid
                     best_ask = ctx.orderbook.best_ask
-                    # 1) S1_TREND_RETEST (Разгон B2) и S3_VWAP_RANGE (Автотрейдинг Рукав A, R:R >= 1.15)
+                    # 1) S1_TREND_RETEST и S3_VWAP_RANGE
                     s1_s3_sig = generate_s1_s3_signal(
                         sym,
                         ctx.candles_15m,
@@ -292,7 +332,7 @@ class AITradeCombineEngine:
                         elif sym in booster_set:
                             sym_signals.append(s1_s3_sig)
 
-                    # 2) B1_SQUEEZE_BREAKOUT (Разгон Ядро B1, с фильтром выходных NoWeekendChop)
+                    # 2) B1_SQUEEZE_BREAKOUT (Разгон Ядро B1, 6 пар, с фильтром выходных NoWeekendChop)
                     if sym in booster_set:
                         b1_sig = generate_booster_breakout_signal(
                             sym,
@@ -307,34 +347,36 @@ class AITradeCombineEngine:
                         if b1_sig is not None:
                             sym_signals.append(b1_sig)
 
-                    # 2b) Demo Lab быстрые стратегии Разгона (B2 1h Donchian + B3 15m VWAP Momentum) на всех 12 парах
-                    if len(ctx.candles_1h) >= 35:
-                        diag["B2_DONCHIAN_INTRADAY"]["eligible_window"] = True
-                        diag["B2_DONCHIAN_INTRADAY"]["pairs_checked"] += 1
-                        ref_px_b = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
-                        b2_sig = generate_donchian_intraday_signal(
-                            sym,
-                            ctx.candles_1h,
-                            bars_4h=ctx.candles_4h,
-                            reference_open_px=ref_px_b,
-                            funding_rate=float(ctx.screener.funding_rate or 0.0),
-                        )
-                        if b2_sig is not None:
-                            sym_signals.append(b2_sig)
-
+                    # 2b) 15m Demo Lab стратегии Разгона (B3 VWAP Momentum, B4 Session ORB, B5 OI Trend Expansion)
+                    ref_px_15 = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
                     diag["B3_VWAP_MOMENTUM_IMPULSE"]["eligible_window"] = True
                     diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"] += 1
-                    ref_px_b3 = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
                     b3_sig = generate_vwap_momentum_signal(
-                        sym,
-                        ctx.candles_15m,
-                        bars_1h=ctx.candles_1h,
-                        rvol=float(ctx.screener.rvol or 1.0),
-                        funding_rate=float(ctx.screener.funding_rate or 0.0),
-                        reference_open_px=ref_px_b3,
+                        sym, ctx.candles_15m, bars_1h=ctx.candles_1h,
+                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        reference_open_px=ref_px_15,
                     )
                     if b3_sig is not None:
                         sym_signals.append(b3_sig)
+
+                    diag["B4_ORB_SESSION_BREAKOUT"]["eligible_window"] = True
+                    diag["B4_ORB_SESSION_BREAKOUT"]["pairs_checked"] += 1
+                    b4_sig = generate_orb_session_signal(
+                        sym, ctx.candles_15m,
+                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        reference_open_px=ref_px_15,
+                    )
+                    if b4_sig is not None:
+                        sym_signals.append(b4_sig)
+
+                    diag["B5_OI_TREND_EXPANSION"]["eligible_window"] = True
+                    diag["B5_OI_TREND_EXPANSION"]["pairs_checked"] += 1
+                    b5_sig = generate_oi_trend_expansion_signal(
+                        sym, ctx.candles_15m, ctx.oi_history,
+                        funding_rate=float(ctx.screener.funding_rate or 0.0), reference_open_px=ref_px_15,
+                    )
+                    if b5_sig is not None:
+                        sym_signals.append(b5_sig)
 
             for sig in sym_signals:
                 evaluate_and_bucket(sig, ctx)
@@ -383,6 +425,30 @@ class AITradeCombineEngine:
         elif not diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"]:
             p_chk3 = diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"]
             diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"] = f"Нет импульса от VWAP (Z=0.45..2.2, RVOL>=1.35) на {p_chk3} парах" if p_chk3 > 0 else "Нет пар в игре (CoinsInPlay)"
+
+        if diag["B4_ORB_SESSION_BREAKOUT"]["approved"] > 0:
+            diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = "Есть одобренный сигнал B4 (Session ORB)"
+        elif not diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"]:
+            p_chk4 = diag["B4_ORB_SESSION_BREAKOUT"]["pairs_checked"]
+            diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = f"Нет свежего пробоя диапазона сессии (00/07/13 UTC) на {p_chk4} парах" if p_chk4 > 0 else "Нет пар в игре (CoinsInPlay)"
+
+        if diag["B5_OI_TREND_EXPANSION"]["approved"] > 0:
+            diag["B5_OI_TREND_EXPANSION"]["idle_reason"] = "Есть одобренный сигнал B5 (OI-пробой)"
+        elif not diag["B5_OI_TREND_EXPANSION"]["idle_reason"]:
+            p_chk5 = diag["B5_OI_TREND_EXPANSION"]["pairs_checked"]
+            diag["B5_OI_TREND_EXPANSION"]["idle_reason"] = f"Нет пробоя 20b с ростом OI (>=+1.2%) на {p_chk5} парах" if p_chk5 > 0 else "Нет пар в игре (CoinsInPlay)"
+
+        if diag["T2_RS_BTC_BREAKOUT"]["approved"] > 0:
+            diag["T2_RS_BTC_BREAKOUT"]["idle_reason"] = "Есть одобренный сигнал T2 (RS vs BTC)"
+        elif not diag["T2_RS_BTC_BREAKOUT"]["idle_reason"]:
+            p_t2 = diag["T2_RS_BTC_BREAKOUT"]["pairs_checked"]
+            diag["T2_RS_BTC_BREAKOUT"]["idle_reason"] = f"Нет лидера/аутсайдера (RS>=2.2% к BTC + 12h пробой) на {p_t2} парах"
+
+        if diag["C2_MTF_COMBO_BREAKOUT"]["approved"] > 0:
+            diag["C2_MTF_COMBO_BREAKOUT"]["idle_reason"] = "Есть одобренный сигнал C2 (MTF Combo)"
+        elif not diag["C2_MTF_COMBO_BREAKOUT"]["idle_reason"]:
+            p_c2 = diag["C2_MTF_COMBO_BREAKOUT"]["pairs_checked"]
+            diag["C2_MTF_COMBO_BREAKOUT"]["idle_reason"] = f"Нет совпадения 4 факторов (4h+RS+VWAP+8h) на {p_c2} парах"
 
         if diag["S1_TREND_RETEST"]["approved"] > 0:
             diag["S1_TREND_RETEST"]["idle_reason"] = "Есть одобренный сигнал S1"

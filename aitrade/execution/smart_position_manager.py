@@ -185,9 +185,14 @@ class SmartPositionManager:
                                 record['tp1_order']=''
                                 record['tp1_link']='tp-'+uuid.uuid4().hex[:30]
                 strat = intent["strategy_id"]
-                is_s1 = any(x in strat for x in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "T1_DONCHIAN_TSMOM"))
+                pure_sltp_ids = (
+                    "S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY",
+                    "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION",
+                    "T1_DONCHIAN_TSMOM", "T2_RS_BTC_BREAKOUT", "C2_MTF_COMBO_BREAKOUT",
+                )
+                is_s1 = any(x in strat for x in pure_sltp_ids)
                 is_s3 = "S3_VWAP_RANGE" in strat
-                is_booster = strat.startswith("BOOSTER:") or any(x in strat for x in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT"))
+                is_booster = strat.startswith("BOOSTER:") or any(x in strat for x in pure_sltp_ids)
                 if self.split_tp_enabled and not (is_s1 or is_s3) and not record["tp1_order"] and not record["tp1_done"]:
                     tp=float(p.get("takeProfit") or 0)
                     if tp<=0:raise ExchangeError("Нет подтверждённого TP для TP1")

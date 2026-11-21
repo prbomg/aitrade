@@ -87,11 +87,9 @@ def generate_vwap_momentum_signal(
 
     if side == "Buy":
         sl = entry - stop_dist
-        tp1 = entry + stop_dist * (tp_rr * 0.5)
         tp2 = entry + stop_dist * tp_rr
     else:
         sl = entry + stop_dist
-        tp1 = entry - stop_dist * (tp_rr * 0.5)
         tp2 = entry - stop_dist * tp_rr
 
     if sl <= 0 or tp2 <= 0:
@@ -103,10 +101,10 @@ def generate_vwap_momentum_signal(
         strategy_name="VWAP Momentum 15m (Demo Lab)",
         timeframe="15",
         side=side,
-        order_type="Limit",
+        order_type="Market",
         entry_price=round(entry, 6),
         stop_loss=round(sl, 6),
-        take_profit_1=round(tp1, 6),
+        take_profit_1=round(tp2, 6),
         take_profit_2=round(tp2, 6),
         base_winrate_est=0.48,
         rationale=[
@@ -115,7 +113,7 @@ def generate_vwap_momentum_signal(
         ],
         invalidation_rule=f"Pure SL/TP ({tp_rr:.1f}R) или закрытие через {max_hold_hours}ч",
         features={
-            "post_only": 1.0,
+            "post_only": 0.0,
             "vwap_zscore": round(z_now, 3),
             "rvol": round(float(rvol), 3),
             "atr_15m_pct": round((cur_atr / entry) * 100.0, 3),

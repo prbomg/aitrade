@@ -45,7 +45,15 @@
       "NEARUSDT",
       "AAVEUSDT",
       "DOGEUSDT",
-      "ADAUSDT"
+      "ADAUSDT",
+      "TONUSDT",
+      "APTUSDT",
+      "ARBUSDT",
+      "OPUSDT",
+      "INJUSDT",
+      "TIAUSDT",
+      "UNIUSDT",
+      "LTCUSDT"
     ],
     "primary_timeframe": "15",
     "bias_timeframe": "60",
@@ -117,10 +125,16 @@
   "demo_lab": {
     "enabled": true,
     "disable_daily_stops_on_demo": true,
-    "max_concurrent_positions": 8,
+    "per_strategy_capital_usdt": 1000.0,
+    "portfolio_cap_usdt": 50000.0,
+    "max_concurrent_positions": 20,
     "admit_experimental_strategies": [
       "B2_DONCHIAN_INTRADAY",
       "B3_VWAP_MOMENTUM_IMPULSE",
+      "B4_ORB_SESSION_BREAKOUT",
+      "B5_OI_TREND_EXPANSION",
+      "T2_RS_BTC_BREAKOUT",
+      "C2_MTF_COMBO_BREAKOUT",
       "S1_TREND_RETEST"
     ]
   },

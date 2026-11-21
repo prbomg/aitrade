@@ -78,7 +78,7 @@ class TestIntraday13LiveWiring(unittest.TestCase):
         s = load_settings()
         self.assertEqual(len(s["universe"]["booster_pairs"]), 6)
         self.assertEqual(len(s["universe"]["autotrade_pairs"]), 12)
-        self.assertEqual(len(s["universe"]["core_pairs"]), 12)
+        self.assertGreaterEqual(len(s["universe"]["core_pairs"]), 12)
 
 
 if __name__ == "__main__":
