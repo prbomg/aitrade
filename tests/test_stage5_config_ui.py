@@ -32,10 +32,12 @@ class Stage5ConfigScreenerUiTests(unittest.TestCase):
 
     def test_dashboard_html_has_fixed_buttons_and_training_hydration(self):
         html = (BASE_DIR / "dashboard_report.html").read_text(encoding="utf-8")
+        js = (BASE_DIR / "dashboard_app.js").read_text(encoding="utf-8")
+        self.assertIn('<script src="/dashboard.js"></script>', html)
         for btn_id in ("btn-refresh-xnews", "btn-toggle-xnews", "btn-run-ml-cal", "btn-toggle-ml-cal"):
-            self.assertIn(f'getElementById("{btn_id}")', html)
-        self.assertIn("window._boosterTrainingMode = Boolean(b.training_unlimited_mode);", html)
-        self.assertIn("vault_usd", html)
+            self.assertIn(f'getElementById("{btn_id}")', js)
+        self.assertIn("window._boosterTrainingMode = Boolean(b.training_unlimited_mode);", js)
+        self.assertIn("vault_usd", js)
 
 
 if __name__ == "__main__":

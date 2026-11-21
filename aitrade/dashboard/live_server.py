@@ -1185,6 +1185,7 @@ class ControlCenterState:
 
 def create_wsgi_app(state: ControlCenterState):
     html_file = BASE_DIR / "dashboard_report.html"
+    js_file = BASE_DIR / "dashboard_app.js"
 
     def app(environ: Dict[str, Any], start_response: Any):
         method = environ.get("REQUEST_METHOD", "GET")
@@ -1206,6 +1207,10 @@ def create_wsgi_app(state: ControlCenterState):
         if method == "GET" and path in ("/", "/index.html"):
             body = html_file.read_bytes() if html_file.exists() else b"<h1>Loading...</h1>"
             start_response("200 OK", headers + [("Content-Type", "text/html; charset=utf-8")])
+            return [body]
+        if method == "GET" and path == "/dashboard.js":
+            body = js_file.read_bytes() if js_file.exists() else b""
+            start_response("200 OK", headers + [("Content-Type", "application/javascript; charset=utf-8")])
             return [body]
         if method == "GET" and path == "/api/state":
             payload = json.dumps(state.cached_state(), ensure_ascii=False).encode("utf-8")
