@@ -30,7 +30,9 @@ from aitrade.risk.risk_engine import RiskEngine
 from aitrade.screener.coins_in_play import CoinsInPlayScreener, ScreenerResult
 from aitrade.strategies.base import MarketContext, TradeSignal
 from aitrade.strategies.booster_breakout import generate_booster_breakout_signal, is_weekend_chop_utc
+from aitrade.strategies.donchian_intraday import generate_donchian_intraday_signal
 from aitrade.strategies.donchian_tsmom import generate_donchian_tsmom_signal
+from aitrade.strategies.vwap_momentum_impulse import generate_vwap_momentum_signal
 from aitrade.strategies.funding_carry import FundingCarryEngine
 from aitrade.strategies.lead_lag_density import evaluate_lead_lag_density_strategy
 from aitrade.strategies.liquidity_sweep_fvg import evaluate_liquidity_sweep_fvg_strategy
@@ -184,6 +186,8 @@ class AITradeCombineEngine:
             for sid in (
                 "T1_DONCHIAN_TSMOM",
                 "B1_SQUEEZE_BREAKOUT",
+                "B2_DONCHIAN_INTRADAY",
+                "B3_VWAP_MOMENTUM_IMPULSE",
                 "S1_TREND_RETEST",
                 "S3_VWAP_RANGE",
                 "AUTOTRADE_MOMENTUM_FUNDING",
@@ -303,6 +307,35 @@ class AITradeCombineEngine:
                         if b1_sig is not None:
                             sym_signals.append(b1_sig)
 
+                    # 2b) Demo Lab быстрые стратегии Разгона (B2 1h Donchian + B3 15m VWAP Momentum) на всех 12 парах
+                    if len(ctx.candles_1h) >= 35:
+                        diag["B2_DONCHIAN_INTRADAY"]["eligible_window"] = True
+                        diag["B2_DONCHIAN_INTRADAY"]["pairs_checked"] += 1
+                        ref_px_b = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
+                        b2_sig = generate_donchian_intraday_signal(
+                            sym,
+                            ctx.candles_1h,
+                            bars_4h=ctx.candles_4h,
+                            reference_open_px=ref_px_b,
+                            funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        )
+                        if b2_sig is not None:
+                            sym_signals.append(b2_sig)
+
+                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["eligible_window"] = True
+                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"] += 1
+                    ref_px_b3 = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
+                    b3_sig = generate_vwap_momentum_signal(
+                        sym,
+                        ctx.candles_15m,
+                        bars_1h=ctx.candles_1h,
+                        rvol=float(ctx.screener.rvol or 1.0),
+                        funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        reference_open_px=ref_px_b3,
+                    )
+                    if b3_sig is not None:
+                        sym_signals.append(b3_sig)
+
             for sig in sym_signals:
                 evaluate_and_bucket(sig, ctx)
 
@@ -339,10 +372,22 @@ class AITradeCombineEngine:
             else:
                 diag["B1_SQUEEZE_BREAKOUT"]["idle_reason"] = f"Нет BB/KC-сжатия и пробоя на {booster_in_play_pairs} активных парах"
 
+        if diag["B2_DONCHIAN_INTRADAY"]["approved"] > 0:
+            diag["B2_DONCHIAN_INTRADAY"]["idle_reason"] = "Есть одобренный сигнал B2 (1h Donchian)"
+        elif not diag["B2_DONCHIAN_INTRADAY"]["idle_reason"]:
+            p_chk = diag["B2_DONCHIAN_INTRADAY"]["pairs_checked"]
+            diag["B2_DONCHIAN_INTRADAY"]["idle_reason"] = f"Нет пробоя 12h/24h Donchian по 4h-тренду на {p_chk} парах" if p_chk > 0 else "Нет пар в игре (CoinsInPlay)"
+
+        if diag["B3_VWAP_MOMENTUM_IMPULSE"]["approved"] > 0:
+            diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"] = "Есть одобренный сигнал B3 (VWAP импульс)"
+        elif not diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"]:
+            p_chk3 = diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"]
+            diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"] = f"Нет импульса от VWAP (Z=0.45..2.2, RVOL>=1.35) на {p_chk3} парах" if p_chk3 > 0 else "Нет пар в игре (CoinsInPlay)"
+
         if diag["S1_TREND_RETEST"]["approved"] > 0:
             diag["S1_TREND_RETEST"]["idle_reason"] = "Есть одобренный сигнал S1"
         elif not diag["S1_TREND_RETEST"]["idle_reason"]:
-            diag["S1_TREND_RETEST"]["idle_reason"] = "Нет ретеста тренда (и стратегия заблокирована WFA)" if booster_in_play_pairs > 0 else "Нет пар Разгона в игре"
+            diag["S1_TREND_RETEST"]["idle_reason"] = "Нет ретеста тренда на активных парах" if booster_in_play_pairs > 0 else "Нет пар Разгона в игре"
 
         if diag["S3_VWAP_RANGE"]["approved"] > 0:
             diag["S3_VWAP_RANGE"]["idle_reason"] = "Есть одобренный сигнал S3"

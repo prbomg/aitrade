@@ -24,6 +24,7 @@ class RegimeAndCorrelationGuard:
         self.enabled: bool = True
         self.max_same_sector: int = 1
         self.max_same_direction_total: int = 2
+        self.demo_lab_enabled: bool = False
         self.btc_dump_threshold_5m_pct: float = -1.25
         self.btc_pump_threshold_5m_pct: float = 1.25
         self.time_stop_enabled: bool = True
@@ -166,8 +167,12 @@ class RegimeAndCorrelationGuard:
                     same_sector_dir += 1
                     same_sector_syms.append(p_sym)
 
-        eff_max_sector = max(2, self.max_same_sector) if is_t1_4h else self.max_same_sector
-        eff_max_dir = max(4, self.max_same_direction_total) if is_t1_4h else self.max_same_direction_total
+        if self.demo_lab_enabled:
+            eff_max_sector = max(3, self.max_same_sector)
+            eff_max_dir = max(6, self.max_same_direction_total)
+        else:
+            eff_max_sector = max(2, self.max_same_sector) if is_t1_4h else self.max_same_sector
+            eff_max_dir = max(4, self.max_same_direction_total) if is_t1_4h else self.max_same_direction_total
 
         if same_sector_dir >= eff_max_sector:
             return (

@@ -243,6 +243,10 @@ class WalkForwardMetaLabeler:
         self.label_horizon = int(ml_cfg.get("label_horizon_bars", 8))
         self.maker_fee = float(ex_cfg.get("maker_fee_rate", 0.0002))
         self.taker_fee = float(ex_cfg.get("taker_fee_rate", 0.00055))
+        demo_lab = settings.get("demo_lab", {}) if isinstance(settings, dict) else {}
+        is_demo_mode = str(ex_cfg.get("mode", "demo")).lower() == "demo"
+        self.demo_lab_enabled = bool(demo_lab.get("enabled", False) and is_demo_mode)
+        self.demo_lab_strategies = set(demo_lab.get("admit_experimental_strategies") or [])
         self._candidate_samples: List[Dict[str, Any]] = []
 
     def _extract_historical_matrix(
@@ -256,8 +260,8 @@ class WalkForwardMetaLabeler:
         if n < 45:
             return [], [], []
 
-        # Кросс-секционная 1h и трендовая 4h стратегии не обучаются на псевдо-сэмплах 15m ATR-барьеров
-        if strategy_id in ("AUTOTRADE_MOMENTUM_FUNDING", "T1_DONCHIAN_TSMOM"):
+        # Кросс-секционная 1h, трендовая 4h и Demo Lab стратегии не обучаются на псевдо-сэмплах 15m ATR-барьеров
+        if strategy_id in ("AUTOTRADE_MOMENTUM_FUNDING", "T1_DONCHIAN_TSMOM", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE"):
             self._candidate_samples = []
             return [], [], []
 
@@ -594,6 +598,12 @@ class WalkForwardMetaLabeler:
             elif wfa_artifact_ok is not None:
                 is_wfa_ok = bool(wfa_artifact_ok)
                 cal_status = "WARMING_UP" if is_wfa_ok else "WARMING_UP_BLOCKED_BY_WFA"
+                if not is_wfa_ok and self.demo_lab_enabled and signal.strategy_id in self.demo_lab_strategies:
+                    is_wfa_ok = True
+                    cal_status = "DEMO_LAB_EXPERIMENTAL"
+            elif self.demo_lab_enabled and signal.strategy_id in self.demo_lab_strategies:
+                is_wfa_ok = True
+                cal_status = "DEMO_LAB_EXPERIMENTAL"
             else:
                 # Fail-closed: без артефакта data/wfa_validation.json стратегия не допускается
                 is_wfa_ok = False

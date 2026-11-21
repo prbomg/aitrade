@@ -216,8 +216,10 @@ class BybitV5DirectController:
             if self.ledger.unresolved(symbol):raise ValueError('Есть неподтверждённая заявка; требуется сверка')
             positions=self.get_positions();orders=[o for o in self.get_open_orders() if not o.get('reduceOnly')]
             busy={p['symbol'] for p in positions}|{o['symbol'] for o in orders}
+            demo_lab_cfg=self.engine.settings.get('demo_lab',{}) if isinstance(self.engine.settings,dict) else {}
+            demo_lab_on=bool(demo_lab_cfg.get('enabled',False) and self.base_url=='https://api-demo.bybit.com')
             is_t1_core='T1_DONCHIAN_TSMOM' in str(strategy_id)
-            max_busy=2 if is_isolated_booster else (4 if is_t1_core else 3)
+            max_busy=int(demo_lab_cfg.get('max_concurrent_positions',8) or 8) if demo_lab_on else (2 if is_isolated_booster else (4 if is_t1_core else 3))
             if symbol in busy or len(busy)>=max_busy:raise ValueError('Лимит позиций/заявок или повторный символ')
             midnight=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()*1000
             if isinstance(b_state,dict):
@@ -227,6 +229,8 @@ class BybitV5DirectController:
             else:
                 cutoff_ms=midnight
                 training_mode=False
+            if demo_lab_on and bool(demo_lab_cfg.get('disable_daily_stops_on_demo',False)):
+                training_mode=True
             max_daily=int(self.engine.settings.get('risk',{}).get('max_daily_trades',10) or 10)
             if not training_mode and self.ledger.today_count(since_ts=cutoff_ms/1000.0)>=max_daily:raise ValueError(f'Лимит {max_daily} входов в день')
             acct_bal=self.get_account_summary()['usdt_balance']
@@ -311,11 +315,11 @@ class BybitV5DirectController:
                 ep=float(o.get('price') or 0);osl=float(o.get('stopLoss') or 0)
                 if not ep or not osl:raise ValueError('Непроверенный риск активной заявки')
                 totalrisk+=float(o.get('leavesQty') or o['qty'])*(abs(ep-osl)+ep*.0054)
-            total_risk_cap=0.07 if is_isolated_booster else (0.06 if is_t1_core else 0.02)
+            total_risk_cap=0.12 if demo_lab_on else (0.07 if is_isolated_booster else (0.06 if is_t1_core else 0.02))
             if totalrisk>capital*total_risk_cap:raise ValueError(f'Совокупный риск выше {int(total_risk_cap*100)}%')
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
             intent_id='at-'+uuid.uuid4().hex[:30]
-            hold_min=14400 if is_t1_core else (1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT')) else (480 if 'AUTOTRADE_MOMENTUM_FUNDING' in str(strategy_id) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0))))
+            hold_min=14400 if is_t1_core else (1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT','B2_DONCHIAN_INTRADAY')) else (480 if any(k in str(strategy_id) for k in ('AUTOTRADE_MOMENTUM_FUNDING','B3_VWAP_MOMENTUM_IMPULSE')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0))))
             _rm=getattr(owner,'release_manifest',None)
             rel_ver=_rm.get('version','2026.11.19-intraday.8') if isinstance(_rm,dict) else '2026.11.19-intraday.8'
             self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
@@ -372,6 +376,7 @@ class ControlCenterState:
         self.oi_scanner = OISqueezeScanner()
         self.strategy_funnel = StrategyFunnel24h(BASE_DIR / "data" / "strategy_funnel_24h.json")
         self.regime_guard = RegimeAndCorrelationGuard()
+        self.regime_guard.demo_lab_enabled = bool((self.settings.get("demo_lab") or {}).get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
         self.ml_calibrator = AdaptiveMLCalibrator(BASE_DIR / "data")
         self.x_radar = XNewsSentimentRadar()
         self.env_manager = BybitEnvManager(BASE_DIR / "data", self.engine.client.api_key, self.engine.client.api_secret)
@@ -922,18 +927,20 @@ class ControlCenterState:
                     sig["take_profit"] = sig.get("take_profit_2") or sig.get("take_profit_1")
             order_type = self.settings.get("execution", {}).get("order_type", "Market")
 
+            demo_lab_cfg_run = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
+            demo_lab_active = bool(demo_lab_cfg_run.get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
             if trade_booster and self.booster.state.get("enabled", True) and not self.entry_paused.is_set():
-                if b_metrics["circuit_breaker_tripped"]:
+                if b_metrics["circuit_breaker_tripped"] and not (demo_lab_active and demo_lab_cfg_run.get("disable_daily_stops_on_demo", False)):
                     self.add_log("🛑 [Разгон $1k→$10k] Сработал дневной стоп-кран или стоп цикла. Входы разгона приостановлены.")
                 else:
                     booster_pos = [p for p in positions if str(p.get("strategy_id", "")).startswith("BOOSTER:")]
-                    booster_slots = max(0, int(b_metrics["max_positions"]) - len(booster_pos))
-                    # OISqueezeScanner отключён от автоторговли до валидации (информационная панель).
-                    # Валидированные трендовые ядра Разгона: B1_SQUEEZE_BREAKOUT и S1_TREND_RETEST (независимо от trade_core).
+                    max_b_slots = max(int(b_metrics["max_positions"]), 5) if demo_lab_active else int(b_metrics["max_positions"])
+                    booster_slots = max(0, max_b_slots - len(booster_pos))
                     if booster_slots > 0:
+                        booster_strat_ids = ("B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "S1_TREND_RETEST")
                         b_cands = [
                             s for s in (scan_res.get("approved_signals") or [])
-                            if s.get("strategy_id") in ("B1_SQUEEZE_BREAKOUT", "S1_TREND_RETEST")
+                            if s.get("strategy_id") in booster_strat_ids
                             and s.get("passed_ml_filter")
                             and s.get("debate_verdict") == "APPROVED"
                             and s.get("cal_status") != "QUARANTINE"
@@ -982,7 +989,7 @@ class ControlCenterState:
                 core_slots = max(0, self.core_max_positions - len(positions))
                 min_prob = self.core_min_prob_pct / 100.0
                 all_candidates = (scan_res.get("approved_signals", []) or [])
-                booster_only_ids = {"B1_SQUEEZE_BREAKOUT", "S1_TREND_RETEST"}
+                booster_only_ids = {"B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "S1_TREND_RETEST"}
                 valid_core = [
                     s for s in all_candidates
                     if s.get("strategy_id") not in booster_only_ids

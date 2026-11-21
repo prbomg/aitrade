@@ -114,5 +114,15 @@
   "ml": {
     "min_meta_probability": 0.60
   },
+  "demo_lab": {
+    "enabled": true,
+    "disable_daily_stops_on_demo": true,
+    "max_concurrent_positions": 8,
+    "admit_experimental_strategies": [
+      "B2_DONCHIAN_INTRADAY",
+      "B3_VWAP_MOMENTUM_IMPULSE",
+      "S1_TREND_RETEST"
+    ]
+  },
   "offline_simulation": false
 }
