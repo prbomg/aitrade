@@ -469,7 +469,7 @@ function buildPositionsRows(posList) {
     const cleanStrat = rawStrat.indexOf(":") !== -1 ? rawStrat.split(":")[1] : rawStrat;
     const isPure = pureKeys.some(function(k) { return rawStrat.indexOf(k) !== -1; });
     const srcCls = srcTag.indexOf("Booster") !== -1 ? "badge-purple" : (srcTag.indexOf("Ручной") !== -1 ? "badge-amber" : "badge-blue");
-    const stratSub = (cleanStrat && cleanStrat !== "UNATTRIBUTED" && cleanStrat !== "MANUAL") ? ("<div style=font-size:10.5px;color:#cbd5e1;margin-top:2px><b>" + escapeHtml(cleanStrat) + "</b></div>") : "";
+    const stratSub = (cleanStrat && cleanStrat !== "UNATTRIBUTED" && cleanStrat !== "MANUAL") ? ("<div style=font-size:10.5px;margin-top:2px>" + stratLinkHtml(cleanStrat) + "</div>") : "";
     const tp1B = isPure ? "<span class=\"badge badge-blue\">Pure SL/TP</span>" : (p.tp1_order_price ? ("<span class=\"badge badge-green\">" + p.tp1_order_qty + " @ " + p.tp1_order_price + "</span>") : "<span class=\"badge badge-amber\">Ожидает</span>");
     const stB = (p.is_breakeven ? "<span class=\"badge badge-green\">🛡 БУ</span> " : "") + (p.has_trailing ? ("<span class=\"badge badge-blue\">📈 Trail " + p.trailingStop + "</span>") : "<span class=\"badge badge-amber\">Активна</span>");
     const tsLim = (window._rgCfg && window._rgCfg.time_stop_minutes) ? window._rgCfg.time_stop_minutes : 45;
@@ -514,6 +514,12 @@ async function refreshState() {
 }
 
 function escapeHtml(value) { return String(value == null ? "" : value).replace(/[&<>"']/g, function(c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function stratLinkHtml(stratId, label) {
+  const sid = String(stratId || "").trim();
+  const txt = label != null ? String(label) : sid;
+  if (!sid || sid === "UNATTRIBUTED" || sid === "LEGACY" || sid === "MANUAL") return escapeHtml(txt);
+  return "<button type=\"button\" class=\"strat-link\" data-strategy-detail=\"" + escapeHtml(sid) + "\" title=\"Открыть полную статистику стратегии " + escapeHtml(sid) + "\">" + escapeHtml(txt) + "</button>";
+}
 function renderState(st) {
   document.getElementById("scan-time-label").textContent = "Скан: " + (st.last_scan_ts || "—");
   const envSt = st.env_status || {};
@@ -636,7 +642,7 @@ function renderState(st) {
           const hasOos = e.oos_trades != null;
           const r1 = Number(e.oos_avg_r || 0);
           const r2 = Number(e.oos_2x_avg_r || 0);
-          return "<tr><td><b>" + escapeHtml(k) + "</b></td><td><span class=\"badge " + badgeCls + "\">" + badgeTxt + "</span></td><td>" + (e.oos_trades ?? "—") + "</td><td><b>" + (e.oos_pf == null ? "—" : Number(e.oos_pf).toFixed(2)) + "</b></td><td class=" + (hasOos ? (r1 > 0 ? "pos-green" : "pos-red") : "") + ">" + (hasOos ? ((r1 >= 0 ? "+" : "") + r1.toFixed(3) + "R") : "—") + "</td><td class=" + (hasOos ? (r2 > 0 ? "pos-green" : "pos-red") : "") + ">" + (hasOos ? ((r2 >= 0 ? "+" : "") + r2.toFixed(3) + "R") : "—") + "</td><td>" + (e.wfe == null ? "—" : Number(e.wfe).toFixed(2)) + "</td></tr>";
+          return "<tr><td>" + stratLinkHtml(k) + "</td><td><span class=\"badge " + badgeCls + "\">" + badgeTxt + "</span></td><td>" + (e.oos_trades ?? "—") + "</td><td><b>" + (e.oos_pf == null ? "—" : Number(e.oos_pf).toFixed(2)) + "</b></td><td class=" + (hasOos ? (r1 > 0 ? "pos-green" : "pos-red") : "") + ">" + (hasOos ? ((r1 >= 0 ? "+" : "") + r1.toFixed(3) + "R") : "—") + "</td><td class=" + (hasOos ? (r2 > 0 ? "pos-green" : "pos-red") : "") + ">" + (hasOos ? ((r2 >= 0 ? "+" : "") + r2.toFixed(3) + "R") : "—") + "</td><td>" + (e.wfe == null ? "—" : Number(e.wfe).toFixed(2)) + "</td></tr>";
         }).join("");
   }
   const fnl = st.strategy_funnel_24h || {};
@@ -650,7 +656,7 @@ function renderState(st) {
       ? "<tr><td colspan=8 style=color:var(--muted)>Ожидание первого скана...</td></tr>"
       : fKeys.map(function(k) {
           const r = fMap[k] || {};
-          return "<tr><td><b>" + escapeHtml(k) + "</b></td><td>" + (r.scans_eligible ?? 0) + " / " + (r.scans_total ?? 0) + "</td><td>" + (r.candidates ?? 0) + "</td><td>" + (r.blocked_wfa_ml ?? 0) + "</td><td>" + (r.blocked_guard_exchange ?? 0) + "</td><td>" + (r.submitted ?? 0) + "</td><td><b>" + (r.filled_24h ?? 0) + "</b></td><td style=white-space:normal;max-width:420px;color:var(--muted)>" + escapeHtml(r.last_idle_reason || "—") + "</td></tr>";
+          return "<tr><td>" + stratLinkHtml(k) + "</td><td>" + (r.scans_eligible ?? 0) + " / " + (r.scans_total ?? 0) + "</td><td>" + (r.candidates ?? 0) + "</td><td>" + (r.blocked_wfa_ml ?? 0) + "</td><td>" + (r.blocked_guard_exchange ?? 0) + "</td><td>" + (r.submitted ?? 0) + "</td><td><b>" + (r.filled_24h ?? 0) + "</b></td><td style=white-space:normal;max-width:420px;color:var(--muted)>" + escapeHtml(r.last_idle_reason || "—") + "</td></tr>";
         }).join("");
   }
   const lsm = st.live_strategy_metrics || {};
@@ -666,7 +672,7 @@ function renderState(st) {
       : smKeys.map(function(k) {
           const m = smMap[k] || {};
           const np = Number(m.net_pnl_usd || 0);
-          return "<tr><td><b>" + escapeHtml(k) + "</b><div style=font-size:10.5px;color:var(--muted)>" + escapeHtml(m.horizon_label || "") + "</div></td><td>" + (m.trades ?? 0) + " (" + (m.open_trades ?? 0) + " откр.)</td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + " USDT</td><td>" + Number(m.max_drawdown_usd || 0).toFixed(2) + " USDT</td><td>" + (m.avg_hold_hours == null ? "—" : Number(m.avg_hold_hours).toFixed(1) + " ч") + "</td><td>" + (m.avg_realized_r == null ? "—" : (Number(m.avg_realized_r) >= 0 ? "+" : "") + Number(m.avg_realized_r).toFixed(2) + "R") + "</td><td>" + (m.avg_slippage_bps == null ? "—" : Number(m.avg_slippage_bps).toFixed(1) + " bps") + "</td><td>" + Number(m.total_fees_usd || 0).toFixed(3) + " USDT</td></tr>";
+          return "<tr><td>" + stratLinkHtml(k) + "<div style=font-size:10.5px;color:var(--muted)>" + escapeHtml(m.horizon_label || "") + "</div></td><td>" + (m.trades ?? 0) + " (" + (m.open_trades ?? 0) + " откр.)</td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + " USDT</td><td>" + Number(m.max_drawdown_usd || 0).toFixed(2) + " USDT</td><td>" + (m.avg_hold_hours == null ? "—" : Number(m.avg_hold_hours).toFixed(1) + " ч") + "</td><td>" + (m.avg_realized_r == null ? "—" : (Number(m.avg_realized_r) >= 0 ? "+" : "") + Number(m.avg_realized_r).toFixed(2) + "R") + "</td><td>" + (m.avg_slippage_bps == null ? "—" : Number(m.avg_slippage_bps).toFixed(1) + " bps") + "</td><td>" + Number(m.total_fees_usd || 0).toFixed(3) + " USDT</td></tr>";
         }).join("");
   }
   const shLab = st.shadow_lab || {};
@@ -681,7 +687,7 @@ function renderState(st) {
           const np = Number(r.net_pnl_usd || 0);
           const up = Number(r.unrealized_pnl_usd || 0);
           const eq = Number(r.pod_equity_usd || 1000);
-          return "<tr><td><b>" + escapeHtml(r.strategy_id) + "</b></td><td class=" + (eq >= 1000 ? "pos-green" : "pos-red") + "><b>$" + eq.toFixed(2) + "</b></td><td>" + (r.open_trades ?? 0) + " / " + (r.closed_trades ?? 0) + "</td><td>" + Number(r.win_rate_pct || 0).toFixed(1) + "%</td><td><b>" + (r.profit_factor == null ? "—" : Number(r.profit_factor).toFixed(2)) + "</b></td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + "$</td><td class=" + (up >= 0 ? "pos-green" : "pos-red") + ">" + (up >= 0 ? "+" : "") + up.toFixed(2) + "$</td><td>" + (r.avg_r == null ? "—" : (Number(r.avg_r) >= 0 ? "+" : "") + Number(r.avg_r).toFixed(2) + "R") + "</td><td>" + Number(r.max_dd_usd || 0).toFixed(2) + "$</td></tr>";
+          return "<tr><td>" + stratLinkHtml(r.strategy_id) + "</td><td class=" + (eq >= 1000 ? "pos-green" : "pos-red") + "><b>$" + eq.toFixed(2) + "</b></td><td>" + (r.open_trades ?? 0) + " / " + (r.closed_trades ?? 0) + "</td><td>" + Number(r.win_rate_pct || 0).toFixed(1) + "%</td><td><b>" + (r.profit_factor == null ? "—" : Number(r.profit_factor).toFixed(2)) + "</b></td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + "$</td><td class=" + (up >= 0 ? "pos-green" : "pos-red") + ">" + (up >= 0 ? "+" : "") + up.toFixed(2) + "$</td><td>" + (r.avg_r == null ? "—" : (Number(r.avg_r) >= 0 ? "+" : "") + Number(r.avg_r).toFixed(2) + "R") + "</td><td>" + Number(r.max_dd_usd || 0).toFixed(2) + "$</td></tr>";
         }).join("");
   }
   // Живая сводка «📍 Что происходит сейчас» над карточками
@@ -988,7 +994,7 @@ function renderState(st) {
     ? "<tr><td colspan=9 style=text-align:center;color:var(--muted);padding:14px>Нажмите «🔍 Обновить скан»</td></tr>"
     : allSigs.map(function(s) {
         const side = s.side || (s.direction === "LONG" ? "Buy" : "Sell");
-        return "<tr><td><b>" + s.symbol + "</b></td><td>" + escapeHtml(s.strategy_name) + "</td><td class=" + (side === "Buy" ? "pos-green" : "pos-red") + ">" + (s.direction || (side === "Buy" ? "LONG" : "SHORT")) + "</td><td>" + Number(s.entry_price).toFixed(4) + "</td><td>" + Number(s.stop_loss).toFixed(4) + "</td><td>" + Number(s.take_profit || s.take_profit_2 || s.take_profit_1).toFixed(4) + "</td><td><b>" + (Number(s.ml_win_probability) * 100).toFixed(1) + "%</b></td><td>" + s.debate_verdict + "</td><td style=display:flex;gap:5px><button type=button class=\"btn-primary btn-sm\" data-action=exec_sig data-symbol=" + s.symbol + " data-side=" + side + " data-size=" + (s.position_size_coins || s.position_qty || 0) + " data-avg=" + s.entry_price + " data-tp=" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + " data-sl=" + s.stop_loss + ">🎯 Стандарт</button><button type=button class=\"btn-purple btn-sm\" data-action=booster_exec data-symbol=" + s.symbol + " data-side=" + side + " data-avg=" + s.entry_price + " data-tp=" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + " data-sl=" + s.stop_loss + ">🚀 Booster</button></td></tr>";
+        return "<tr><td><b>" + s.symbol + "</b></td><td>" + stratLinkHtml(s.strategy_id || s.strategy_name, s.strategy_name || s.strategy_id) + "</td><td class=" + (side === "Buy" ? "pos-green" : "pos-red") + ">" + (s.direction || (side === "Buy" ? "LONG" : "SHORT")) + "</td><td>" + Number(s.entry_price).toFixed(4) + "</td><td>" + Number(s.stop_loss).toFixed(4) + "</td><td>" + Number(s.take_profit || s.take_profit_2 || s.take_profit_1).toFixed(4) + "</td><td><b>" + (Number(s.ml_win_probability) * 100).toFixed(1) + "%</b></td><td>" + s.debate_verdict + "</td><td style=display:flex;gap:5px><button type=button class=\"btn-primary btn-sm\" data-action=exec_sig data-symbol=" + s.symbol + " data-side=" + side + " data-size=" + (s.position_size_coins || s.position_qty || 0) + " data-avg=" + s.entry_price + " data-tp=" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + " data-sl=" + s.stop_loss + ">🎯 Стандарт</button><button type=button class=\"btn-purple btn-sm\" data-action=booster_exec data-symbol=" + s.symbol + " data-side=" + side + " data-avg=" + s.entry_price + " data-tp=" + (s.take_profit || s.take_profit_2 || s.take_profit_1) + " data-sl=" + s.stop_loss + ">🚀 Booster</button></td></tr>";
       }).join("");
 
   const scrList = sc.screener_top || [];
@@ -1078,7 +1084,7 @@ function renderState(st) {
       const bCls = sr.status === "BOOST" ? "badge-green" : (sr.status === "QUARANTINE" ? "badge-red" : (sr.status === "COOLING" ? "badge-amber" : "badge-blue"));
       const np = Number(sr.net_pnl_usd || 0);
       const padj = Number(sr.prob_adjustment_pct || 0);
-      return "<tr><td><b>" + escapeHtml(sr.strategy_name) + "</b></td><td><span class=\"badge " + bCls + "\">" + sr.badge + "</span></td><td>" + sr.trades + " (" + sr.wins + "W / " + sr.losses + "L)</td><td><b>" + sr.win_rate_pct + "%</b></td><td><b>" + (sr.profit_factor == null ? "—" : sr.profit_factor) + "</b></td><td class=" + (sr.streak >= 0 ? "pos-green" : "pos-red") + "><b>" + sr.streak_str + "</b></td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+$" : "-$") + Math.abs(np).toFixed(2) + "</td><td class=" + (padj >= 0 ? "pos-green" : "pos-red") + ">" + (padj >= 0 ? "+" : "") + padj + "%</td></tr>";
+      return "<tr><td>" + stratLinkHtml(sr.strategy_name) + "</td><td><span class=\"badge " + bCls + "\">" + sr.badge + "</span></td><td>" + sr.trades + " (" + sr.wins + "W / " + sr.losses + "L)</td><td><b>" + sr.win_rate_pct + "%</b></td><td><b>" + (sr.profit_factor == null ? "—" : sr.profit_factor) + "</b></td><td class=" + (sr.streak >= 0 ? "pos-green" : "pos-red") + "><b>" + sr.streak_str + "</b></td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+$" : "-$") + Math.abs(np).toFixed(2) + "</td><td class=" + (padj >= 0 ? "pos-green" : "pos-red") + ">" + (padj >= 0 ? "+" : "") + padj + "%</td></tr>";
     }).join("");
   }
 
@@ -1090,9 +1096,182 @@ function renderState(st) {
     const dtStr = c.updatedTime
       ? new Date(Number(c.updatedTime)).toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit"})
       : "—";
-    return "<tr><td><b>" + c.symbol + "</b></td><td><span class=\"badge " + sCls + "\">" + escapeHtml(cleanS) + "</span></td><td>" + c.side + "</td><td>" + c.qty + "</td><td>" + c.avgEntryPrice + "</td><td>" + c.avgExitPrice + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + dtStr + "</td></tr>";
+    return "<tr><td><b>" + c.symbol + "</b></td><td><span class=\"badge " + sCls + "\">" + stratLinkHtml(cleanS) + "</span></td><td>" + c.side + "</td><td>" + c.qty + "</td><td>" + c.avgEntryPrice + "</td><td>" + c.avgExitPrice + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + dtStr + "</td></tr>";
   }).join("");
 }
 
+// Детальная страница стратегии
+window._activeStrategyDetail = null;
+
+function renderSimpleEquitySvg(svgId, lblId, points, lineColor) {
+  const svg = document.getElementById(svgId);
+  const lbl = document.getElementById(lblId);
+  if (!svg) return;
+  const pts = (points && points.length >= 2) ? points : [1000, 1000];
+  const minV = Math.min.apply(null, pts.concat([1000])) * 0.996;
+  const maxV = Math.max.apply(null, pts.concat([1000])) * 1.004;
+  const span = Math.max(1, maxV - minV);
+  const W = 460, H = 115;
+  const toY = function(v) { return Math.round(H - 12 - ((v - minV) / span) * (H - 24)); };
+  const stepX = (W - 20) / Math.max(1, pts.length - 1);
+  const poly = pts.map(function(v, i) { return Math.round(10 + i * stepX) + "," + toY(v); }).join(" ");
+  const baseY = toY(1000);
+  if (lbl) lbl.textContent = "Старт: $1,000 → Текущий: $" + Number(pts[pts.length - 1]).toFixed(2) + " (точек: " + pts.length + ")";
+  svg.innerHTML =
+    "<line x1=10 y1=" + baseY + " x2=450 y2=" + baseY + " stroke=#475569 stroke-dasharray=4,4 stroke-width=1 />" +
+    "<polyline fill=none stroke=" + (lineColor || "#38bdf8") + " stroke-width=2.4 points=\"" + poly + "\" />";
+}
+
+function renderStrategyDetail(d) {
+  const meta = d.meta || {};
+  const sh = d.shadow || {};
+  const dm = d.demo_metrics || {};
+  const fnl = d.funnel_24h || {};
+  const wfa = d.wfa || {};
+  const mlc = d.ml_cal || {};
+
+  document.getElementById("sd-title").textContent = d.strategy_id || "Стратегия";
+  document.getElementById("sd-updated").textContent = "Обновлено: " + (d.updated_at || "—");
+  document.getElementById("sd-desc").textContent = meta.desc || "—";
+  document.getElementById("sd-params").textContent = "Таймфрейм: " + (meta.timeframe || "—") + " · Горизонт: " + (meta.max_hold || "—") + " · Ордер: " + (meta.order_type || "—") + " · Риск: " + (meta.risk_per_trade || "—");
+
+  const admB = document.getElementById("sd-admission-badge");
+  if (meta.admission_status === "WFA_PASSED") { admB.className = "badge badge-green"; admB.textContent = "✅ WFA PASSED (В БОЮ)"; }
+  else if (meta.admission_status === "DEMO_LAB") { admB.className = "badge badge-purple"; admB.textContent = "🧪 DEMO LAB (В БОЮ)"; }
+  else { admB.className = "badge badge-red"; admB.textContent = "⛔ BLOCKED"; }
+  document.getElementById("sd-contour-badge").textContent = meta.contour || "—";
+  document.getElementById("sd-tier-badge").textContent = meta.tier || "—";
+
+  const shEq = Number(sh.pod_equity_usd || 1000);
+  const shEqEl = document.getElementById("sd-kpi-sh-eq");
+  shEqEl.textContent = "$" + shEq.toFixed(2);
+  shEqEl.className = "kpi-mini-val " + (shEq >= 1000 ? "pos-green" : "pos-red");
+  document.getElementById("sd-kpi-sh-sub").textContent = (sh.open_trades || 0) + " откр. / " + (sh.closed_trades || 0) + " закр. (Net " + (Number(sh.net_pnl_usd || 0) >= 0 ? "+" : "") + Number(sh.net_pnl_usd || 0).toFixed(2) + "$)";
+
+  const dmPnl = Number(dm.net_pnl_usd || 0);
+  const dmPnlEl = document.getElementById("sd-kpi-dm-pnl");
+  dmPnlEl.textContent = (dmPnl >= 0 ? "+$" : "-$") + Math.abs(dmPnl).toFixed(2);
+  dmPnlEl.className = "kpi-mini-val " + (dmPnl >= 0 ? "pos-green" : "pos-red");
+  document.getElementById("sd-kpi-dm-sub").textContent = (dm.open_trades || 0) + " откр. / " + (dm.trades || 0) + " закр.";
+
+  document.getElementById("sd-kpi-sh-wr").textContent = Number(sh.win_rate_pct || 0).toFixed(1) + "% / " + (sh.profit_factor == null ? "—" : Number(sh.profit_factor).toFixed(2));
+  document.getElementById("sd-kpi-dm-wr").textContent = "Real Demo: " + Number(dm.win_rate_pct || 0).toFixed(1) + "% / " + (dm.profit_factor == null ? "—" : Number(dm.profit_factor).toFixed(2));
+  document.getElementById("sd-kpi-sh-r").textContent = (sh.avg_r == null ? "—" : ((Number(sh.avg_r) >= 0 ? "+" : "") + Number(sh.avg_r).toFixed(2) + "R")) + " / $" + Number(sh.max_dd_usd || 0).toFixed(2);
+  document.getElementById("sd-kpi-dm-r").textContent = "Real Demo: " + (dm.avg_realized_r == null ? "—" : ((Number(dm.avg_realized_r) >= 0 ? "+" : "") + Number(dm.avg_realized_r).toFixed(2) + "R")) + " / $" + Number(dm.max_drawdown_usd || 0).toFixed(2);
+  document.getElementById("sd-kpi-slip").textContent = dm.avg_slippage_bps == null ? "—" : (Number(dm.avg_slippage_bps).toFixed(1) + " bps");
+  document.getElementById("sd-kpi-fees").textContent = "Demo: $" + Number(dm.total_fees_usd || 0).toFixed(3) + " · Shadow: $" + Number(sh.total_fees_usd || 0).toFixed(3);
+  document.getElementById("sd-kpi-funnel").textContent = (fnl.candidates ?? 0) + " канд. / " + (fnl.submitted ?? 0) + " отпр.";
+  document.getElementById("sd-kpi-idle").textContent = fnl.last_idle_reason || "Ожидание скана";
+
+  renderSimpleEquitySvg("sd-shadow-svg", "sd-shadow-chart-lbl", sh.equity_curve || [1000, 1000], "#a78bfa");
+  renderSimpleEquitySvg("sd-demo-svg", "sd-demo-chart-lbl", d.demo_equity_curve || [1000, 1000], "#38bdf8");
+
+  const wfaBox = document.getElementById("sd-wfa-box");
+  if (wfa && wfa.oos_trades != null) {
+    wfaBox.innerHTML =
+      "<div>Статус WFA: <b>" + (wfa.wfe_passed ? "✅ PASSED" : "⛔ FAILED") + "</b> · OOS сделок: <b>" + wfa.oos_trades + "</b></div>" +
+      "<div>Profit Factor: <b>" + (wfa.oos_pf == null ? "—" : Number(wfa.oos_pf).toFixed(2)) + "</b> · WFE: <b>" + (wfa.wfe == null ? "—" : Number(wfa.wfe).toFixed(2)) + "</b></div>" +
+      "<div>1x E[R]: <b>" + Number(wfa.oos_avg_r || 0).toFixed(3) + "R</b> · 2x Stress E[R]: <b>" + Number(wfa.oos_2x_avg_r || 0).toFixed(3) + "R</b></div>";
+  } else {
+    wfaBox.innerHTML = "<div style=color:var(--muted)>180-дневный Rolling WFA ещё не запускался для этой стратегии (идёт живой тест в Demo Lab / Shadow Lab).</div>";
+  }
+
+  const mlBox = document.getElementById("sd-ml-box");
+  if (mlc && mlc.strategy_name) {
+    const sess = mlc.sessions || {};
+    const sHtml = ["ASIA", "EUROPE", "US_OVERLAP"].map(function(sk) {
+      const sv = sess[sk] || {};
+      return sk + ": " + (sv.trades || 0) + " сд. (WR " + Number(sv.win_rate_pct || 0).toFixed(0) + "%, " + Number(sv.session_multiplier || 1).toFixed(2) + "x)";
+    }).join(" · ");
+    mlBox.innerHTML =
+      "<div>Статус: <b>" + escapeHtml(mlc.badge || "⚖️ 1.0x") + "</b> · Серия: <b>" + escapeHtml(mlc.streak_str || "0") + "</b> · Закрыто: <b>" + (mlc.trades || 0) + "</b></div>" +
+      "<div style=color:var(--muted);font-size:11.5px;margin-top:4px>" + escapeHtml(sHtml) + "</div>";
+  } else {
+    mlBox.innerHTML = "<div style=color:var(--muted)>Пока нет закрытых реальных сделок в калибраторе (вес 1.0x).</div>";
+  }
+
+  const openRows = [];
+  (d.demo_open_positions || []).forEach(function(p) {
+    const u = Number(p.unrealisedPnl || 0);
+    openRows.push("<tr><td><span class=\"badge badge-green\">💰 Real Demo</span></td><td><b>" + escapeHtml(p.symbol) + "</b></td><td class=" + (p.side === "Buy" ? "pos-green" : "pos-red") + ">" + escapeHtml(p.side) + "</td><td>" + escapeHtml(p.avgPrice) + "</td><td>" + escapeHtml(p.markPrice) + "</td><td>" + escapeHtml(p.stopLoss || "—") + "</td><td>" + escapeHtml(p.takeProfit || "—") + "</td><td class=" + (u >= 0 ? "pos-green" : "pos-red") + ">" + (u >= 0 ? "+" : "") + u.toFixed(2) + "$</td><td>" + Number(p.age_min || 0).toFixed(0) + "м</td></tr>");
+  });
+  (sh.open_positions || []).forEach(function(p) {
+    const u = Number(p.upnl_usd || 0);
+    openRows.push("<tr><td><span class=\"badge badge-purple\">🧪 Shadow</span></td><td><b>" + escapeHtml(p.symbol) + "</b></td><td class=" + (p.side === "Buy" ? "pos-green" : "pos-red") + ">" + escapeHtml(p.side) + "</td><td>" + p.entry_px + "</td><td>" + p.mark_px + "</td><td>" + p.sl_px + "</td><td>" + p.tp_px + "</td><td class=" + (u >= 0 ? "pos-green" : "pos-red") + ">" + (u >= 0 ? "+" : "") + u.toFixed(2) + "$</td><td>" + p.age_hours + "ч</td></tr>");
+  });
+  document.getElementById("sd-open-tbody").innerHTML = openRows.length ? openRows.join("") : "<tr><td colspan=9 style=color:var(--muted)>Нет открытых позиций</td></tr>";
+
+  const shClosed = sh.closed_trades_list || [];
+  document.getElementById("sd-shadow-closed-tbody").innerHTML = shClosed.length === 0
+    ? "<tr><td colspan=10 style=color:var(--muted)>Пока нет закрытых сделок Shadow</td></tr>"
+    : shClosed.map(function(c) {
+        const p = Number(c.pnl_usd || 0);
+        const r = Number(c.realized_r || 0);
+        return "<tr><td><b>" + escapeHtml(c.symbol) + "</b></td><td class=" + (c.side === "Buy" ? "pos-green" : "pos-red") + ">" + escapeHtml(c.side) + "</td><td>" + c.entry_px + "</td><td>" + c.exit_px + "</td><td><span class=\"badge " + (c.exit_reason === "TP" ? "badge-green" : (c.exit_reason === "SL" ? "badge-red" : "badge-amber")) + "\">" + escapeHtml(c.exit_reason) + "</span></td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + "$</td><td class=" + (r >= 0 ? "pos-green" : "pos-red") + ">" + (r >= 0 ? "+" : "") + r.toFixed(2) + "R</td><td>$" + Number(c.fees_usd || 0).toFixed(3) + "</td><td>" + Number(c.hold_hours || 0).toFixed(1) + "ч</td><td>" + escapeHtml(c.closed_at || "—") + "</td></tr>";
+      }).join("");
+
+  const traces = d.demo_traces || [];
+  document.getElementById("sd-demo-traces-tbody").innerHTML = traces.length === 0
+    ? "<tr><td colspan=11 style=color:var(--muted)>Пока нет реальных Demo-ордеров по этой стратегии</td></tr>"
+    : traces.map(function(t) {
+        const p = t.closed_pnl_usd;
+        const r = t.realized_r;
+        return "<tr><td><b>" + escapeHtml(t.symbol) + "</b></td><td class=" + (t.side === "Buy" ? "pos-green" : "pos-red") + ">" + escapeHtml(t.side) + "</td><td><span class=\"badge " + (t.status === "OPEN" ? "badge-blue" : (t.status === "CLOSED" ? "badge-green" : "badge-amber")) + "\">" + escapeHtml(t.status) + "</span></td><td>" + (t.signal_entry_px ?? "—") + "</td><td>" + (t.actual_fill_px ?? "—") + "</td><td>" + (t.slippage_bps == null ? "—" : Number(t.slippage_bps).toFixed(1) + " bps") + "</td><td>$" + Number(t.fees_usd || 0).toFixed(3) + "</td><td class=" + (p == null ? "" : (Number(p) >= 0 ? "pos-green" : "pos-red")) + ">" + (p == null ? "—" : ((Number(p) >= 0 ? "+" : "") + Number(p).toFixed(2) + "$")) + "</td><td class=" + (r == null ? "" : (Number(r) >= 0 ? "pos-green" : "pos-red")) + ">" + (r == null ? "—" : ((Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "R")) + "</td><td>" + (t.hold_hours == null ? "—" : Number(t.hold_hours).toFixed(1) + "ч") + "</td><td>" + escapeHtml(t.opened_at_utc || "—") + "</td></tr>";
+      }).join("");
+}
+
+async function fetchStrategyDetail(sid) {
+  if (!sid) return;
+  try {
+    const r = await fetch(API_BASE + "/api/strategy_detail?id=" + encodeURIComponent(sid));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    if (d && d.ok) renderStrategyDetail(d);
+  } catch (e) {
+    showToast("Не удалось загрузить стратегию: " + e.message, true);
+  }
+}
+
+function openStrategyDetail(sid) {
+  if (!sid) return;
+  window._activeStrategyDetail = sid;
+  const mainC = document.querySelector("body > .container:not(#strategy-detail-view)");
+  const detV = document.getElementById("strategy-detail-view");
+  if (mainC) mainC.style.display = "none";
+  if (detV) detV.style.display = "block";
+  try { history.replaceState(null, "", "#strategy=" + encodeURIComponent(sid)); } catch (e) {}
+  window.scrollTo(0, 0);
+  fetchStrategyDetail(sid);
+}
+
+function closeStrategyDetail() {
+  window._activeStrategyDetail = null;
+  const mainC = document.querySelector("body > .container:not(#strategy-detail-view)");
+  const detV = document.getElementById("strategy-detail-view");
+  if (detV) detV.style.display = "none";
+  if (mainC) mainC.style.display = "block";
+  try { history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+}
+
+document.body.addEventListener("click", function(e) {
+  const link = e.target.closest("[data-strategy-detail]");
+  if (!link) return;
+  const sid = link.getAttribute("data-strategy-detail");
+  if (sid) openStrategyDetail(sid);
+});
+const btnSdBack = document.getElementById("btn-sd-back");
+if (btnSdBack) btnSdBack.addEventListener("click", closeStrategyDetail);
+const btnSdRef = document.getElementById("btn-sd-refresh");
+if (btnSdRef) btnSdRef.addEventListener("click", function() { if (window._activeStrategyDetail) fetchStrategyDetail(window._activeStrategyDetail); });
+document.addEventListener("keydown", function(e) { if (e.key === "Escape" && window._activeStrategyDetail) closeStrategyDetail(); });
+
+if (window.location.hash && window.location.hash.indexOf("#strategy=") === 0) {
+  const initSid = decodeURIComponent(window.location.hash.slice("#strategy=".length));
+  if (initSid) openStrategyDetail(initSid);
+}
+
 refreshState();
-setInterval(refreshState, 3500);
+setInterval(function() {
+  refreshState();
+  if (window._activeStrategyDetail) fetchStrategyDetail(window._activeStrategyDetail);
+}, 3500);

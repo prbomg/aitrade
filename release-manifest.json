@@ -1,6 +1,6 @@
 {
   "version": "2026.11.22-intraday.31",
-  "built_at": "2026-11-22T09:02:55.894996+00:00",
+  "built_at": "2026-11-22T09:20:58.626668+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
     "aitrade/agents/__init__.py": "8f490c3f80fbc2a59fa6d72e4eff9f82c5567789d6947cbd47fb0fe691eb6282",
@@ -67,7 +67,7 @@
     "aitrade/strategies/vwap_momentum_impulse.py": "e9af7acd2284f843b19a1bcd8469bbe125db3253df734042407422d14ebe02ce",
     "config/freqtrade_freqai_bybit.json": "369aa7f060824db84521d2fc744158610eddcac1034cc1cbccba2db6bfa89ca4",
     "config/settings.json": "8813abc2a84783a9f389dd2ff16a299c674a23256853831df6da8fbee4d3c11f",
-    "dashboard_app.js": "f6e2d496913819136a62d86f8fe4869075793e2e42d60feface440868f111952",
+    "dashboard_app.js": "2ab883a4582af8e7c1b8518fc297388b7c03f7d062aa458522aa2e0c0eb21fc3",
     "dashboard_report.html": "889737ac61776e00634f7bbfe93b0ce8c912a10f1aa24a87f9c8a3d44c2cd6bf",
     "gui_app.py": "3de4e46d5340a147a167292a4bd17d61c8d7c60b03a35b3ec7234f838c1d5f20",
     "run_combine.py": "85b0fbf9ef7bfec5fd99149db9ad317249a8d7fd6c9887ce60195c2d14e830e2",
@@ -104,7 +104,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "dda01db72360e009d6db4bf123c238898184e89bc915066c8b78e5fa5e125619",
+  "build_sha256": "3106a9e43bbc8fe91ad7481a72eb0683f50c91f72e1895de35fb544ef5a9edf2",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"
