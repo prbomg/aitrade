@@ -108,13 +108,22 @@ function requireDoubleTap(btnEl, key, confirmLabel, actionFn) {
 }
 
 window.addEventListener("unhandledrejection", function(event) { console.error(event.reason); });
+function redirectToLogin() {
+  const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
+  window.location.replace("/login?next=" + next);
+}
 async function apiPost(path, data) {
   try {
     const r = await fetch(API_BASE + path, {
       method: "POST",
+      credentials: "same-origin",
       headers: {"Content-Type": "application/json", "X-Requested-With": "AItrade"},
       body: JSON.stringify(data || {})
     });
+    if (r.status === 401) {
+      redirectToLogin();
+      throw new Error("Требуется авторизация");
+    }
     const result = await r.json();
     if (!r.ok || result.ok === false) throw new Error(result.retMsg || result.error || "Ошибка выполнения запроса");
     return result;
@@ -602,7 +611,8 @@ async function refreshState(force) {
   const controller = new AbortController();
   const timer = setTimeout(function(){controller.abort();}, 10000);
   try {
-    const r = await fetch(API_BASE + "/api/state", {signal:controller.signal});
+    const r = await fetch(API_BASE + "/api/state", {signal:controller.signal, credentials:"same-origin"});
+    if (r.status === 401) { redirectToLogin(); return; }
     if (!r.ok) throw new Error("HTTP " + r.status);
     const st = await r.json();
     renderState(st);
@@ -1475,6 +1485,40 @@ window.addEventListener("popstate", function() {
     closeStrategyDetail(true);
   }
 });
+
+// Клик по логотипу KAIROS возвращает на главную страницу терминала
+const brandHomeLink = document.getElementById("brand-home-link");
+if (brandHomeLink) {
+  brandHomeLink.addEventListener("click", function(e) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
+    e.preventDefault();
+    if (window._activeStrategyDetail) closeStrategyDetail(false);
+    ["drawer-env", "drawer-settings", "drawer-logs"].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove("open");
+    });
+    activateTab("tab-signals");
+    try { history.pushState({}, "", "/"); } catch (err) {}
+    window.scrollTo({top: 0, behavior: "smooth"});
+  });
+}
+
+// Проверка статуса серверной авторизации и кнопка выхода
+const btnLogout = document.getElementById("btn-logout");
+fetch(API_BASE + "/api/auth/status", {credentials: "same-origin"})
+  .then(function(r) { return r.ok ? r.json() : null; })
+  .then(function(st) {
+    if (st && st.auth_enabled && btnLogout) {
+      btnLogout.style.display = "inline-flex";
+      btnLogout.addEventListener("click", async function() {
+        try {
+          await apiPost("/api/auth/logout", {});
+        } catch (e) {}
+        window.location.replace("/login");
+      });
+    }
+  })
+  .catch(function() {});
 
 if (window.location.hash && window.location.hash.indexOf("#strategy=") === 0) {
   const initSid = decodeURIComponent(window.location.hash.slice("#strategy=".length));

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="KAIROS">
+  <defs>
+    <linearGradient id="kairosBeamGrad" x1="14" y1="54" x2="51" y2="7" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="45%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#090d16"/>
+  <!-- Upper-left white ring arc -->
+  <path d="M 17.42 43.39 A 18.5 18.5 0 0 1 38.93 14.85" stroke="#ffffff" stroke-width="5.2" stroke-linecap="butt"/>
+  <!-- Lower-right white ring arc -->
+  <path d="M 46.17 20.11 A 18.5 18.5 0 0 1 26.90 49.78" stroke="#ffffff" stroke-width="5.2" stroke-linecap="butt"/>
+  <!-- Ascending tapered breakout beam -->
+  <polygon points="13,54 22.2,54 51.5,7.5" fill="url(#kairosBeamGrad)"/>
+</svg>

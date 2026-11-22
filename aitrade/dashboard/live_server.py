@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from aitrade.storage import atomic_json
-import json, subprocess, threading, time, math, uuid, copy, traceback
+import base64, hashlib, hmac, json, os, secrets, subprocess, threading, time, math, uuid, copy, traceback
+from http.cookies import SimpleCookie
 from aitrade.storage import Ledger
 from aitrade.exchange.transport import ExchangeError
 from concurrent.futures import ThreadPoolExecutor
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -1586,9 +1587,136 @@ class ControlCenterState:
         }
 
 
+class KairosSessionAuth:
+    """Опциональная сессионная авторизация для веб-интерфейса KAIROS (включается через KAIROS_AUTH_USER и KAIROS_AUTH_PASSWORD)."""
+    COOKIE_NAME = "kairos_session"
+
+    def __init__(self) -> None:
+        self._fallback_secret = secrets.token_hex(32)
+        self._fail_lock = threading.Lock()
+        self._failed_attempts: Dict[str, List[float]] = {}
+
+    @property
+    def username(self) -> str:
+        return str(os.getenv("KAIROS_AUTH_USER", "") or "").strip()
+
+    @property
+    def password(self) -> str:
+        return str(os.getenv("KAIROS_AUTH_PASSWORD", "") or "")
+
+    @property
+    def password_hash(self) -> str:
+        return str(os.getenv("KAIROS_AUTH_PASSWORD_HASH", "") or "").strip()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.username and (self.password or self.password_hash))
+
+    @property
+    def secret(self) -> bytes:
+        s = str(os.getenv("KAIROS_AUTH_SECRET", "") or "").strip()
+        return (s or self._fallback_secret).encode("utf-8")
+
+    def verify_credentials(self, user: str, pw: str) -> bool:
+        if not self.enabled:
+            return True
+        if not hmac.compare_digest(str(user or "").strip(), self.username):
+            return False
+        if self.password_hash:
+            expected = self.password_hash.lower()
+            if expected.startswith("sha256:"):
+                expected = expected.split(":", 1)[1]
+            actual = hashlib.sha256(str(pw or "").encode("utf-8")).hexdigest()
+            return hmac.compare_digest(actual, expected)
+        return hmac.compare_digest(str(pw or ""), self.password)
+
+    def _client_ip(self, environ: Dict[str, Any]) -> str:
+        fwd = str(environ.get("HTTP_X_FORWARDED_FOR", "") or "").split(",", 1)[0].strip()
+        return fwd or str(environ.get("REMOTE_ADDR", "127.0.0.1") or "127.0.0.1")
+
+    def is_rate_limited(self, environ: Dict[str, Any]) -> bool:
+        ip = self._client_ip(environ)
+        now = time.time()
+        with self._fail_lock:
+            attempts = [t for t in self._failed_attempts.get(ip, []) if now - t < 300.0]
+            self._failed_attempts[ip] = attempts
+            return len(attempts) >= 8
+
+    def record_failure(self, environ: Dict[str, Any]) -> None:
+        ip = self._client_ip(environ)
+        now = time.time()
+        with self._fail_lock:
+            attempts = [t for t in self._failed_attempts.get(ip, []) if now - t < 300.0]
+            attempts.append(now)
+            self._failed_attempts[ip] = attempts
+
+    def clear_failures(self, environ: Dict[str, Any]) -> None:
+        ip = self._client_ip(environ)
+        with self._fail_lock:
+            self._failed_attempts.pop(ip, None)
+
+    def issue_token(self, user: str, ttl_seconds: int) -> str:
+        exp = int(time.time()) + max(300, int(ttl_seconds))
+        payload = json.dumps({"u": user, "exp": exp}, separators=(",", ":")).encode("utf-8")
+        b64 = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        sig = hmac.new(self.secret, b64.encode("ascii"), hashlib.sha256).hexdigest()
+        return f"{b64}.{sig}"
+
+    def verify_token(self, token: str) -> Optional[str]:
+        if not token or "." not in token:
+            return None
+        try:
+            b64, sig = token.rsplit(".", 1)
+            expected = hmac.new(self.secret, b64.encode("ascii"), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(sig, expected):
+                return None
+            pad = "=" * ((4 - len(b64) % 4) % 4)
+            data = json.loads(base64.urlsafe_b64decode((b64 + pad).encode("ascii")).decode("utf-8"))
+            if int(data.get("exp", 0)) < int(time.time()):
+                return None
+            u = str(data.get("u", ""))
+            if self.enabled and not hmac.compare_digest(u, self.username):
+                return None
+            return u
+        except Exception:
+            return None
+
+    def authenticated_user(self, environ: Dict[str, Any]) -> Optional[str]:
+        if not self.enabled:
+            return "local"
+        raw_cookie = environ.get("HTTP_COOKIE", "")
+        if not raw_cookie:
+            return None
+        jar = SimpleCookie()
+        try:
+            jar.load(raw_cookie)
+        except Exception:
+            return None
+        morsel = jar.get(self.COOKIE_NAME)
+        if not morsel:
+            return None
+        return self.verify_token(morsel.value)
+
+    def build_cookie_header(self, token: str, max_age: int, environ: Dict[str, Any]) -> Tuple[str, str]:
+        is_https = str(environ.get("HTTP_X_FORWARDED_PROTO", "")).lower() == "https" or environ.get("wsgi.url_scheme") == "https"
+        parts = [
+            f"{self.COOKIE_NAME}={token}",
+            "Path=/",
+            f"Max-Age={int(max_age)}",
+            "HttpOnly",
+            "SameSite=Lax",
+        ]
+        if is_https:
+            parts.append("Secure")
+        return ("Set-Cookie", "; ".join(parts))
+
+
 def create_wsgi_app(state: ControlCenterState):
     html_file = BASE_DIR / "dashboard_report.html"
+    login_file = BASE_DIR / "login.html"
+    logo_file = BASE_DIR / "kairos_logo.svg"
     js_file = BASE_DIR / "dashboard_app.js"
+    auth = KairosSessionAuth()
 
     def app(environ: Dict[str, Any], start_response: Any):
         method = environ.get("REQUEST_METHOD", "GET")
@@ -1607,6 +1735,42 @@ def create_wsgi_app(state: ControlCenterState):
         if method == "OPTIONS":
             start_response("403 Forbidden", headers + [("Content-Type", "text/plain")])
             return [b"Cross-origin requests disabled"]
+        if method == "GET" and path in ("/favicon.svg", "/kairos-logo.svg"):
+            body = logo_file.read_bytes() if logo_file.exists() else b""
+            start_response("200 OK", headers + [("Content-Type", "image/svg+xml; charset=utf-8")])
+            return [body]
+        if method == "GET" and path == "/login":
+            if auth.enabled and auth.authenticated_user(environ):
+                start_response("302 Found", headers + [("Location", "/")])
+                return [b""]
+            body = login_file.read_bytes() if login_file.exists() else b"<h1>KAIROS Login</h1>"
+            start_response("200 OK", headers + [("Content-Type", "text/html; charset=utf-8")])
+            return [body]
+        if method == "GET" and path == "/api/auth/status":
+            user = auth.authenticated_user(environ)
+            ver = getattr(state, "release_manifest", {}).get("version", "")
+            payload = json.dumps({
+                "ok": True,
+                "auth_enabled": auth.enabled,
+                "authenticated": bool(user),
+                "user": user or "",
+                "version": ver,
+            }, ensure_ascii=False).encode("utf-8")
+            start_response("200 OK", headers + [("Content-Type", "application/json; charset=utf-8")])
+            return [payload]
+
+        # Проверка авторизации для защищённых маршрутов (активна, если заданы KAIROS_AUTH_USER и KAIROS_AUTH_PASSWORD)
+        is_public_auth_post = (method == "POST" and path in ("/api/auth/login", "/api/auth/logout"))
+        if auth.enabled and not is_public_auth_post and not auth.authenticated_user(environ):
+            if path.startswith("/api/") or method != "GET":
+                start_response("401 Unauthorized", headers + [("Content-Type", "application/json; charset=utf-8")])
+                return [json.dumps({"ok": False, "error": "unauthorized", "retMsg": "Требуется авторизация", "redirect": "/login"}, ensure_ascii=False).encode("utf-8")]
+            qs_raw = environ.get("QUERY_STRING", "")
+            next_target = path + ("?" + qs_raw if qs_raw else "")
+            loc = "/login?next=" + quote(next_target, safe="/?=&")
+            start_response("302 Found", headers + [("Location", loc)])
+            return [b""]
+
         if method == "GET" and path in ("/", "/index.html"):
             body = html_file.read_bytes() if html_file.exists() else b"<h1>Loading...</h1>"
             start_response("200 OK", headers + [("Content-Type", "text/html; charset=utf-8")])
@@ -1638,6 +1802,33 @@ def create_wsgi_app(state: ControlCenterState):
             raw = environ["wsgi.input"].read(length).decode("utf-8") if length > 0 else "{}"
             data = json.loads(raw or "{}")
             if not isinstance(data,dict):raise ValueError("Ожидается объект JSON")
+            if path == "/api/auth/login":
+                if auth.is_rate_limited(environ):
+                    start_response("429 Too Many Requests", headers + [("Content-Type", "application/json; charset=utf-8")])
+                    return [json.dumps({"ok": False, "retMsg": "Слишком много попыток входа. Повторите через 5 минут."}, ensure_ascii=False).encode("utf-8")]
+                u_in = str(data.get("username", "") or "").strip()
+                p_in = str(data.get("password", "") or "")
+                if not auth.verify_credentials(u_in, p_in):
+                    auth.record_failure(environ)
+                    start_response("401 Unauthorized", headers + [("Content-Type", "application/json; charset=utf-8")])
+                    return [json.dumps({"ok": False, "retMsg": "Неверный логин или пароль."}, ensure_ascii=False).encode("utf-8")]
+                auth.clear_failures(environ)
+                remember = bool(data.get("remember", True))
+                ttl_h = int(os.getenv("KAIROS_SESSION_TTL_HOURS", "168") or 168) if remember else 24
+                ttl_s = max(3600, ttl_h * 3600)
+                tok = auth.issue_token(u_in or "local", ttl_s)
+                nxt = str(data.get("next", "/") or "/")
+                if not nxt.startswith("/") or nxt.startswith("//"):
+                    nxt = "/"
+                cookie_hdr = auth.build_cookie_header(tok, ttl_s, environ)
+                payload = json.dumps({"ok": True, "redirect": nxt}, ensure_ascii=False).encode("utf-8")
+                start_response("200 OK", headers + [cookie_hdr, ("Content-Type", "application/json; charset=utf-8")])
+                return [payload]
+            if path == "/api/auth/logout":
+                cookie_hdr = auth.build_cookie_header("", 0, environ)
+                payload = json.dumps({"ok": True, "redirect": "/login"}, ensure_ascii=False).encode("utf-8")
+                start_response("200 OK", headers + [cookie_hdr, ("Content-Type", "application/json; charset=utf-8")])
+                return [payload]
             resp: Dict[str, Any] = {"ok": True}
 
             if path == "/api/env_control":

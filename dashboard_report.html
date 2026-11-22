@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AItrade V5 Pro Terminal — Demo Lab & Live Shadow</title>
+<title>KAIROS — Quantitative Trading Terminal</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root { --bg:#090d16; --card:#111827; --card2:#162033; --border:#24324d; --text:#e2e8f0; --muted:#94a3b8; }
 * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -12,6 +13,10 @@ html, body { margin:0; padding:0; max-width:100%; overflow-x:clip; background:va
 /* Шапка (компактная, не раздувается по высоте) */
 .topbar { position:sticky; top:0; z-index:200; background:rgba(15,23,42,0.97); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); padding:7px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px 10px; max-width:100%; }
 .brand { font-size:14px; font-weight:800; color:#fff; display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0; max-width:100%; }
+.brand-link { display:inline-flex; align-items:center; gap:7px; text-decoration:none; color:#fff; padding:2px 6px 2px 2px; border-radius:7px; transition:opacity 0.15s, background 0.15s; cursor:pointer; }
+.brand-link:hover { background:rgba(56,189,248,0.1); opacity:0.96; }
+.brand-logo-svg { width:24px; height:24px; flex-shrink:0; display:block; }
+.brand-wordmark { font-size:14.5px; font-weight:800; letter-spacing:0.18em; color:#fff; line-height:1; }
 .badge { padding:2px 7px; border-radius:6px; font-size:11px; font-weight:600; display:inline-block; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 .badge-green { background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); }
 .badge-amber { background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); }
@@ -133,7 +138,21 @@ tbody tr:hover td:first-child { background:#152136; }
 <!-- ВЕРХНЯЯ ПАНЕЛЬ -->
 <div class="topbar">
   <div class="brand">
-    <span>⚡ AItrade V5</span>
+    <a href="/" id="brand-home-link" class="brand-link" title="KAIROS — На главную">
+      <svg class="brand-logo-svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="kairosTopBeam" x1="14" y1="54" x2="51" y2="7" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#0ea5e9"/>
+            <stop offset="45%" stop-color="#38bdf8"/>
+            <stop offset="100%" stop-color="#34d399"/>
+          </linearGradient>
+        </defs>
+        <path d="M 17.42 43.39 A 18.5 18.5 0 0 1 38.93 14.85" stroke="#ffffff" stroke-width="5.4" stroke-linecap="butt"/>
+        <path d="M 46.17 20.11 A 18.5 18.5 0 0 1 26.90 49.78" stroke="#ffffff" stroke-width="5.4" stroke-linecap="butt"/>
+        <polygon points="13,54 22.2,54 51.5,7.5" fill="url(#kairosTopBeam)"/>
+      </svg>
+      <span class="brand-wordmark">KAIROS</span>
+    </a>
     <span class="badge badge-green" id="conn-badge">🧪 Bybit Demo</span>
     <span class="badge badge-amber" id="master-status-badge">⏸ Автопилоты: ПАУЗА</span>
     <span class="badge badge-blue" id="btc-regime-badge" title="Фильтр поводыря BTCUSDT (5м/15м импульс + CVD)">⚖️ BTC: NEUTRAL</span>
@@ -150,6 +169,7 @@ tbody tr:hover td:first-child { background:#152136; }
     <button type="button" id="btn-scan-only" class="btn-primary btn-sm">🔍 Скан</button>
     <button type="button" id="btn-stop-all-top" class="btn-ghost btn-sm" disabled>⏸ Пауза</button>
     <button type="button" id="btn-refresh" class="btn-ghost btn-sm" title="Обновить данные сейчас">🔄</button>
+    <button type="button" id="btn-logout" class="btn-ghost btn-sm" style="display:none" title="Выйти из сессии KAIROS">Выйти</button>
   </div>
 </div>
 
