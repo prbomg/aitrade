@@ -1080,7 +1080,10 @@ class ControlCenterState:
                                 self.strategy_funnel.record_guard_block(strat_code, f"Кулдаун {sig['symbol']} ({cd_left} мин)")
                             self.add_log("⏳ [Кулдаун после стопа] Пропуск " + sig["symbol"] + ": еще " + str(cd_left) + " мин")
                             continue
-                    allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum)
+                    try:
+                        allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum, strategy_id="BOOSTER:" + strat_code)
+                    except TypeError:
+                        allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum)
                     n_mod = self.x_radar.get_coin_modifier(sig["symbol"], "LONG" if side == "Buy" else "SHORT")
                     if not allowed or not n_mod["allowed"]:
                         if hasattr(self, "strategy_funnel"):

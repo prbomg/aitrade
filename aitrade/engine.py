@@ -90,14 +90,15 @@ class AITradeCombineEngine:
         btc_candles_15m: List[Any],
     ) -> MarketContext:
         ticker = ticker_map.get(symbol, {"symbol": symbol})
+        is_legacy = self.settings.get("strategy_mode", "s1_s3") == "legacy"
         c15 = self.client.get_klines(symbol, interval="15", limit=600)
         c1h = self.client.get_klines(symbol, interval="60", limit=220)
         c4h = self.client.get_klines(symbol, interval="240", limit=120)
-        c5m = self.client.get_klines(symbol, interval="5", limit=60)
+        c5m = self.client.get_klines(symbol, interval="5", limit=60) if is_legacy else []
         orderbook = self.client.get_orderbook(symbol, limit=50)
-        ob_hist = self.client.get_orderbook_history(symbol)
+        ob_hist = self.client.get_orderbook_history(symbol) if is_legacy else []
         oi_hist = self.client.get_open_interest_history(symbol, interval_time="15min", limit=40)
-        recent_trades = self.client.get_recent_trades(symbol, limit=150)
+        recent_trades = self.client.get_recent_trades(symbol, limit=150) if is_legacy else []
 
         c15_closed = c15[:-1] if len(c15) > 1 else c15
         c1h_closed = c1h[:-1] if len(c1h) > 1 else c1h
@@ -329,6 +330,38 @@ class AITradeCombineEngine:
                         if b6_sig is not None:
                             sym_signals.append(b6_sig)
 
+                # 0c) 15m Demo Lab стратегии Разгона (B3/B4/B5 имеют собственные фильтры RVOL/OI, не запираем за жёстким CoinsInPlay)
+                if ctx.screener.spread_pct <= 0.15 and len(ctx.candles_15m) >= 40:
+                    ref_px_15 = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
+                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["eligible_window"] = True
+                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"] += 1
+                    b3_sig = generate_vwap_momentum_signal(
+                        sym, ctx.candles_15m, bars_1h=ctx.candles_1h,
+                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        reference_open_px=ref_px_15,
+                    )
+                    if b3_sig is not None:
+                        sym_signals.append(b3_sig)
+
+                    diag["B4_ORB_SESSION_BREAKOUT"]["eligible_window"] = True
+                    diag["B4_ORB_SESSION_BREAKOUT"]["pairs_checked"] += 1
+                    b4_sig = generate_orb_session_signal(
+                        sym, ctx.candles_15m,
+                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
+                        reference_open_px=ref_px_15,
+                    )
+                    if b4_sig is not None:
+                        sym_signals.append(b4_sig)
+
+                    diag["B5_OI_TREND_EXPANSION"]["eligible_window"] = True
+                    diag["B5_OI_TREND_EXPANSION"]["pairs_checked"] += 1
+                    b5_sig = generate_oi_trend_expansion_signal(
+                        sym, ctx.candles_15m, ctx.oi_history,
+                        funding_rate=float(ctx.screener.funding_rate or 0.0), reference_open_px=ref_px_15,
+                    )
+                    if b5_sig is not None:
+                        sym_signals.append(b5_sig)
+
             if ctx.screener.passed:
                 if self.settings.get("strategy_mode", "s1_s3") == "legacy":
                     sym_signals.extend(evaluate_vwap_keltner_strategy(ctx))
@@ -382,37 +415,6 @@ class AITradeCombineEngine:
                         )
                         if b1_sig is not None:
                             sym_signals.append(b1_sig)
-
-                    # 2b) 15m Demo Lab стратегии Разгона (B3 VWAP Momentum, B4 Session ORB, B5 OI Trend Expansion)
-                    ref_px_15 = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
-                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["eligible_window"] = True
-                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"] += 1
-                    b3_sig = generate_vwap_momentum_signal(
-                        sym, ctx.candles_15m, bars_1h=ctx.candles_1h,
-                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
-                        reference_open_px=ref_px_15,
-                    )
-                    if b3_sig is not None:
-                        sym_signals.append(b3_sig)
-
-                    diag["B4_ORB_SESSION_BREAKOUT"]["eligible_window"] = True
-                    diag["B4_ORB_SESSION_BREAKOUT"]["pairs_checked"] += 1
-                    b4_sig = generate_orb_session_signal(
-                        sym, ctx.candles_15m,
-                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
-                        reference_open_px=ref_px_15,
-                    )
-                    if b4_sig is not None:
-                        sym_signals.append(b4_sig)
-
-                    diag["B5_OI_TREND_EXPANSION"]["eligible_window"] = True
-                    diag["B5_OI_TREND_EXPANSION"]["pairs_checked"] += 1
-                    b5_sig = generate_oi_trend_expansion_signal(
-                        sym, ctx.candles_15m, ctx.oi_history,
-                        funding_rate=float(ctx.screener.funding_rate or 0.0), reference_open_px=ref_px_15,
-                    )
-                    if b5_sig is not None:
-                        sym_signals.append(b5_sig)
 
             diag["C3_ENSEMBLE_VOTE_2OF3"]["eligible_window"] = True
             diag["C3_ENSEMBLE_VOTE_2OF3"]["pairs_checked"] += 1
@@ -555,10 +557,27 @@ class AITradeCombineEngine:
         elif not diag["AUTOTRADE_MOMENTUM_FUNDING"]["idle_reason"]:
             diag["AUTOTRADE_MOMENTUM_FUNDING"]["idle_reason"] = "Вне ликвидного окна 07:00–20:00 UTC" if not in_liquid_hours else "Нет кросс-секционного сигнала (и стратегия заблокирована WFA)"
 
+        tier_ranks = {
+            "T1_DONCHIAN_TSMOM": 0,
+            "B1_SQUEEZE_BREAKOUT": 1,
+            "C3_ENSEMBLE_VOTE_2OF3": 2,
+            "C2_MTF_COMBO_BREAKOUT": 3,
+            "B2_DONCHIAN_INTRADAY": 4,
+            "T2_RS_BTC_BREAKOUT": 5,
+            "T3_KELTNER_TREND_4H": 6,
+            "B3_VWAP_MOMENTUM_IMPULSE": 7,
+            "B4_ORB_SESSION_BREAKOUT": 8,
+            "B5_OI_TREND_EXPANSION": 9,
+            "B6_EMA_PULLBACK_TREND": 10,
+            "B7_FUNDING_SQUEEZE_MOMENTUM": 11,
+            "S1_TREND_RETEST": 12,
+        }
         approved_signals.sort(
-            key=lambda s: (s.ml_win_probability, s.expected_return_pct), reverse=True
+            key=lambda s: (tier_ranks.get(s.strategy_id, 20), -s.ml_win_probability, -s.expected_return_pct)
         )
-        top_signals = approved_signals[:max_signals]
+        demo_lab_fast = bool((self.settings.get("demo_lab") or {}).get("enabled", False))
+        eff_max_signals = max(max_signals, 40) if demo_lab_fast else max_signals
+        top_signals = approved_signals[:eff_max_signals]
 
         executed_orders: List[Dict[str, Any]] = []
         if auto_execute_demo:
@@ -579,7 +598,6 @@ class AITradeCombineEngine:
                 pass
 
         carry_opportunities: List[Dict[str, Any]] = []
-        demo_lab_fast = bool((self.settings.get("demo_lab") or {}).get("enabled", False))
         if not demo_lab_fast and self.settings.get("strategy_mode", "s1_s3") != "legacy" and hasattr(self.client, "get_funding_history"):
             for sym in sorted(autotrade_set):
                 if sym not in ctx_by_sym:
@@ -610,7 +628,7 @@ class AITradeCombineEngine:
             "screener_top": [asdict(r) for r in screener_results],
             "approved_signals": [asdict(s) for s in top_signals],
             "rejected_signals": [asdict(s) for s in rejected_signals[:10]],
-            "shadow_candidates": [asdict(s) for s in raw_candidates],
+            "shadow_candidates": [asdict(s) for s in approved_signals],
             "strategy_diagnostics": diag,
             "executed_demo_orders": executed_orders,
         }

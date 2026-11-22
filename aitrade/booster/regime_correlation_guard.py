@@ -43,6 +43,7 @@ class RegimeAndCorrelationGuard:
             "reason": "Рынок сбалансирован, разрешены оба направления",
         }
         self._last_fetch_ts: float = 0.0
+        self._last_ok_ts: float = 0.0
 
     @staticmethod
     def _curl_json(url: str) -> Dict[str, Any]:
@@ -62,6 +63,16 @@ class RegimeAndCorrelationGuard:
         if now - self._last_fetch_ts < 8.0 and self.last_regime.get("btc_price", 0) > 0:
             return self.last_regime
         self._last_fetch_ts = now
+        try:
+            res = self._update_btc_regime_live(ws_summary)
+            self._last_ok_ts = now
+            return res
+        except Exception:
+            if self.last_regime.get("btc_price", 0) > 0 and (now - self._last_ok_ts) < 120.0:
+                return self.last_regime
+            raise
+
+    def _update_btc_regime_live(self, ws_summary: Dict[str, Any]) -> Dict[str, Any]:
 
         k_url = "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=5&limit=4"
         k_data = self._curl_json(k_url)
@@ -143,7 +154,7 @@ class RegimeAndCorrelationGuard:
         if not self.enabled:
             return True, "OK"
 
-        is_t1_4h = "T1_DONCHIAN_TSMOM" in str(strategy_id or "")
+        is_t1_4h = any(k in str(strategy_id or "") for k in ("T1_DONCHIAN_TSMOM", "T3_KELTNER_TREND_4H"))
         if not is_t1_4h:
             regime = self.update_btc_regime(ws_summary)
             if side == "Buy" and not regime["allow_long"]:

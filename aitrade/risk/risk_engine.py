@@ -30,6 +30,8 @@ class RiskEngine:
         self.max_slippage_bps = float(r_cfg.get("max_slippage_bps", 15.0))
         self.maker_fee = float(ex_cfg.get("maker_fee_rate", 0.0002))
         self.taker_fee = float(ex_cfg.get("taker_fee_rate", 0.00055))
+        demo_lab = settings.get("demo_lab", {}) if isinstance(settings, dict) else {}
+        self.demo_lab_enabled = bool(demo_lab.get("enabled", False) and str(ex_cfg.get("mode", "demo")).lower() == "demo")
 
     def sweep_l2_slippage_bps(
         self, orderbook: OrderBookSnapshot, side: str, order_notional_usd: float
@@ -88,7 +90,7 @@ class RiskEngine:
             if signal.strategy_id == "T1_DONCHIAN_TSMOM"
             else 1.0
         )
-        base_risk_pct = 0.015 if signal.strategy_id == "T1_DONCHIAN_TSMOM" else self.risk_per_trade_pct
+        base_risk_pct = 0.015 if (signal.strategy_id == "T1_DONCHIAN_TSMOM" or self.demo_lab_enabled) else self.risk_per_trade_pct
         risk_budget_usd = account_equity_usd * base_risk_pct * vol_scale
         stop_frac = abs(signal.entry_price - signal.stop_loss) / signal.entry_price
         stop_frac = max(stop_frac, 0.0055)

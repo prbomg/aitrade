@@ -302,7 +302,7 @@ class LiveShadowEngine:
         leaderboard: List[Dict[str, Any]] = []
         for s_id, st in by_strat.items():
             n = st["closed_trades"]
-            pf = round(st["gross_profit"] / st["gross_loss"], 2) if st["gross_loss"] > 0 else (99.0 if st["gross_profit"] > 0 else None)
+            pf = round(st["gross_profit"] / st["gross_loss"], 2) if st["gross_loss"] > 0 else None
             wr = round((st["wins"] / n) * 100.0, 1) if n > 0 else 0.0
             leaderboard.append(
                 {
