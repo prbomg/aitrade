@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.22-intraday.30",
-  "built_at": "2026-11-22T08:53:52.887716+00:00",
+  "version": "2026.11.22-intraday.31",
+  "built_at": "2026-11-22T09:02:55.894996+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
     "aitrade/agents/__init__.py": "8f490c3f80fbc2a59fa6d72e4eff9f82c5567789d6947cbd47fb0fe691eb6282",
@@ -16,7 +16,7 @@
     "aitrade/booster/x_news_radar.py": "6da05172f57bbdfcfee6de5720962bee1df524e57758aad230e481c3d3f46404",
     "aitrade/config.py": "babd1974cf673e654c59cdf0e04567f5b33b2ca88bd737edd9e9c1532e736417",
     "aitrade/dashboard/__init__.py": "37a1c4c9d956b0aaf3af30834eb697e360d6e72327b88054fa418d01a774611c",
-    "aitrade/dashboard/live_server.py": "0628411735b240083c152623572f14d703c6c95e47fe62698e91f2826835609e",
+    "aitrade/dashboard/live_server.py": "13dbe19dbd9c5a392f80380a0cf241c420b11d0d59b1d5bbef14a08970d3d6b4",
     "aitrade/dashboard/report_generator.py": "e3195e5f2d6fd98c14c85901a728edd56eee4f326203001d4fe83fb9230fceee",
     "aitrade/engine.py": "ce6f39b591fffb4aaedbbe9ca47e134009149048b0c598f97c88adee9f86d815",
     "aitrade/exchange/__init__.py": "619cd760e7300c5e3b50fd67f57d975ba98c5db68fa596a8847782614a3c9a6f",
@@ -29,7 +29,7 @@
     "aitrade/execution/demo_trader.py": "114fa5051c7bc44fa0cc7d8cd57c85b036f8a99b3cdc135e47bc318ed7cfab5c",
     "aitrade/execution/freqai_strategy.py": "ce3265ed0ee4fa9073b32e4cd699015da42d6770d4d9845f4aa7952426ea35d3",
     "aitrade/execution/limit_chaser.py": "cc4dd66ca052d5d0d2c42418f2f185e2700cf2d83ba8b04ef099d99a33eb09ff",
-    "aitrade/execution/shadow_engine.py": "75aa82b9899297a3a3c7477f2eb34e074e66f37b5e516770022e3dc4caa76da4",
+    "aitrade/execution/shadow_engine.py": "2d60a45c36da6baeb4153ec1fbf9f307fada42a4951b53f05749d069995a3cf8",
     "aitrade/execution/smart_position_manager.py": "9681b50a1655a20663f257771e8263f68c5c247ee1d40ca776dca8378ffc23c8",
     "aitrade/features/__init__.py": "82248d4ebada38bd209b6363564293f8d8e691e04a3da39292fc8b15af474793",
     "aitrade/features/indicators.py": "eb7304091e1ce7eddd6526a07146d16809ff3f3b5da90845be33db9cfd3c004d",
@@ -68,7 +68,7 @@
     "config/freqtrade_freqai_bybit.json": "369aa7f060824db84521d2fc744158610eddcac1034cc1cbccba2db6bfa89ca4",
     "config/settings.json": "8813abc2a84783a9f389dd2ff16a299c674a23256853831df6da8fbee4d3c11f",
     "dashboard_app.js": "f6e2d496913819136a62d86f8fe4869075793e2e42d60feface440868f111952",
-    "dashboard_report.html": "1aa4b8432067c84cd1c55bea4b89524f8459b7c7751f946ca55e33e2dcb13763",
+    "dashboard_report.html": "889737ac61776e00634f7bbfe93b0ce8c912a10f1aa24a87f9c8a3d44c2cd6bf",
     "gui_app.py": "3de4e46d5340a147a167292a4bd17d61c8d7c60b03a35b3ec7234f838c1d5f20",
     "run_combine.py": "85b0fbf9ef7bfec5fd99149db9ad317249a8d7fd6c9887ce60195c2d14e830e2",
     "scripts/live_audit_report.py": "4cad82351df00be6d92d8b511c7066c52e7e60832b731809b35b9c4c76d48d0f",
@@ -90,6 +90,7 @@
     "tests/test_intraday25_audit_fixes.py": "ef7dfdbeae94b69b8c04db7ee667fd2f9a208924d36c5dae844829316e14e023",
     "tests/test_intraday26_audit_fixes.py": "927ff515ad4e2d15324899e17879ed704471b30b3cce2810933057084e7fd775",
     "tests/test_intraday29_calibrator_and_chaser.py": "68e4f81f820b359c431afa50846ca30f7193ffb8fefdfbde0f69d96a4bdd4dae",
+    "tests/test_intraday31_strategy_detail.py": "220df671edd22cf7c2a2d373541652b67a9df005920533303ac8781a2e074bc7",
     "tests/test_intraday6_audit.py": "a2baf5229538ce19447032566e59404c58cebea4b63b0112f5feb3416b47b683",
     "tests/test_intraday7_p0_fixes.py": "cd072f1648d57b74d414d4d283ee94b5f02cfeec26984f03a304e38f400a88df",
     "tests/test_intraday8_infra.py": "ad25951092b6980f98325b04529b314d10e70f9a64052fc3c1c3e3d4ed25e244",
@@ -103,7 +104,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "ba43c4d61b98575bb6e9145292461cf6f9fdc653a6d2a481cb71822d77c7752d",
+  "build_sha256": "dda01db72360e009d6db4bf123c238898184e89bc915066c8b78e5fa5e125619",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"

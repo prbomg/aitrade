@@ -331,3 +331,113 @@ class LiveShadowEngine:
             "open_positions": open_list[-30:][::-1],
             "recent_closed": closed_list[-30:][::-1],
         }
+
+    def get_strategy_detail(
+        self,
+        strategy_id: str,
+        bbo_map: Optional[Dict[str, Tuple[float, float]]] = None,
+    ) -> Dict[str, Any]:
+        """Возвращает полную статистику Live Shadow для конкретной стратегии: KPI, кривую капитала, открытые и закрытые сделки."""
+        sid = str(strategy_id or "").strip()
+        bbo = bbo_map or {}
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, symbol, side, status, opened_ts, closed_ts, entry_px, sl_px, tp_px, exit_px, qty, notional_usd, risk_usd, fees_usd, pnl_usd, realized_r, exit_reason "
+                "FROM shadow_trades WHERE strategy_id=? ORDER BY opened_ts ASC",
+                (sid,),
+            ).fetchall()
+
+        open_list: List[Dict[str, Any]] = []
+        closed_list: List[Dict[str, Any]] = []
+        curve: List[float] = [self.POD_CAPITAL_USD]
+        wins = losses = 0
+        gp = gl = net_pnl = upnl_sum = r_sum = hold_h_sum = fees_sum = 0.0
+        eq_cur = eq_peak = max_dd = 0.0
+
+        for r in rows:
+            tid, sym, side, status, o_ts, c_ts, e_px, sl_px, tp_px, x_px, qty, notional, risk_usd, fees, pnl, r_mult, reason = r
+            if status == "OPEN":
+                bid, ask = bbo.get(sym, (0.0, 0.0))
+                mark = bid if (side == "Buy" and bid > 0) else (ask if (side == "Sell" and ask > 0) else e_px)
+                upnl = round(((mark - e_px) * qty if side == "Buy" else (e_px - mark) * qty), 2)
+                upnl_sum = round(upnl_sum + upnl, 2)
+                open_list.append(
+                    {
+                        "id": tid,
+                        "symbol": sym,
+                        "side": side,
+                        "entry_px": round(e_px, 6),
+                        "mark_px": round(mark, 6),
+                        "sl_px": round(sl_px, 6),
+                        "tp_px": round(tp_px, 6),
+                        "qty": round(qty, 6),
+                        "notional_usd": round(notional, 2),
+                        "risk_usd": round(risk_usd, 2),
+                        "upnl_usd": upnl,
+                        "age_hours": round(max(0.0, (time.time() - o_ts) / 3600.0), 1),
+                        "opened_at": datetime.datetime.fromtimestamp(o_ts, tz=datetime.timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
+                    }
+                )
+            else:
+                if pnl > 0:
+                    wins += 1
+                    gp += pnl
+                elif pnl < 0:
+                    losses += 1
+                    gl += abs(pnl)
+                net_pnl += pnl
+                r_sum += r_mult
+                fees_sum += float(fees or 0.0)
+                hold_h = round(max(0.0, (c_ts - o_ts) / 3600.0), 2)
+                hold_h_sum += hold_h
+                eq_cur += pnl
+                curve.append(round(self.POD_CAPITAL_USD + eq_cur, 2))
+                if eq_cur > eq_peak:
+                    eq_peak = eq_cur
+                dd = eq_peak - eq_cur
+                if dd > max_dd:
+                    max_dd = dd
+                closed_list.append(
+                    {
+                        "id": tid,
+                        "symbol": sym,
+                        "side": side,
+                        "entry_px": round(e_px, 6),
+                        "exit_px": round(x_px, 6),
+                        "sl_px": round(sl_px, 6),
+                        "tp_px": round(tp_px, 6),
+                        "notional_usd": round(notional, 2),
+                        "fees_usd": round(float(fees or 0.0), 3),
+                        "pnl_usd": round(pnl, 2),
+                        "realized_r": round(r_mult, 2),
+                        "hold_hours": hold_h,
+                        "exit_reason": reason,
+                        "opened_at": datetime.datetime.fromtimestamp(o_ts, tz=datetime.timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
+                        "closed_at": datetime.datetime.fromtimestamp(c_ts, tz=datetime.timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
+                    }
+                )
+
+        n = len(closed_list)
+        if len(curve) == 1:
+            curve.append(round(self.POD_CAPITAL_USD + upnl_sum, 2))
+        return {
+            "strategy_id": sid,
+            "pod_capital_usd": self.POD_CAPITAL_USD,
+            "pod_equity_usd": round(self.POD_CAPITAL_USD + net_pnl + upnl_sum, 2),
+            "risk_per_trade_usd": self.RISK_PER_TRADE_USD,
+            "open_trades": len(open_list),
+            "closed_trades": n,
+            "wins": wins,
+            "losses": losses,
+            "win_rate_pct": round((wins / n) * 100.0, 1) if n > 0 else 0.0,
+            "profit_factor": round(gp / gl, 2) if gl > 0 else None,
+            "net_pnl_usd": round(net_pnl, 2),
+            "unrealized_pnl_usd": round(upnl_sum, 2),
+            "total_fees_usd": round(fees_sum, 3),
+            "avg_r": round(r_sum / n, 3) if n > 0 else None,
+            "avg_hold_hours": round(hold_h_sum / n, 1) if n > 0 else None,
+            "max_dd_usd": round(max_dd, 2),
+            "equity_curve": curve[-120:],
+            "open_positions": open_list[::-1],
+            "closed_trades_list": closed_list[-60:][::-1],
+        }

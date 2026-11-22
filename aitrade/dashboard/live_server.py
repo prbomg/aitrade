@@ -7,7 +7,7 @@ from aitrade.exchange.transport import ExchangeError
 from concurrent.futures import ThreadPoolExecutor
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -1307,6 +1307,74 @@ class ControlCenterState:
             "logs": self.logs,
         }
 
+    def get_strategy_detail(self, strategy_id: str) -> Dict[str, Any]:
+        """Полный профиль стратегии для детальной страницы: паспорт, WFA, воронка 24ч, Real Demo и Live Shadow."""
+        raw_id = str(strategy_id or "").strip()
+        sid = raw_id.split(":", 1)[1].strip() if ":" in raw_id else raw_id
+        catalog = {
+            "T1_DONCHIAN_TSMOM": {"contour": "Автотрейдинг (Core)", "tier": "Tier 1 · WFA PASSED", "timeframe": "4h", "max_hold": "до 10 дней", "order_type": "Market / Chaser", "desc": "Многодневный трендовый пробой Donchian 20/40/80 с vol-scaling таргетингом волатильности и Pure SL/TP (8R)."},
+            "B1_SQUEEZE_BREAKOUT": {"contour": "Разгон (Booster)", "tier": "Tier 1 · WFA PASSED", "timeframe": "15m / 1h", "max_hold": "до 18 часов", "order_type": "Limit PostOnly", "desc": "Пробой волатильного сжатия Bollinger/Keltner + Supertrend с фильтром выходных NoWeekendChop и Pure SL/TP."},
+            "C3_ENSEMBLE_VOTE_2OF3": {"contour": "Автотрейдинг (Core)", "tier": "Tier 2 · Комбо", "timeframe": "15m–4h", "max_hold": "до 24 часов", "order_type": "Market / Chaser", "desc": "Ансамблевое голосование: вход только при совпадении направления сразу ≥2 независимых стратегий на одной монете (Pure SL/TP 3.5R)."},
+            "C2_MTF_COMBO_BREAKOUT": {"contour": "Автотрейдинг (Core)", "tier": "Tier 2 · Комбо", "timeframe": "15m / 1h / 4h", "max_hold": "до 36 часов", "order_type": "Market / Chaser", "desc": "Мультитаймфреймовый комбо-пробой: 4h тренд + относительная сила к BTC + позиция относительно VWAP + 8h пробой."},
+            "B2_DONCHIAN_INTRADAY": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "1h / 4h", "max_hold": "до 18 часов", "order_type": "Market / Chaser", "desc": "Внутридневной пробой 12h/24h канала Donchian по направлению 4h-тренда на всех 20 парах."},
+            "B3_VWAP_MOMENTUM_IMPULSE": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m / 1h", "max_hold": "до 8 часов", "order_type": "Market / Chaser", "desc": "Импульсный отрыв от сессионного VWAP (Z=0.45..2.2σ) с подтверждением RVOL ≥ 1.35."},
+            "B4_ORB_SESSION_BREAKOUT": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m", "max_hold": "до 8 часов", "order_type": "Market / Chaser", "desc": "Пробой диапазона открытия торговых сессий (Азия 00:00, Европа 07:00, США 13:00 UTC)."},
+            "B5_OI_TREND_EXPANSION": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m", "max_hold": "до 12 часов", "order_type": "Market / Chaser", "desc": "Пробой 20-барного диапазона с одновременным притоком открытого интереса (ΔOI ≥ +1.2%)."},
+            "B6_EMA_PULLBACK_TREND": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m / 1h / 4h", "max_hold": "до 12 часов", "order_type": "Market / Chaser", "desc": "Откат к EMA21 в сильном 4h-тренде (1h ADX ≥ 20) с бычьим/медвежьим отскоком по RSI."},
+            "B7_FUNDING_SQUEEZE_MOMENTUM": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "1h", "max_hold": "до 18 часов", "order_type": "Market / Chaser", "desc": "Контр-фандинговый сквиз: вход по пробою 4h при перекосе фандинга против толпы."},
+            "T2_RS_BTC_BREAKOUT": {"contour": "Автотрейдинг (Core)", "tier": "Tier 3 · Demo Lab", "timeframe": "1h", "max_hold": "до 48 часов", "order_type": "Market / Chaser", "desc": "Пробой альткоинов-лидеров/аутсайдеров с относительной силой ≥ 2.2% к BTC."},
+            "T3_KELTNER_TREND_4H": {"contour": "Автотрейдинг (Core)", "tier": "Tier 3 · Demo Lab", "timeframe": "4h", "max_hold": "до 7 дней", "order_type": "Market / Chaser", "desc": "Среднесрочный пробой 4h канала Кельтнера (EMA20 ± 2.2·ATR) с удержанием до 7 дней."},
+            "S1_TREND_RETEST": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m / 1h", "max_hold": "до 18 часов", "order_type": "Limit PostOnly", "desc": "Лимитный ретест пробитого уровня по тренду (PostOnly 0.02% Maker)."},
+            "S3_VWAP_RANGE": {"contour": "Автотрейдинг (Архив)", "tier": "Заблокирована WFA", "timeframe": "15m", "max_hold": "до 4 часов", "order_type": "Limit PostOnly", "desc": "Возврат к сессионному VWAP во флэте (отключена WFA Gatekeeper)."},
+            "AUTOTRADE_MOMENTUM_FUNDING": {"contour": "Автотрейдинг (Архив)", "tier": "Заблокирована WFA", "timeframe": "1h", "max_hold": "до 8 часов", "order_type": "Limit PostOnly", "desc": "Кросс-секционный моментум + фандинг (отключена WFA Gatekeeper)."},
+        }
+        snap = self.cached_state()
+        wfa_map = (snap.get("wfa_validation") or {}).get("strategies") or {}
+        funnel_map = (snap.get("strategy_funnel_24h") or {}).get("strategies") or {}
+        live_map = (snap.get("live_strategy_metrics") or {}).get("strategies") or {}
+        all_traces = (snap.get("live_strategy_metrics") or {}).get("execution_traces") or []
+        demo_traces = [t for t in all_traces if str(t.get("strategy_id") or "") == sid]
+        demo_closed_chron = [t for t in reversed(demo_traces) if t.get("closed_pnl_usd") is not None]
+        demo_curve = [1000.0]
+        for t in demo_closed_chron:
+            demo_curve.append(round(demo_curve[-1] + float(t.get("closed_pnl_usd") or 0.0), 2))
+        if len(demo_curve) == 1:
+            demo_curve.append(1000.0)
+        demo_open_pos = [
+            p for p in (snap.get("positions") or [])
+            if (str(p.get("strategy_id") or "").split(":", 1)[-1].strip() == sid)
+        ]
+        ml_list = (snap.get("ml_calibration") or {}).get("strategy_list") or []
+        ml_entry = next((m for m in ml_list if str(m.get("strategy_name") or "").lower() == sid.lower()), None)
+        shadow_detail = (
+            self.shadow_engine.get_strategy_detail(sid, self._live_bbo_map())
+            if hasattr(self, "shadow_engine")
+            else {}
+        )
+        demo_lab_on = self._is_demo_lab_active()
+        demo_lab_strats = list((self.settings.get("demo_lab") or {}).get("admit_experimental_strategies") or [])
+        wfa_entry = wfa_map.get(sid) or {}
+        wfa_passed = bool(wfa_entry.get("wfe_passed", False))
+        admitted_demo_lab = bool(demo_lab_on and sid in demo_lab_strats)
+        meta = dict(catalog.get(sid, {"contour": "Стратегия", "tier": "—", "timeframe": "—", "max_hold": "—", "order_type": "—", "desc": "Параметры стратегии загружены из истории исполнения."}))
+        meta["strategy_id"] = sid
+        meta["risk_per_trade"] = "$15 (1.5% от $1,000-пода)" if demo_lab_on else "Консервативный лимит"
+        meta["admission_status"] = "WFA_PASSED" if wfa_passed else ("DEMO_LAB" if admitted_demo_lab else "BLOCKED")
+        return {
+            "ok": True,
+            "strategy_id": sid,
+            "updated_at": snap.get("timestamp", "—"),
+            "meta": meta,
+            "wfa": wfa_entry,
+            "funnel_24h": funnel_map.get(sid) or {},
+            "demo_metrics": live_map.get(sid) or {},
+            "demo_equity_curve": demo_curve,
+            "demo_open_positions": demo_open_pos,
+            "demo_traces": demo_traces[:50],
+            "shadow": shadow_detail,
+            "ml_cal": ml_entry or {},
+        }
+
 
 def create_wsgi_app(state: ControlCenterState):
     html_file = BASE_DIR / "dashboard_report.html"
@@ -1339,6 +1407,15 @@ def create_wsgi_app(state: ControlCenterState):
             return [body]
         if method == "GET" and path == "/api/state":
             payload = json.dumps(state.cached_state(), ensure_ascii=False).encode("utf-8")
+            start_response("200 OK", headers + [("Content-Type", "application/json; charset=utf-8")])
+            return [payload]
+        if method == "GET" and path == "/api/strategy_detail":
+            qs = parse_qs(environ.get("QUERY_STRING", ""))
+            sid = (qs.get("id") or [""])[0].strip()
+            if not sid:
+                start_response("400 Bad Request", headers + [("Content-Type", "application/json; charset=utf-8")])
+                return [b'{"ok":false,"retMsg":"Missing id"}']
+            payload = json.dumps(state.get_strategy_detail(sid), ensure_ascii=False).encode("utf-8")
             start_response("200 OK", headers + [("Content-Type", "application/json; charset=utf-8")])
             return [payload]
         if method == "POST":
