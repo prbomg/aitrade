@@ -13,6 +13,7 @@ Live Shadow Paper Engine — безконфликтный полигон для 
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import datetime
 import sqlite3
 import threading
@@ -84,10 +85,15 @@ class LiveShadowEngine:
                 """
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         c = sqlite3.connect(self.db_path, timeout=10)
-        c.execute("PRAGMA busy_timeout=10000")
-        return c
+        try:
+            c.execute("PRAGMA busy_timeout=10000")
+            with c:
+                yield c
+        finally:
+            c.close()
 
     def record_signals(
         self,

@@ -21,8 +21,9 @@ def generate_html_dashboard(
     scan_data: Dict[str, Any],
     backtest_data: Dict[str, Any],
     journal_rows: List[Dict[str, Any]],
-    output_path: Path = BASE_DIR / "dashboard_report.html",
+    output_path: Path = BASE_DIR / "data" / "static_report.html",
 ) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     settings = load_settings()
     now_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     signals = scan_data.get("approved_signals", [])

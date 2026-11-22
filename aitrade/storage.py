@@ -1,4 +1,5 @@
 """Atomic state and durable execution journal; never stores API credentials."""
+from contextlib import closing, contextmanager
 import json, os, sqlite3, tempfile, threading, time
 from pathlib import Path
 
@@ -23,8 +24,15 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS intents(id TEXT PRIMARY KEY, environment TEXT, created REAL, symbol TEXT, strategy TEXT, risk REAL, status TEXT, payload TEXT);
             CREATE TABLE IF NOT EXISTS orders(environment TEXT, link TEXT, intent_id TEXT, symbol TEXT, status TEXT, payload TEXT, PRIMARY KEY(environment,link));''')
         os.chmod(self.path, 0o600)
+    @contextmanager
     def connect(self):
-        c=sqlite3.connect(self.path, timeout=10); c.execute('PRAGMA busy_timeout=10000'); return c
+        c=sqlite3.connect(self.path, timeout=10)
+        try:
+            c.execute('PRAGMA busy_timeout=10000')
+            with c:
+                yield c
+        finally:
+            c.close()
     def event(self, kind, payload):
         with self.connect() as c:c.execute('INSERT INTO events(ts,kind,payload) VALUES(?,?,?)',(time.time(),kind,json.dumps(payload,ensure_ascii=False)))
     def put_records(self, kind, rows, key):
@@ -179,8 +187,9 @@ class Ledger:
         bdir = Path(backup_dir); bdir.mkdir(parents=True, exist_ok=True)
         day = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
         dest = bdir / f"{self.path.stem}-{day}{self.path.suffix}"
-        with self.connect() as src, sqlite3.connect(dest) as dst:
-            src.backup(dst)
+        with self.connect() as src, closing(sqlite3.connect(dest)) as dst:
+            with dst:
+                src.backup(dst)
         files = sorted(bdir.glob(f"{self.path.stem}-*{self.path.suffix}"))
         for old in files[:-keep] if len(files) > keep else []:
             old.unlink(missing_ok=True)

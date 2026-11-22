@@ -520,21 +520,22 @@ document.body.addEventListener("click", async function(e) {
   const sl = Number(btn.getAttribute("data-sl") || 0);
   const idx = Number(btn.getAttribute("data-idx") || 0);
   const oid = btn.getAttribute("data-oid") || "";
+  const acc = btn.getAttribute("data-account") || "autotrade";
 
   showToast("Выполняется " + act + " для " + sym + "...");
   let res = {ok: false};
   if (act === "split_tp") {
-    res = await apiPost("/api/pos_split_tp", {symbol: sym, side: side, size: Number(size), avg_price: avg, take_profit: tp, stop_loss: sl, position_idx: idx});
+    res = await apiPost("/api/pos_split_tp", {symbol: sym, side: side, size: Number(size), avg_price: avg, take_profit: tp, stop_loss: sl, position_idx: idx, account: acc});
   } else if (act === "close_half") {
-    res = await apiPost("/api/pos_close_half", {symbol: sym, side: side, size: size, position_idx: idx});
+    res = await apiPost("/api/pos_close_half", {symbol: sym, side: side, size: size, position_idx: idx, account: acc});
   } else if (act === "breakeven") {
-    res = await apiPost("/api/pos_breakeven", {symbol: sym, side: side, avg_price: avg, position_idx: idx});
+    res = await apiPost("/api/pos_breakeven", {symbol: sym, side: side, avg_price: avg, position_idx: idx, account: acc});
   } else if (act === "trailing") {
-    res = await apiPost("/api/pos_trailing", {symbol: sym, mark_price: mark, position_idx: idx});
+    res = await apiPost("/api/pos_trailing", {symbol: sym, mark_price: mark, position_idx: idx, account: acc});
   } else if (act === "close_full") {
-    res = await apiPost("/api/close_position", {symbol: sym, side: side, size: size, position_idx: idx});
+    res = await apiPost("/api/close_position", {symbol: sym, side: side, size: size, position_idx: idx, account: acc});
   } else if (act === "cancel_ord") {
-    res = await apiPost("/api/cancel_order", {symbol: sym, order_id: oid});
+    res = await apiPost("/api/cancel_order", {symbol: sym, order_id: oid, account: acc});
   } else if (act === "exec_sig") {
     res = await apiPost("/api/place_order", {symbol: sym, side: side, order_type: "Market", qty: Number(size), price: avg, take_profit: tp, stop_loss: sl, leverage: 3});
   } else if (act === "booster_exec") {
@@ -591,15 +592,19 @@ function buildPositionsRows(posList) {
     const tsLim = (window._rgCfg && window._rgCfg.time_stop_minutes) ? window._rgCfg.time_stop_minutes : 45;
     const ageNum = Number(p.age_min || 0);
     const ageFmt = ageNum >= 60 ? (Math.floor(ageNum / 60) + "ч " + Math.round(ageNum % 60) + "м") : (ageNum.toFixed(0) + "м");
-    const secLbl = p.sector ? (" <span style=color:var(--muted);font-size:10px>[" + p.sector + "]</span>") : "";
+    const secLbl = p.sector ? (" <span style=color:var(--muted);font-size:10px>[" + escapeHtml(p.sector) + "]</span>") : "";
     const timerBadge = p.is_breakeven ? ("<span class=\"badge badge-green\">" + ageFmt + " (в БУ)</span>") : (isPure ? ("<span class=\"badge badge-blue\">⏱ " + ageFmt + "</span>") : ("<span class=\"badge badge-blue\">⏱ " + ageNum.toFixed(0) + " / " + tsLim + "м</span>"));
     const sideLbl = p.side === "Buy" ? "LONG" : "SHORT";
-    return "<tr><td><b>" + p.symbol + "</b> <span style=color:var(--muted)>(" + p.leverage + "x)</span></td><td><span class=\"badge " + srcCls + "\">" + srcTag + "</span>" + secLbl + stratSub + "</td><td class=" + (p.side === "Buy" ? "pos-green" : "pos-red") + ">" + sideLbl + "</td><td><b>" + p.size + "</b></td><td>" + fmtPrice(p.avgPrice) + "</td><td>" + fmtPrice(p.markPrice) + "</td><td class=" + (u >= 0 ? "pos-green" : "pos-red") + ">" + (u >= 0 ? "+" : "") + u.toFixed(2) + "$</td><td>" + timerBadge + "</td><td>" + tp1B + "</td><td>" + (p.takeProfit ? fmtPrice(p.takeProfit) : "—") + "</td><td>" + (p.stopLoss ? fmtPrice(p.stopLoss) : "—") + "</td><td>" + stB + "</td><td><div class=\"pos-actions-grid\">" +
-      "<button type=button class=\"btn-purple btn-xs\" data-action=split_tp data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-avg=" + p.avgPrice + " data-tp=" + (p.takeProfit || 0) + " data-sl=" + (p.stopLoss || 0) + " data-idx=" + pIdx + " title=\"Выставить лимитный TP1 на 50%\">TP1 50%</button>" +
-      "<button type=button class=\"btn-success btn-xs\" data-action=breakeven data-symbol=" + p.symbol + " data-side=" + p.side + " data-avg=" + p.avgPrice + " data-idx=" + pIdx + " title=\"Перенести SL в безубыток\">В БУ</button>" +
-      "<button type=button class=\"btn-primary btn-xs\" data-action=trailing data-symbol=" + p.symbol + " data-mark=" + p.markPrice + " data-idx=" + pIdx + " title=\"Включить трейлинг-стоп\">Trail</button>" +
-      "<button type=button class=\"btn-warning btn-xs\" data-action=close_half data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-idx=" + pIdx + " title=\"Закрыть 50% по рынку\">✂️ 50%</button>" +
-      "<button type=button class=\"btn-danger btn-xs\" data-action=close_full data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-idx=" + pIdx + " title=\"Закрыть позицию полностью\">✖ Закр.</button></div></td></tr>";
+    const eSym = escapeHtml(p.symbol);
+    const eSide = escapeHtml(p.side);
+    const eSize = escapeHtml(p.size);
+    const eAcc = escapeHtml(p.account || "autotrade");
+    return "<tr><td><b>" + eSym + "</b> <span style=color:var(--muted)>(" + escapeHtml(p.leverage) + "x)</span></td><td><span class=\"badge " + srcCls + "\">" + escapeHtml(srcTag) + "</span>" + secLbl + stratSub + "</td><td class=" + (p.side === "Buy" ? "pos-green" : "pos-red") + ">" + sideLbl + "</td><td><b>" + eSize + "</b></td><td>" + fmtPrice(p.avgPrice) + "</td><td>" + fmtPrice(p.markPrice) + "</td><td class=" + (u >= 0 ? "pos-green" : "pos-red") + ">" + (u >= 0 ? "+" : "") + u.toFixed(2) + "$</td><td>" + timerBadge + "</td><td>" + tp1B + "</td><td>" + (p.takeProfit ? fmtPrice(p.takeProfit) : "—") + "</td><td>" + (p.stopLoss ? fmtPrice(p.stopLoss) : "—") + "</td><td>" + stB + "</td><td><div class=\"pos-actions-grid\">" +
+      "<button type=\"button\" class=\"btn-purple btn-xs\" data-action=\"split_tp\" data-account=\"" + eAcc + "\" data-symbol=\"" + eSym + "\" data-side=\"" + eSide + "\" data-size=\"" + eSize + "\" data-avg=\"" + escapeHtml(p.avgPrice) + "\" data-tp=\"" + escapeHtml(p.takeProfit || 0) + "\" data-sl=\"" + escapeHtml(p.stopLoss || 0) + "\" data-idx=\"" + pIdx + "\" title=\"Выставить лимитный TP1 на 50%\">TP1 50%</button>" +
+      "<button type=\"button\" class=\"btn-success btn-xs\" data-action=\"breakeven\" data-account=\"" + eAcc + "\" data-symbol=\"" + eSym + "\" data-side=\"" + eSide + "\" data-avg=\"" + escapeHtml(p.avgPrice) + "\" data-idx=\"" + pIdx + "\" title=\"Перенести SL в безубыток\">В БУ</button>" +
+      "<button type=\"button\" class=\"btn-primary btn-xs\" data-action=\"trailing\" data-account=\"" + eAcc + "\" data-symbol=\"" + eSym + "\" data-mark=\"" + escapeHtml(p.markPrice) + "\" data-idx=\"" + pIdx + "\" title=\"Включить трейлинг-стоп\">Trail</button>" +
+      "<button type=\"button\" class=\"btn-warning btn-xs\" data-action=\"close_half\" data-account=\"" + eAcc + "\" data-symbol=\"" + eSym + "\" data-side=\"" + eSide + "\" data-size=\"" + eSize + "\" data-idx=\"" + pIdx + "\" title=\"Закрыть 50% по рынку\">✂️ 50%</button>" +
+      "<button type=\"button\" class=\"btn-danger btn-xs\" data-action=\"close_full\" data-account=\"" + eAcc + "\" data-symbol=\"" + eSym + "\" data-side=\"" + eSide + "\" data-size=\"" + eSize + "\" data-idx=\"" + pIdx + "\" title=\"Закрыть позицию полностью\">✖ Закр.</button></div></td></tr>";
   }).join("");
 }
 
@@ -1163,7 +1168,7 @@ function renderState(st) {
         } else if (o.reduceOnly) {
           purpose = "<span class=\"badge badge-blue\">🎯 TP1 50% (Reduce-Only)</span>";
         }
-        return "<tr><td><b>" + o.symbol + "</b></td><td class=" + (o.side === "Buy" ? "pos-green" : "pos-red") + ">" + o.side + "</td><td>" + purpose + "</td><td><b>" + o.qty + "</b></td><td><b>" + dispPx + "</b></td><td>" + escapeHtml(o.orderStatus) + "</td><td style=font-family:monospace>" + (o.orderId || "").slice(0, 10) + "</td><td><button type=button class=\"btn-danger btn-xs\" data-action=cancel_ord data-symbol=" + o.symbol + " data-oid=" + o.orderId + ">🗑 Отменить</button></td></tr>";
+        return "<tr><td><b>" + escapeHtml(o.symbol) + "</b></td><td class=" + (o.side === "Buy" ? "pos-green" : "pos-red") + ">" + escapeHtml(o.side) + "</td><td>" + purpose + "</td><td><b>" + escapeHtml(o.qty) + "</b></td><td><b>" + dispPx + "</b></td><td>" + escapeHtml(o.orderStatus) + "</td><td style=font-family:monospace>" + escapeHtml((o.orderId || "").slice(0, 10)) + "</td><td><button type=\"button\" class=\"btn-danger btn-xs\" data-action=\"cancel_ord\" data-account=\"" + escapeHtml(o.account || "autotrade") + "\" data-symbol=\"" + escapeHtml(o.symbol) + "\" data-oid=\"" + escapeHtml(o.orderId || "") + "\">🗑 Отменить</button></td></tr>";
       }).join("");
 
   const wsMetrics = ws.metrics || [];
@@ -1423,7 +1428,8 @@ function renderStrategyDetail(d) {
 async function fetchStrategyDetail(sid) {
   if (!sid) return;
   try {
-    const r = await fetch(API_BASE + "/api/strategy_detail?id=" + encodeURIComponent(sid));
+    const r = await fetch(API_BASE + "/api/strategy_detail?id=" + encodeURIComponent(sid), {credentials: "same-origin"});
+    if (r.status === 401) { redirectToLogin(); return; }
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     if (d && d.ok) renderStrategyDetail(d);
@@ -1448,7 +1454,7 @@ function openStrategyDetail(sid, skipPush) {
   fetchStrategyDetail(sid);
 }
 
-function closeStrategyDetail(fromPopState) {
+function closeStrategyDetail(fromPopState, skipScroll) {
   window._activeStrategyDetail = null;
   const mainC = document.getElementById("main-dashboard-view");
   const detV = document.getElementById("strategy-detail-view");
@@ -1457,7 +1463,7 @@ function closeStrategyDetail(fromPopState) {
   if (!fromPopState) {
     try { history.pushState({}, "", window.location.pathname + window.location.search); } catch (e) {}
   }
-  window.scrollTo(0, window._mainScrollY || 0);
+  if (!skipScroll) window.scrollTo(0, window._mainScrollY || 0);
 }
 
 document.body.addEventListener("click", function(e) {
@@ -1486,19 +1492,22 @@ window.addEventListener("popstate", function() {
   }
 });
 
-// Клик по логотипу KAIROS возвращает на главную страницу терминала
+// Клик по логотипу KAIROS возвращает на главную страницу терминала без дубля в history
 const brandHomeLink = document.getElementById("brand-home-link");
 if (brandHomeLink) {
   brandHomeLink.addEventListener("click", function(e) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
     e.preventDefault();
-    if (window._activeStrategyDetail) closeStrategyDetail(false);
+    const wasDetail = Boolean(window._activeStrategyDetail);
+    if (wasDetail) closeStrategyDetail(true, true);
     ["drawer-env", "drawer-settings", "drawer-logs"].forEach(function(id) {
       const el = document.getElementById(id);
       if (el) el.classList.remove("open");
     });
     activateTab("tab-signals");
-    try { history.pushState({}, "", "/"); } catch (err) {}
+    if (wasDetail || window.location.pathname !== "/" || window.location.hash) {
+      try { history.pushState({}, "", "/"); } catch (err) {}
+    }
     window.scrollTo({top: 0, behavior: "smooth"});
   });
 }

@@ -382,7 +382,7 @@ body {
       if (!st) return;
       if (st.version) document.getElementById("version-label").textContent = "v" + st.version;
       if (!st.auth_enabled) {
-        infoBox.innerHTML = "Авторизация на сервере пока не активирована (задайте <code>KAIROS_AUTH_USER</code> и <code>KAIROS_AUTH_PASSWORD</code> в <code>.env</code>). <a href=\"/\" style=\"color:#38bdf8;font-weight:600\">Открыть терминал →</a>";
+        infoBox.innerHTML = "Авторизация отключена в конфигурации сервера. <a href=\"/\" style=\"color:#38bdf8;font-weight:600\">Открыть терминал →</a>";
         infoBox.classList.add("show");
       } else if (st.authenticated) {
         window.location.replace(nextUrl);

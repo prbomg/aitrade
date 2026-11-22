@@ -31,6 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
+DEFAULT_RELEASE_VERSION = "2026.11.22-intraday.37"
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
@@ -325,7 +326,7 @@ class BybitV5DirectController:
             intent_id='at-'+uuid.uuid4().hex[:30]
             hold_min=14400 if is_t1_core else (10080 if 'T3_KELTNER_TREND_4H' in str(strategy_id) else (2880 if 'T2_RS_BTC_BREAKOUT' in str(strategy_id) else (2160 if 'C2_MTF_COMBO_BREAKOUT' in str(strategy_id) else (1440 if 'C3_ENSEMBLE_VOTE_2OF3' in str(strategy_id) else (1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT','B2_DONCHIAN_INTRADAY','B7_FUNDING_SQUEEZE_MOMENTUM')) else (720 if any(k in str(strategy_id) for k in ('B5_OI_TREND_EXPANSION','B6_EMA_PULLBACK_TREND')) else (480 if any(k in str(strategy_id) for k in ('AUTOTRADE_MOMENTUM_FUNDING','B3_VWAP_MOMENTUM_IMPULSE','B4_ORB_SESSION_BREAKOUT')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))))))))
             _rm=getattr(owner,'release_manifest',None)
-            rel_ver=_rm.get('version','2026.11.19-intraday.8') if isinstance(_rm,dict) else '2026.11.19-intraday.8'
+            rel_ver=_rm.get('version',DEFAULT_RELEASE_VERSION) if isinstance(_rm,dict) else DEFAULT_RELEASE_VERSION
             self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
             if hasattr(self.spm,'ensure_isolated_margin') and 'FUNDING_CARRY' not in str(strategy_id):
                 iso_res=self.spm.ensure_isolated_margin(symbol,int(leverage))
@@ -567,7 +568,7 @@ class ControlCenterState:
         ts = datetime.now().strftime("%H:%M:%S")
         self.logs.insert(0, "[" + ts + "] " + str(msg))
         self.logs = self.logs[:120]
-        print("AItrade " + str(msg), flush=True)
+        print("KAIROS " + str(msg), flush=True)
         self.bybit.ledger.event("LOG", {"message": str(msg)[:1000]})
 
     def _news_loop(self):
@@ -1001,7 +1002,7 @@ class ControlCenterState:
         requested=getattr(self,'autopilot_core_enabled',False) or getattr(self,'autopilot_booster_enabled',False)
         if requested and not self.entry_paused.is_set() and now-(scan.get('last_success') or getattr(self,'started_at',now))>max(240,2*getattr(self,'autopilot_interval_sec',300)+60):reasons.append('Нет успешных циклов в допустимый срок')
         if not liveness:reasons.append('Остановлен или завис рабочий поток')
-        return {"ok":liveness and not reasons,"liveness_ok":liveness,"version":getattr(self,"release_manifest",{}).get("version","2026.11.19-intraday.5"),
+        return {"ok":liveness and not reasons,"liveness_ok":liveness,"version":getattr(self,"release_manifest",{}).get("version",DEFAULT_RELEASE_VERSION),
                 "build_sha256":getattr(self,"release_manifest",{}).get("build_sha256"),
                 "autopilot_alive":alive,"entry_paused":self.entry_paused.is_set(),"entry_pause_reason":getattr(self,"entry_pause_reason",""),"entry_paused_at":getattr(self,"entry_paused_at",0.0),"scan":scan,
                 "guard":guard,"snapshot_age_sec":round(age,1) if age is not None else None,
@@ -1208,7 +1209,7 @@ class ControlCenterState:
                         sig["symbol"], side, b_otype, adj_qty,
                         float(sig["entry_price"]), float(sig.get("take_profit") or sig["take_profit_2"]), float(sig["stop_loss"]),
                         sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,
-                        signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", "2026.11.22-intraday.25")}
+                        signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", DEFAULT_RELEASE_VERSION)}
                     )
                     if not r.get("ok") and hasattr(self, "strategy_funnel"):
                         self.strategy_funnel.record_guard_block(strat_code, str(r.get("retMsg", "Ошибка биржи")))
@@ -1243,7 +1244,7 @@ class ControlCenterState:
                     r = self.bybit.place_order(
                         sig["symbol"], side, sig_otype, float(sig.get("position_size_coins", 0) or 0),
                         float(sig.get("entry_price", 0) or 0), float(sig.get("take_profit", 0) or 0),
-                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + core_strat_id, signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": sig.get("cal_weight", 1.0), "version": getattr(self, "release_manifest", {}).get("version", "2026.11.22-intraday.25")}
+                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + core_strat_id, signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": sig.get("cal_weight", 1.0), "version": getattr(self, "release_manifest", {}).get("version", DEFAULT_RELEASE_VERSION)}
                     )
                     if not r.get("ok"):
                         if hasattr(self, "strategy_funnel"):
@@ -1635,8 +1636,14 @@ class KairosSessionAuth:
         return self._safe_eq(str(pw or ""), self.password)
 
     def _client_ip(self, environ: Dict[str, Any]) -> str:
-        fwd = str(environ.get("HTTP_X_FORWARDED_FOR", "") or "").split(",", 1)[0].strip()
-        return fwd or str(environ.get("REMOTE_ADDR", "127.0.0.1") or "127.0.0.1")
+        real_ip = str(environ.get("HTTP_X_REAL_IP", "") or "").strip()
+        if real_ip:
+            return real_ip
+        fwd_raw = str(environ.get("HTTP_X_FORWARDED_FOR", "") or "").strip()
+        if fwd_raw:
+            # Берём последний IP, дописанный доверенным reverse-proxy, чтобы исключить спуфинг первого элемента
+            return fwd_raw.split(",")[-1].strip()
+        return str(environ.get("REMOTE_ADDR", "127.0.0.1") or "127.0.0.1")
 
     def is_rate_limited(self, environ: Dict[str, Any]) -> bool:
         ip = self._client_ip(environ)
@@ -1797,7 +1804,7 @@ def create_wsgi_app(state: ControlCenterState):
             start_response("200 OK", headers + [("Content-Type", "application/json; charset=utf-8")])
             return [payload]
         if method == "POST":
-            if environ.get("HTTP_X_REQUESTED_WITH") != "AItrade": raise ValueError("Требуется заголовок клиента")
+            if environ.get("HTTP_X_REQUESTED_WITH") not in ("AItrade", "KAIROS"): raise ValueError("Требуется заголовок клиента")
             origin=environ.get("HTTP_ORIGIN")
             if origin and urlsplit(origin).netloc != environ.get("HTTP_HOST"):raise ValueError("Недопустимый Origin")
             if environ.get("CONTENT_TYPE", "").split(";",1)[0] != "application/json":raise ValueError("Требуется application/json")
@@ -2124,29 +2131,35 @@ def create_wsgi_app(state: ControlCenterState):
                     state.mark_position_source(sym, "🖐 Ручной")
                     state.add_log("🖐 Открыт ручной ордер: " + sym + " " + side + " qty=" + str(resp.get("qty")))
             elif path == "/api/pos_split_tp":
+                ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
                 avg_px = float(data.get("avg_price", 0) or 0)
                 cur_tp = float(data.get("take_profit", 0) or 0)
                 tp1_px = avg_px + 0.5 * (cur_tp - avg_px) if cur_tp > 0 else (avg_px * 1.008 if data["side"] == "Buy" else avg_px * 0.992)
-                resp = state.bybit.spm.place_tp1_half_limit(data["symbol"], data["side"], float(data.get("size", 0) or 0), tp1_px, int(data.get("position_idx", 0) or 0))
+                resp = ctrl.spm.place_tp1_half_limit(data["symbol"], data["side"], float(data.get("size", 0) or 0), tp1_px, int(data.get("position_idx", 0) or 0))
                 state.add_log("🎯 Выставлен TP1 50% для " + str(data["symbol"]) + " @ " + str(resp.get("tp1_price")))
             elif path == "/api/pos_close_half":
-                resp = state.bybit.close_half_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0))
+                ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
+                resp = ctrl.close_half_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0))
                 state.add_log("✂️ Отправлена заявка на закрытие 50% позиции " + str(data["symbol"]))
             elif path == "/api/pos_breakeven":
-                resp = state.bybit.spm.move_sl_to_breakeven(data["symbol"], data["side"], float(data.get("avg_price", 0) or 0), int(data.get("position_idx", 0) or 0))
+                ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
+                resp = ctrl.spm.move_sl_to_breakeven(data["symbol"], data["side"], float(data.get("avg_price", 0) or 0), int(data.get("position_idx", 0) or 0))
                 state.add_log("🛡 Стоп-лосс " + str(data["symbol"]) + " переведен в Безубыток (" + str(resp.get("be_price")) + ")")
             elif path == "/api/pos_trailing":
-                resp = state.bybit.spm.activate_trailing_stop(data["symbol"], float(data.get("mark_price", 0) or 0), state.bybit.spm.trailing_step_pct, int(data.get("position_idx", 0) or 0))
+                ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
+                resp = ctrl.spm.activate_trailing_stop(data["symbol"], float(data.get("mark_price", 0) or 0), ctrl.spm.trailing_step_pct, int(data.get("position_idx", 0) or 0))
                 state.add_log("📈 Включен Trailing Stop (" + str(resp.get("trailing_dist")) + ") для " + str(data["symbol"]))
             elif path == "/api/close_position":
-                resp = state.bybit.close_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0))
+                ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
+                resp = ctrl.close_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0))
                 state.add_log("✖ Отправлена заявка на закрытие позиции " + str(data["symbol"]))
             elif path == "/api/close_all_positions":
                 res_list = [ctrl.close_all_positions() for ctrl in state._active_controllers()]
                 resp = {"ok": all(r.get("ok") for r in res_list), "submitted_count": sum(int(r.get("submitted_count", 0)) for r in res_list)}
                 state.add_log("🚨 Отправлены заявки на закрытие позиций на все активные контуры.")
             elif path == "/api/cancel_order":
-                resp = state.bybit.cancel_order(data["symbol"], data["order_id"])
+                ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
+                resp = ctrl.cancel_order(data["symbol"], data["order_id"])
             elif path == "/api/cancel_all_orders":
                 res_list = [ctrl.cancel_all_orders() for ctrl in state._active_controllers()]
                 resp = {"ok": all(r.get("ok") for r in res_list)}
@@ -2164,10 +2177,14 @@ def create_wsgi_app(state: ControlCenterState):
     def guarded(environ,start_response):
         try:
             return app(environ,start_response)
-        except Exception as exc:
-            state.add_log("Ошибка HTTP-команды: " + str(exc)[:200])
+        except ValueError as exc:
+            state.add_log("Ошибка валидации HTTP-команды: " + str(exc)[:200])
             start_response("400 Bad Request",[("Content-Type","application/json; charset=utf-8"),("Cache-Control","no-store")])
             return [json.dumps({"ok":False,"retMsg":str(exc)[:200]},ensure_ascii=False).encode()]
+        except Exception as exc:
+            state.add_log("Внутренняя ошибка HTTP-команды: " + type(exc).__name__ + ": " + str(exc)[:200])
+            start_response("500 Internal Server Error",[("Content-Type","application/json; charset=utf-8"),("Cache-Control","no-store")])
+            return [json.dumps({"ok":False,"retMsg":"Внутренняя ошибка сервера"},ensure_ascii=False).encode()]
     return guarded
 
 
