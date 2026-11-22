@@ -48,26 +48,34 @@ class XNewsSentimentRadar:
     }
 
     BULL_WORDS: Dict[str, int] = {
-        "listing": 35, "lists": 32, "upbit": 40, "bithumb": 35, "coinbase": 25,
-        "etf": 30, "approved": 35, "approval": 30, "partnership": 25, "partners": 22,
-        "mainnet": 25, "launch": 20, "launches": 20, "buyback": 30, "burn": 25,
-        "accumulating": 22, "bought": 20, "bullish": 20, "breakout": 18,
+        "listing": 35, "lists": 32, "listed": 28, "upbit": 40, "bithumb": 35, "coinbase": 25,
+        "etf inflow*": 40, "inflow*": 25, "etf": 30, "approv*": 32, "partner*": 24,
+        "mainnet": 25, "launch*": 20, "buyback*": 30, "burn*": 22,
+        "accumulat*": 22, "bought": 20, "bullish": 20, "breakout": 18,
         "grayscale": 25, "blackrock": 28, "microstrategy": 25, "saylor": 22,
-        "airdrop": 18, "upgrade": 18, "integration": 20, "record high": 25, "ath": 22,
+        "airdrop*": 18, "upgrade*": 18, "integrat*": 20, "record high": 25, "ath": 22, "all-time high": 25,
+        "rate cut*": 35, "fed cut*": 35, "dovish": 25, "stimulus": 25,
+        "cpi lower": 30, "cpi cools": 30, "cooling cpi": 30, "cpi below": 28,
+        "tariff pause*": 25, "tariffs lifted": 25, "tariffs dropped": 25,
     }
 
     BEAR_WORDS: Dict[str, int] = {
-        "hack": -55, "hacked": -55, "exploit": -55, "exploited": -55, "drained": -55,
-        "delist": -45, "delisting": -45, "sec sues": -45, "lawsuit": -35, "investigation": -30,
-        "halt": -40, "halted": -40, "insolvency": -55, "bankrupt": -55, "bankruptcy": -55,
-        "unlock": -25, "dump": -25, "selling": -20, "sold": -18, "bearish": -20,
-        "crash": -35, "ban": -35, "banned": -35, "reject": -30, "rejected": -30,
-        "outflow": -28, "outflows": -28, "etf outflow": -45, "etf outflows": -45,
-        "liquidated": -20, "phishing": -35, "stolen": -45,
+        "hack*": -55, "exploit*": -55, "breach*": -50, "drain*": -55, "stolen": -45,
+        "rugpull*": -55, "rug pull": -55, "compromis*": -45, "phish*": -35, "scam*": -40, "fraud*": -45,
+        "delist*": -45, "depeg*": -55, "insolven*": -55, "bankrupt*": -55,
+        "withdrawals paused": -50, "withdrawals suspended": -50, "halt*": -40, "frozen": -35,
+        "sec sues": -45, "sec charges": -45, "sec lawsuit": -45, "sec probe": -40, "sec investigation": -40,
+        "sec": -15, "lawsuit*": -35, "investigat*": -30, "indict*": -45, "arrest*": -40,
+        "sanction*": -40, "subpoena*": -35, "crackdown": -35, "fined": -30, "ban": -35, "banned": -35, "reject*": -30,
+        "etf outflow*": -45, "outflow*": -28,
+        "flash crash": -40, "crash*": -35, "plunge*": -28, "tumble*": -25, "drops to": -20,
+        "unlock*": -25, "dump*": -25, "selling": -20, "sold": -18, "bearish": -20, "liquidat*": -20,
+        "tariff*": -25, "trade war": -35, "rate hike*": -35, "fed hawkish": -35, "hawkish": -25,
+        "hot cpi": -30, "cpi higher": -30, "cpi above": -28, "inflation surge*": -30, "recession": -30,
     }
 
     # Глобальный PANIC только по системным биржевым инцидентам; монетные hack/exploit привязаны к тикеру
-    PANIC_TRIGGERS = ["insolvency", "bankrupt", "bankruptcy", "binance halt", "bybit halt", "exchange halt"]
+    PANIC_TRIGGERS = ["insolven*", "bankrupt*", "binance halt", "bybit halt", "exchange halt", "withdrawals suspended", "depeg*"]
 
     def __init__(self) -> None:
         self.enabled: bool = True
@@ -121,15 +129,26 @@ class XNewsSentimentRadar:
         r"\b(?:not|no|never|neither|without|false|fake|rumor|debunked|denied|averted|prevented|mitigated|patched|resolved)\b",
     )
 
+    @staticmethod
+    def _term_pattern(term: str) -> str:
+        parts = term.split()
+        regex_parts = []
+        for p in parts:
+            if p.endswith("*"):
+                regex_parts.append(re.escape(p[:-1]) + r"[a-z]*")
+            else:
+                regex_parts.append(re.escape(p))
+        return r"\b" + r"\s+".join(regex_parts) + r"\b"
+
     def _is_negated(self, text_low: str, keyword: str) -> bool:
         # Negation belongs to this occurrence and clause, not arbitrary nearby text.
-        matches=list(re.finditer(r"\b"+re.escape(keyword)+r"\b",text_low))
+        matches=list(re.finditer(self._term_pattern(keyword),text_low))
         flags=[]
         for m in matches:
             before=re.split(r"[.!?;,]|\b(?:but|however|yet)\b",text_low[:m.start()])[-1]
             after=re.split(r"[.!?;,]",text_low[m.end():])[0]
             prefix=bool(re.search(r"\b(?:not|never|no|false|denies|denied|without)\b(?:\s+[a-z'-]+){0,3}\s*$",before))
-            suffix=bool(re.match(r"\s+(?:(?:was|is|were|has been)\s+)?(?:prevented|denied|false|debunked)\b",after))
+            suffix=bool(re.match(r"(?:\s+[a-z'-]+){0,2}\s+(?:(?:was|is|were|are|has been)\s+)?(?:not|prevented|denied|false|debunked|averted|resolved|patched)\b",after))
             flags.append(prefix or suffix)
         return bool(flags) and all(flags)
 
@@ -140,27 +159,43 @@ class XNewsSentimentRadar:
         is_panic = False
 
         has_outflow = bool(re.search(r"\boutflows?\b", t_low))
+        has_reject = bool(re.search(r"\breject[a-z]*\b|\bdelay[a-z]*\b", t_low))
+        has_approv = bool(re.search(r"\bapprov[a-z]*\b|\bdismiss[a-z]*\b|\bdrops?\s+lawsuit\b", t_low))
+        has_tariff_relief = bool(re.search(r"\btariff[a-z]*\s+(?:pause[a-z]*|lifted|dropped|delay[a-z]*)\b", t_low))
+
+        matched_bull: List[str] = []
         for w, val in self.BULL_WORDS.items():
-            if w == "etf" and has_outflow:
+            if w == "etf" and (has_outflow or has_reject):
                 continue
-            if re.search(r"\b" + re.escape(w) + r"\b", t_low) and not self._is_negated(t_low, w):
+            if w == "inflow*" and "etf inflow*" in matched_bull:
+                continue
+            if re.search(self._term_pattern(w), t_low) and not self._is_negated(t_low, w):
                 score += val
-                triggers.append("+" + w)
+                triggers.append("+" + w.rstrip("*"))
+                matched_bull.append(w)
 
         active_bear_words: List[str] = []
         for w, val in self.BEAR_WORDS.items():
-            if re.search(r"\b" + re.escape(w) + r"\b", t_low) and not self._is_negated(t_low, w):
+            if w == "outflow*" and "etf outflow*" in active_bear_words:
+                continue
+            if w == "sec" and (has_approv or any(k.startswith("sec ") for k in active_bear_words)):
+                continue
+            if w == "tariff*" and has_tariff_relief:
+                continue
+            if w == "crash*" and "flash crash" in active_bear_words:
+                continue
+            if re.search(self._term_pattern(w), t_low) and not self._is_negated(t_low, w):
                 score += val
-                triggers.append("-" + w)
+                triggers.append("-" + w.rstrip("*"))
                 active_bear_words.append(w)
 
         for pw in self.PANIC_TRIGGERS:
-            if (pw in active_bear_words or re.search(r"\b" + re.escape(pw) + r"\b", t_low)) and score <= -35:
+            if (pw in active_bear_words or re.search(self._term_pattern(pw), t_low)) and not self._is_negated(t_low, pw) and score <= -35:
                 is_panic = True
                 break
 
         score = max(-100, min(100, score))
-        trig_str = ", ".join(triggers[:3]) if triggers else "Общий новостной поток"
+        trig_str = ", ".join(triggers[:4]) if triggers else "Общий новостной поток"
         return score, trig_str, is_panic
 
     def refresh_feed(self, force: bool = False) -> Dict[str, Any]:

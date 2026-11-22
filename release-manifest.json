@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.22-intraday.32",
-  "built_at": "2026-11-22T10:18:57.513319+00:00",
+  "version": "2026.11.22-intraday.33",
+  "built_at": "2026-11-22T10:52:58.358886+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
     "aitrade/agents/__init__.py": "8f490c3f80fbc2a59fa6d72e4eff9f82c5567789d6947cbd47fb0fe691eb6282",
@@ -13,7 +13,7 @@
     "aitrade/booster/ml_calibrator.py": "f85dd32fae93cf4ebecee84fe3bc1ec4acd0989a87e8a37ea5ba26385148ca25",
     "aitrade/booster/oi_squeeze_scanner.py": "a1c77c694930946453596e916445fded34aedc889df50ba110c443ada77cbe6a",
     "aitrade/booster/regime_correlation_guard.py": "739da1334c4898d2b1333f4a90806ef1785ea1ecbd0bc648c66c97e35dc822a6",
-    "aitrade/booster/x_news_radar.py": "6da05172f57bbdfcfee6de5720962bee1df524e57758aad230e481c3d3f46404",
+    "aitrade/booster/x_news_radar.py": "1fc7221e63101020225b5a1240c5eb45434c85cabb2c01c15a5006dab12f0848",
     "aitrade/config.py": "babd1974cf673e654c59cdf0e04567f5b33b2ca88bd737edd9e9c1532e736417",
     "aitrade/dashboard/__init__.py": "37a1c4c9d956b0aaf3af30834eb697e360d6e72327b88054fa418d01a774611c",
     "aitrade/dashboard/live_server.py": "13dbe19dbd9c5a392f80380a0cf241c420b11d0d59b1d5bbef14a08970d3d6b4",
@@ -92,6 +92,7 @@
     "tests/test_intraday29_calibrator_and_chaser.py": "68e4f81f820b359c431afa50846ca30f7193ffb8fefdfbde0f69d96a4bdd4dae",
     "tests/test_intraday31_strategy_detail.py": "220df671edd22cf7c2a2d373541652b67a9df005920533303ac8781a2e074bc7",
     "tests/test_intraday32_ui_ux.py": "33aabfd22c43e87b66549a03993d80f97eb05c4e90f8c398ab7cdf2daf9f1a21",
+    "tests/test_intraday33_news_nlp.py": "85da9cbfc5551a46b2a8e71699c0533bb96b3c463effc2c478fad0be23c382e5",
     "tests/test_intraday6_audit.py": "a2baf5229538ce19447032566e59404c58cebea4b63b0112f5feb3416b47b683",
     "tests/test_intraday7_p0_fixes.py": "cd072f1648d57b74d414d4d283ee94b5f02cfeec26984f03a304e38f400a88df",
     "tests/test_intraday8_infra.py": "ad25951092b6980f98325b04529b314d10e70f9a64052fc3c1c3e3d4ed25e244",
@@ -105,7 +106,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "46208c1b7f78814283cc1f5e81a120319549797348c07757616dcf72bc0054a5",
+  "build_sha256": "e59b8e6f81ddc760875e0573a055641024e130bf9d6625f8ce432c322dba50bc",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"
