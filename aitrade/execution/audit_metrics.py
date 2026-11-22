@@ -438,7 +438,7 @@ def compute_live_strategy_metrics(
         losses = [p for p in pnls if p < 0]
         gp = sum(wins)
         gl = abs(sum(losses))
-        pf = round(gp / gl, 2) if gl > 0 else (None if gp == 0 else 99.0)
+        pf = round(gp / gl, 2) if gl > 0 else None
         wr = round((len(wins) / len(pnls)) * 100.0, 1) if pnls else 0.0
 
         s_traces = [t for t in traces if t["strategy_id"] == s_id]

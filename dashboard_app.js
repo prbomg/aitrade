@@ -460,18 +460,24 @@ function renderEquitySvg(curvePoints, floorUsd, hwmUsd) {
 }
 
 function buildPositionsRows(posList) {
+  const pureKeys = ["S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM", "T1_DONCHIAN_TSMOM", "T2_RS_BTC_BREAKOUT", "T3_KELTNER_TREND_4H", "C2_MTF_COMBO_BREAKOUT", "C3_ENSEMBLE_VOTE_2OF3"];
   return posList.map(function(p) {
     const u = Number(p.unrealisedPnl || 0);
     const pIdx = Number(p.positionIdx || 0);
     const srcTag = p.source_tag || "🎯 Системный";
+    const rawStrat = String(p.strategy_id || "");
+    const cleanStrat = rawStrat.indexOf(":") !== -1 ? rawStrat.split(":")[1] : rawStrat;
+    const isPure = pureKeys.some(function(k) { return rawStrat.indexOf(k) !== -1; });
     const srcCls = srcTag.indexOf("Booster") !== -1 ? "badge-purple" : (srcTag.indexOf("Ручной") !== -1 ? "badge-amber" : "badge-blue");
-    const tp1B = p.tp1_order_price ? ("<span class=\"badge badge-green\">" + p.tp1_order_qty + " @ " + p.tp1_order_price + "</span>") : "<span class=\"badge badge-amber\">Ожидает</span>";
+    const stratSub = (cleanStrat && cleanStrat !== "UNATTRIBUTED" && cleanStrat !== "MANUAL") ? ("<div style=font-size:10.5px;color:#cbd5e1;margin-top:2px><b>" + escapeHtml(cleanStrat) + "</b></div>") : "";
+    const tp1B = isPure ? "<span class=\"badge badge-blue\">Pure SL/TP</span>" : (p.tp1_order_price ? ("<span class=\"badge badge-green\">" + p.tp1_order_qty + " @ " + p.tp1_order_price + "</span>") : "<span class=\"badge badge-amber\">Ожидает</span>");
     const stB = (p.is_breakeven ? "<span class=\"badge badge-green\">🛡 БУ</span> " : "") + (p.has_trailing ? ("<span class=\"badge badge-blue\">📈 Trail " + p.trailingStop + "</span>") : "<span class=\"badge badge-amber\">Активна</span>");
     const tsLim = (window._rgCfg && window._rgCfg.time_stop_minutes) ? window._rgCfg.time_stop_minutes : 45;
-    const ageM = Number(p.age_min || 0).toFixed(0);
+    const ageNum = Number(p.age_min || 0);
+    const ageFmt = ageNum >= 60 ? (Math.floor(ageNum / 60) + "ч " + Math.round(ageNum % 60) + "м") : (ageNum.toFixed(0) + "м");
     const secLbl = p.sector ? (" <span style=color:var(--muted);font-size:10px>[" + p.sector + "]</span>") : "";
-    const timerBadge = p.is_breakeven ? ("<span class=\"badge badge-green\">" + ageM + "м (в БУ)</span>") : ("<span class=\"badge badge-blue\">⏱ " + ageM + " / " + tsLim + "м</span>");
-    return "<tr><td><b>" + p.symbol + "</b> (" + p.leverage + "x)</td><td><span class=\"badge " + srcCls + "\">" + srcTag + "</span>" + secLbl + "</td><td class=" + (p.side === "Buy" ? "pos-green" : "pos-red") + ">" + p.side + "</td><td><b>" + p.size + "</b></td><td>" + p.avgPrice + "</td><td>" + p.markPrice + "</td><td class=" + (u >= 0 ? "pos-green" : "pos-red") + ">" + (u >= 0 ? "+" : "") + u.toFixed(2) + "$</td><td>" + timerBadge + "</td><td>" + tp1B + "</td><td>" + (p.takeProfit || "—") + "</td><td>" + (p.stopLoss || "—") + "</td><td>" + stB + "</td><td style=display:flex;gap:4px;flex-wrap:wrap>" +
+    const timerBadge = p.is_breakeven ? ("<span class=\"badge badge-green\">" + ageFmt + " (в БУ)</span>") : (isPure ? ("<span class=\"badge badge-blue\">⏱ " + ageFmt + " (Pure)</span>") : ("<span class=\"badge badge-blue\">⏱ " + ageNum.toFixed(0) + " / " + tsLim + "м</span>"));
+    return "<tr><td><b>" + p.symbol + "</b> (" + p.leverage + "x)</td><td><span class=\"badge " + srcCls + "\">" + srcTag + "</span>" + secLbl + stratSub + "</td><td class=" + (p.side === "Buy" ? "pos-green" : "pos-red") + ">" + p.side + "</td><td><b>" + p.size + "</b></td><td>" + p.avgPrice + "</td><td>" + p.markPrice + "</td><td class=" + (u >= 0 ? "pos-green" : "pos-red") + ">" + (u >= 0 ? "+" : "") + u.toFixed(2) + "$</td><td>" + timerBadge + "</td><td>" + tp1B + "</td><td>" + (p.takeProfit || "—") + "</td><td>" + (p.stopLoss || "—") + "</td><td>" + stB + "</td><td style=display:flex;gap:4px;flex-wrap:wrap>" +
       "<button type=button class=\"btn-purple btn-sm\" data-action=split_tp data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-avg=" + p.avgPrice + " data-tp=" + (p.takeProfit || 0) + " data-sl=" + (p.stopLoss || 0) + " data-idx=" + pIdx + ">🎯 TP1 50%</button>" +
       "<button type=button class=\"btn-success btn-sm\" data-action=breakeven data-symbol=" + p.symbol + " data-side=" + p.side + " data-avg=" + p.avgPrice + " data-idx=" + pIdx + ">🛡 В БУ</button>" +
       "<button type=button class=\"btn-primary btn-sm\" data-action=pyramid data-symbol=" + p.symbol + " data-side=" + p.side + " data-size=" + p.size + " data-avg=" + p.avgPrice + " data-mark=" + p.markPrice + " data-idx=" + pIdx + ">➕ Доливка 50%</button>" +
@@ -612,15 +618,25 @@ function renderState(st) {
     const wfaUpd = document.getElementById("wfa-val-updated");
     if (wfaUpd) wfaUpd.textContent = "Обновлено: " + (wfaVal.updated_at ? String(wfaVal.updated_at).slice(0, 19).replace("T", " ") + " UTC" : "—");
     const stratMap = wfaVal.strategies || {};
-    const keys = Object.keys(stratMap);
+    const stCfg = st.settings || {};
+    const demoLabOn = Boolean(stCfg.demo_lab_enabled);
+    const demoLabList = stCfg.demo_lab_strategies || [];
+    const keys = Object.keys(stratMap).slice();
+    if (demoLabOn) {
+      demoLabList.forEach(function(ds) { if (keys.indexOf(ds) === -1) keys.push(ds); });
+    }
     wfaBody.innerHTML = keys.length === 0
       ? "<tr><td colspan=7 style=color:var(--muted)>Артефакт wfa_validation.json не найден (fail-closed: новые входы закрыты)</td></tr>"
       : keys.map(function(k) {
           const e = stratMap[k] || {};
           const ok = Boolean(e.wfe_passed);
+          const inDemoLab = demoLabOn && demoLabList.indexOf(k) !== -1;
+          const badgeCls = ok ? "badge-green" : (inDemoLab ? "badge-purple" : "badge-red");
+          const badgeTxt = ok ? "✅ PASSED (В БОЮ)" : (inDemoLab ? "🧪 DEMO LAB (В БОЮ)" : "⛔ BLOCKED");
+          const hasOos = e.oos_trades != null;
           const r1 = Number(e.oos_avg_r || 0);
           const r2 = Number(e.oos_2x_avg_r || 0);
-          return "<tr><td><b>" + escapeHtml(k) + "</b></td><td><span class=\"badge " + (ok ? "badge-green" : "badge-red") + "\">" + (ok ? "✅ PASSED (В БОЮ)" : "⛔ BLOCKED") + "</span></td><td>" + (e.oos_trades ?? "—") + "</td><td><b>" + (e.oos_pf == null ? "—" : Number(e.oos_pf).toFixed(2)) + "</b></td><td class=" + (r1 > 0 ? "pos-green" : "pos-red") + ">" + (r1 >= 0 ? "+" : "") + r1.toFixed(3) + "R</td><td class=" + (r2 > 0 ? "pos-green" : "pos-red") + ">" + (r2 >= 0 ? "+" : "") + r2.toFixed(3) + "R</td><td>" + (e.wfe == null ? "—" : Number(e.wfe).toFixed(2)) + "</td></tr>";
+          return "<tr><td><b>" + escapeHtml(k) + "</b></td><td><span class=\"badge " + badgeCls + "\">" + badgeTxt + "</span></td><td>" + (e.oos_trades ?? "—") + "</td><td><b>" + (e.oos_pf == null ? "—" : Number(e.oos_pf).toFixed(2)) + "</b></td><td class=" + (hasOos ? (r1 > 0 ? "pos-green" : "pos-red") : "") + ">" + (hasOos ? ((r1 >= 0 ? "+" : "") + r1.toFixed(3) + "R") : "—") + "</td><td class=" + (hasOos ? (r2 > 0 ? "pos-green" : "pos-red") : "") + ">" + (hasOos ? ((r2 >= 0 ? "+" : "") + r2.toFixed(3) + "R") : "—") + "</td><td>" + (e.wfe == null ? "—" : Number(e.wfe).toFixed(2)) + "</td></tr>";
         }).join("");
   }
   const fnl = st.strategy_funnel_24h || {};
@@ -810,6 +826,28 @@ function renderState(st) {
     summaryEl.textContent = "Все автопилоты на паузе";
   }
   document.getElementById("deck-next-timer").textContent = (bOn || cOn) ? ((ap.next_in_sec || 0) + " сек") : "На паузе";
+  const topStopBtn = document.getElementById("btn-stop-all-top");
+  if (topStopBtn) {
+    if (bOn || cOn) {
+      topStopBtn.className = "btn-warning";
+      topStopBtn.textContent = "🟢 Автопилоты активны (Нажмите для паузы)";
+    } else {
+      topStopBtn.className = "btn-ghost";
+      topStopBtn.textContent = "⏸ Автопилоты на паузе";
+    }
+  }
+  const guardErr = ((st.health || {}).guard || {}).last_error || "";
+  const sgOn = Boolean((st.smart_guard || {}).enabled);
+  const gBadge = document.getElementById("badge-guard-state");
+  if (gBadge) {
+    if (guardErr) { gBadge.className = "badge badge-red"; gBadge.textContent = "⚠️ Smart Guard: ОШИБКА"; }
+    else if (!sgOn) { gBadge.className = "badge badge-amber"; gBadge.textContent = "⏸ Smart Guard ВЫКЛ"; }
+    else { gBadge.className = "badge badge-green"; gBadge.textContent = "🛡 Smart Guard АКТИВЕН"; }
+  }
+  const kpiGSub = document.getElementById("kpi-guard-sub");
+  if (kpiGSub) {
+    kpiGSub.textContent = guardErr ? "⚠️ Ошибка Smart Guard" : (sgOn ? "Защита Pure SL/TP + Smart Guard" : "⏸ Smart Guard выключен");
+  }
   const ivSel = document.getElementById("autopilot-interval");
   if (document.activeElement !== ivSel && ap.interval_sec) ivSel.value = String(ap.interval_sec);
 
@@ -924,7 +962,7 @@ function renderState(st) {
 
   const pBody = document.getElementById("positions-tbody");
   pBody.innerHTML = posList.length === 0
-    ? "<tr><td colspan=12 style=text-align:center;color:var(--muted);padding:16px>Нет открытых позиций.</td></tr>"
+    ? "<tr><td colspan=13 style=text-align:center;color:var(--muted);padding:16px>Нет открытых позиций.</td></tr>"
     : buildPositionsRows(posList);
 
   const oBody = document.getElementById("orders-tbody");
@@ -1046,10 +1084,13 @@ function renderState(st) {
 
   document.getElementById("closed-pnl-tbody").innerHTML = cList.map(function(c) {
     const p = Number(c.closedPnl || 0);
+    const rawS = String(c.strategy_id || "");
+    const cleanS = rawS.indexOf(":") !== -1 ? rawS.split(":")[1] : (rawS || "LEGACY");
+    const sCls = rawS.indexOf("BOOSTER:") === 0 ? "badge-purple" : (rawS.indexOf("CORE:") === 0 ? "badge-blue" : "badge-amber");
     const dtStr = c.updatedTime
       ? new Date(Number(c.updatedTime)).toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit"})
       : "—";
-    return "<tr><td><b>" + c.symbol + "</b></td><td>" + c.side + "</td><td>" + c.qty + "</td><td>" + c.avgEntryPrice + "</td><td>" + c.avgExitPrice + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + dtStr + "</td></tr>";
+    return "<tr><td><b>" + c.symbol + "</b></td><td><span class=\"badge " + sCls + "\">" + escapeHtml(cleanS) + "</span></td><td>" + c.side + "</td><td>" + c.qty + "</td><td>" + c.avgEntryPrice + "</td><td>" + c.avgExitPrice + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + dtStr + "</td></tr>";
   }).join("");
 }
 

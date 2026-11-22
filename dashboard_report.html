@@ -137,7 +137,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
 <div class="kpi-strip">
   <div class="kpi-mini"><span class="kpi-mini-lbl">Баланс Маржи (USDT)</span><span class="kpi-mini-val" id="kpi-usdt">$0.00</span><span class="kpi-mini-sub" id="kpi-equity">Эквити: $0.00</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">🚀 Капитал Разгона ($1k→$10k)</span><span class="kpi-mini-val pos-green" id="kpi-booster-eq">$1,000.00</span><span class="kpi-mini-sub" id="kpi-booster-floor">Порог снижения риска: $920.00</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Позиции / Ордера)</span><span class="kpi-mini-val" id="kpi-pos-orders">0 поз. / 0 орд.</span><span class="kpi-mini-sub">Защита TP1 50% + БУ активна</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Позиции / Ордера)</span><span class="kpi-mini-val" id="kpi-pos-orders">0 поз. / 0 орд.</span><span class="kpi-mini-sub" id="kpi-guard-sub">Защита Pure SL/TP + Smart Guard</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">Нереализованный PnL</span><span class="kpi-mini-val" id="kpi-upnl">$0.00</span><span class="kpi-mini-sub">По текущим сделкам</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">Реализованный PnL (архив + live)</span><span class="kpi-mini-val" id="kpi-rpnl">$0.00</span><span class="kpi-mini-sub" id="kpi-winrate">Win Rate: —</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">Поток WebSocket L2 (20мс)</span><span class="kpi-mini-val" id="kpi-ws">0 тиков</span><span class="kpi-mini-sub" id="kpi-ws-sub">Загрузка потока</span></div>
@@ -317,7 +317,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
       </div>
       <div class="strat-actions">
         <button type="button" id="btn-toggle-booster" class="btn-big-toggle btn-purple">🚀 ВКЛЮЧИТЬ АВТОПИЛОТ РАЗГОНА</button>
-        <button type="button" id="btn-once-booster" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход по B1 (Разгон)</button>
+        <button type="button" id="btn-once-booster" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход Разгона (8 стратегий)</button>
       </div>
     </div>
 
@@ -335,8 +335,8 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
         </div>
       </div>
       <div class="strat-actions">
-        <button type="button" id="btn-toggle-core" class="btn-big-toggle btn-primary">🎯 ВКЛЮЧИТЬ АВТОТРЕЙДИНГ (T1)</button>
-        <button type="button" id="btn-once-core" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход по T1 (Автотрейдинг)</button>
+        <button type="button" id="btn-toggle-core" class="btn-big-toggle btn-primary">🎯 ВКЛЮЧИТЬ АВТОТРЕЙДИНГ (T1–T3, C2–C3)</button>
+        <button type="button" id="btn-once-core" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход Автотрейдинга (5 стратегий)</button>
       </div>
     </div>
 
@@ -377,7 +377,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Монета</th><th>Контур / Сектор</th><th>Сторона</th><th>Объем</th><th>Вход</th><th>Марк. цена</th><th>PnL ($)</th><th>Таймер</th><th>TP1 (50%)</th><th>TP2</th><th>Stop Loss</th><th>Защита</th><th>Быстрые действия</th></tr></thead>
+        <thead><tr><th>Монета</th><th>Контур / Стратегия</th><th>Сторона</th><th>Объем</th><th>Вход</th><th>Марк. цена</th><th>PnL ($)</th><th>Таймер</th><th>TP1 (50%)</th><th>TP2</th><th>Stop Loss</th><th>Защита</th><th>Быстрые действия</th></tr></thead>
         <tbody id="sticky-positions-tbody"></tbody>
       </table>
     </div>
@@ -433,7 +433,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">🔥 Деривативный сканер «OI + Funding + Liquidation Squeeze» (Информационный радар)</h3>
-        <span style="font-size:11.5px;color:var(--muted)">Автопилот Разгона торгует только WFA-валидированный <b>B1_SQUEEZE_BREAKOUT</b> (6 пар, Pure SL/TP 18h)</span>
+        <span style="font-size:11.5px;color:var(--muted)">В Demo Lab Автопилот Разгона торгует 8 стратегий (<b>B1–B7 + S1</b>, 20 пар, Pure SL/TP)</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -501,8 +501,8 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     </div>
     <div class="panel">
       <div class="panel-header">
-        <h3 class="panel-title">🎯 Сигналы стратегий (T1 Donchian 4h / B1 Squeeze)</h3>
-        <span style="font-size:11.5px;color:var(--muted)">Автотрейдинг: <b>T1_DONCHIAN_TSMOM</b> (12 пар) · Разгон: <b>B1_SQUEEZE_BREAKOUT</b> (6 пар)</span>
+        <h3 class="panel-title">🎯 Сигналы стратегий (13 стратегий Demo Lab · 20 пар)</h3>
+        <span style="font-size:11.5px;color:var(--muted)">Автотрейдинг: <b>T1–T3, C2–C3</b> · Разгон: <b>B1–B7, S1</b> (приоритет: Tier 1 → Tier 2 → Tier 3)</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -517,13 +517,13 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
   <div id="tab-positions" class="tab-content">
     <div class="panel">
       <div class="panel-header">
-        <h3 class="panel-title">🟢 Открытые позиции на Bybit Demo (с меткой источника стратегии и Пирамидингом)</h3>
+        <h3 class="panel-title">🟢 Открытые позиции на Bybit Demo (с меткой стратегии и Пирамидингом)</h3>
         <button type="button" id="btn-close-all" class="btn-danger btn-sm">🚨 Закрыть ВСЕ позиции</button>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Монета</th><th>Контур / Сектор</th><th>Сторона</th><th>Объем</th><th>Вход</th><th>Марк. цена</th><th>PnL ($)</th><th>Таймер</th><th>TP1 (50%)</th><th>TP2 (Full)</th><th>Stop Loss</th><th>Статус защиты</th><th>Действия в 1 клик</th></tr></thead>
-          <tbody id="positions-tbody"><tr><td colspan="12">Загрузка...</td></tr></tbody>
+          <thead><tr><th>Монета</th><th>Контур / Стратегия</th><th>Сторона</th><th>Объем</th><th>Вход</th><th>Марк. цена</th><th>PnL ($)</th><th>Таймер</th><th>TP1 (50%)</th><th>TP2 (Full)</th><th>Stop Loss</th><th>Статус защиты</th><th>Действия в 1 клик</th></tr></thead>
+          <tbody id="positions-tbody"><tr><td colspan="13">Загрузка...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -660,8 +660,8 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
       <div class="panel-header"><h3 class="panel-title">💰 Реализованный PnL закрытых сделок и частичных тейков TP1 (/v5/position/closed-pnl)</h3></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Монета</th><th>Сторона</th><th>Объем</th><th>Цена входа</th><th>Цена выхода</th><th>Закрытый PnL (USDT)</th><th>Плечо</th><th>Дата и время</th></tr></thead>
-          <tbody id="closed-pnl-tbody"><tr><td colspan="8">Загрузка...</td></tr></tbody>
+          <thead><tr><th>Монета</th><th>Стратегия</th><th>Сторона</th><th>Объем</th><th>Цена входа</th><th>Цена выхода</th><th>Закрытый PnL (USDT)</th><th>Плечо</th><th>Дата и время</th></tr></thead>
+          <tbody id="closed-pnl-tbody"><tr><td colspan="9">Загрузка...</td></tr></tbody>
         </table>
       </div>
     </div>

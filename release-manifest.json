@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.22-intraday.27",
-  "built_at": "2026-11-22T08:27:30.457675+00:00",
+  "version": "2026.11.22-intraday.28",
+  "built_at": "2026-11-22T08:33:25.161945+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
     "aitrade/agents/__init__.py": "8f490c3f80fbc2a59fa6d72e4eff9f82c5567789d6947cbd47fb0fe691eb6282",
@@ -16,7 +16,7 @@
     "aitrade/booster/x_news_radar.py": "6da05172f57bbdfcfee6de5720962bee1df524e57758aad230e481c3d3f46404",
     "aitrade/config.py": "babd1974cf673e654c59cdf0e04567f5b33b2ca88bd737edd9e9c1532e736417",
     "aitrade/dashboard/__init__.py": "37a1c4c9d956b0aaf3af30834eb697e360d6e72327b88054fa418d01a774611c",
-    "aitrade/dashboard/live_server.py": "ced7ddb35dad989b6ca7c37bb1d369c0fca06c519da12b85d0a1cd4ea47f8868",
+    "aitrade/dashboard/live_server.py": "7f4a84a58a905897f43c39f7b9086d0e0529f4f4d952938578d4db93479ec531",
     "aitrade/dashboard/report_generator.py": "e3195e5f2d6fd98c14c85901a728edd56eee4f326203001d4fe83fb9230fceee",
     "aitrade/engine.py": "ce6f39b591fffb4aaedbbe9ca47e134009149048b0c598f97c88adee9f86d815",
     "aitrade/exchange/__init__.py": "619cd760e7300c5e3b50fd67f57d975ba98c5db68fa596a8847782614a3c9a6f",
@@ -25,7 +25,7 @@
     "aitrade/exchange/transport.py": "0214c97ae6eda76932914e099fec02f59cd19408d7bd49ae0f7e1a7fed3f7909",
     "aitrade/exchange/ws_stream.py": "836803dfb37b631d39f7c3b3252ef6ac26cdebe2de7ea3902b2c93fdad6efbbd",
     "aitrade/execution/__init__.py": "ce286a0e937c56596527d07791d1bc49ca480e9720129bf82bf1e44539d2ba59",
-    "aitrade/execution/audit_metrics.py": "0ad9119f50124269ee01d719a9079639abe1d5fa8a071508a2ccc48e2314b626",
+    "aitrade/execution/audit_metrics.py": "6796cf9e50fe80cabd1549ada4f51c8acb41914ac98350afe86794196daf8430",
     "aitrade/execution/demo_trader.py": "114fa5051c7bc44fa0cc7d8cd57c85b036f8a99b3cdc135e47bc318ed7cfab5c",
     "aitrade/execution/freqai_strategy.py": "ce3265ed0ee4fa9073b32e4cd699015da42d6770d4d9845f4aa7952426ea35d3",
     "aitrade/execution/limit_chaser.py": "debd8e5b99323c5aaddf2b61685b0a4c36656719e5e002210659ba4710db3fb0",
@@ -67,8 +67,8 @@
     "aitrade/strategies/vwap_momentum_impulse.py": "e9af7acd2284f843b19a1bcd8469bbe125db3253df734042407422d14ebe02ce",
     "config/freqtrade_freqai_bybit.json": "369aa7f060824db84521d2fc744158610eddcac1034cc1cbccba2db6bfa89ca4",
     "config/settings.json": "8813abc2a84783a9f389dd2ff16a299c674a23256853831df6da8fbee4d3c11f",
-    "dashboard_app.js": "6baad4556382a79968dfc7969ec14ee093262ccef3ac683352fd14efd86334a7",
-    "dashboard_report.html": "ce58898f8cf50ab9cf8e92d5025557319a7838d1584e6010ac5fc385d030b640",
+    "dashboard_app.js": "f6e2d496913819136a62d86f8fe4869075793e2e42d60feface440868f111952",
+    "dashboard_report.html": "1aa4b8432067c84cd1c55bea4b89524f8459b7c7751f946ca55e33e2dcb13763",
     "gui_app.py": "3de4e46d5340a147a167292a4bd17d61c8d7c60b03a35b3ec7234f838c1d5f20",
     "run_combine.py": "85b0fbf9ef7bfec5fd99149db9ad317249a8d7fd6c9887ce60195c2d14e830e2",
     "scripts/live_audit_report.py": "4cad82351df00be6d92d8b511c7066c52e7e60832b731809b35b9c4c76d48d0f",
@@ -102,7 +102,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "0759c460815e2600a47889f9fa07cf9102c1e541f900417a8de2cc7b106e51a5",
+  "build_sha256": "b98f1e9fd9c3fee07ccbc056180078adbf36afed0abc4882b556bc620b92fae1",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"

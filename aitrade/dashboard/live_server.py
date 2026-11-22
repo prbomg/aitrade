@@ -1284,6 +1284,8 @@ class ControlCenterState:
                 "core_min_prob_pct": self.core_min_prob_pct,
                 "sound_alerts_enabled": self.sound_alerts_enabled,
                 "core_pairs": self.settings.get("universe", {}).get("core_pairs", []),
+                "demo_lab_enabled": self._is_demo_lab_active(),
+                "demo_lab_strategies": list((self.settings.get("demo_lab") or {}).get("admit_experimental_strategies") or []),
             },
             "manual_prefs": self.manual_prefs,
             "limit_chaser": self.limit_chaser.get_summary(),
