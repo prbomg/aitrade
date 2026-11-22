@@ -47,15 +47,20 @@ class SmartLimitChaser:
             if valid and abs(market_px/ref_price-1)*100<=self.max_chase_drift_pct:
                 fb=dict(payload,orderType='Limit',timeInForce='IOC',qty=self.spm.fmt_step(rem,spec['qty_step'],True),orderLinkId=payload['orderLinkId'][:30]+'-m')
                 cap=market_px*(1.0015 if side=='Buy' else .9985)
-                if not (stop_loss<cap<take_profit if side=='Buy' else take_profit<cap<stop_loss):raise ExchangeError('IOC price cap outside TP/SL',uncertain=filled>0)
-                fb['price']=self.spm.fmt_step(cap,spec['tick_size'],side=='Buy')
-                if getattr(self.spm,'ledger',None):self.spm.ledger.prepare_order(fb,order_link_id)
-                res=self.spm.signed_post('/v5/order/create',fb);fid=res['result']['orderId'];ids.append(fid)
-                for _ in range(8):
-                    time.sleep(.3);fs=self._status(symbol,fid)
-                    if fs['orderStatus'] in terminal:break
-                else:raise ExchangeError('Рыночное исполнение не подтверждено',uncertain=True)
-                filled+=float(fs.get('cumExecQty') or 0);used_market=True
+                if not (stop_loss<cap<take_profit if side=='Buy' else take_profit<cap<stop_loss):
+                    if filled>0:
+                        pass
+                    else:
+                        raise ExchangeError('IOC price cap outside TP/SL',uncertain=False)
+                else:
+                    fb['price']=self.spm.fmt_step(cap,spec['tick_size'],side=='Buy')
+                    if getattr(self.spm,'ledger',None):self.spm.ledger.prepare_order(fb,order_link_id)
+                    res=self.spm.signed_post('/v5/order/create',fb);fid=res['result']['orderId'];ids.append(fid)
+                    for _ in range(8):
+                        time.sleep(.3);fs=self._status(symbol,fid)
+                        if fs['orderStatus'] in terminal:break
+                    else:raise ExchangeError('Рыночное исполнение не подтверждено',uncertain=True)
+                    filled+=float(fs.get('cumExecQty') or 0);used_market=True
         self.stats['total_orders']=int(self.stats.get('total_orders',0))+1
         self.stats['fallback_taker_filled' if used_market else 'maker_filled']=int(self.stats.get('fallback_taker_filled' if used_market else 'maker_filled',0))+(1 if filled>0 else 0)
         atomic_json(self.stats_path,self.stats)

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import datetime
 import sqlite3
 from pathlib import Path
@@ -41,7 +42,7 @@ class BybitDemoExecutor:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS demo_trades (
@@ -86,7 +87,7 @@ class BybitDemoExecutor:
                         return total_eq
             except Exception:
                 if not self.settings.get("offline_simulation", False): raise
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             row = conn.execute("SELECT COALESCE(SUM(pnl_usd), 0.0) FROM demo_trades").fetchone()
             realized_pnl = float(row[0]) if row else 0.0
         return round(base_equity + realized_pnl, 2)
@@ -119,7 +120,7 @@ class BybitDemoExecutor:
             except Exception as exc:
                 venue = f"LOCAL_FALLBACK ({str(exc)[:80]})"
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             cur = conn.execute(
                 """
                 INSERT INTO demo_trades (
@@ -174,7 +175,7 @@ class BybitDemoExecutor:
         }
 
     def list_recent_trades(self, limit: int = 30) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM demo_trades ORDER BY id DESC LIMIT ?", (limit,)

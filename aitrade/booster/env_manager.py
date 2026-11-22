@@ -81,12 +81,13 @@ class BybitEnvManager:
         self._save(st)
         return st
 
-    def _save(self, st: Dict[str, Any]) -> None:
+    def _save(self, st: Dict[str, Any], raise_on_error: bool = False) -> None:
         try:
             atomic_json(self.vault_path, st)
             os.chmod(self.vault_path, 0o600)
         except Exception:
-            pass
+            if raise_on_error:
+                raise
 
     @staticmethod
     def mask_key(k: str) -> str:
@@ -161,7 +162,10 @@ class BybitEnvManager:
             cur["api_key"] = api_key.strip()
         if api_secret and "••••" not in api_secret:
             cur["api_secret"] = api_secret.strip()
-        self._save(self.state)
+        try:
+            self._save(self.state, raise_on_error=True)
+        except Exception as exc:
+            return {"ok": False, "retMsg": "Ошибка записи env_vault.json: " + str(exc)[:140]}
         return {
             "ok": True,
             "account": account,
@@ -178,7 +182,10 @@ class BybitEnvManager:
         if api_secret and "••••" not in api_secret:
             cur["api_secret"] = api_secret.strip()
         cur["base_url"] = self.URLS[target_mode]
-        self._save(self.state)
+        try:
+            self._save(self.state, raise_on_error=True)
+        except Exception as exc:
+            return {"ok": False, "retMsg": "Ошибка записи env_vault.json: " + str(exc)[:140]}
         return {"ok": True, "mode": target_mode, "masked_key": self.mask_key(cur.get("api_key", ""))}
 
     @staticmethod

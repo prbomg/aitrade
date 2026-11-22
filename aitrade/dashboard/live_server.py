@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.22-intraday.37"
+DEFAULT_RELEASE_VERSION = "2026.11.22-intraday.38"
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
@@ -408,6 +408,7 @@ class ControlCenterState:
             self.booster_bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_booster.json"
             self.booster_bybit.owner = self
             self.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
+            self.booster_bybit.attach_chaser(SmartLimitChaser(self.booster_bybit.spm, self.ws_hub, BASE_DIR / "data"))
         else:
             self.booster_bybit = self.bybit
         self.backtest_cache: Dict[str, Any] = {}
@@ -1299,13 +1300,15 @@ class ControlCenterState:
         btc_reg = self.regime_guard.update_btc_regime(ws_sum)
 
         guard_maps = {"autotrade": {}}
+        ctrl_urls = {"autotrade": str(getattr(self.bybit, "base_url", "")).rstrip("/")}
         try:
-            guard_maps["autotrade"] = self.bybit.spm._load_guard() if hasattr(self.bybit.spm, "_load_guard") else {}
+            guard_maps["autotrade"] = self.bybit.spm.load_guard() if hasattr(self.bybit.spm, "load_guard") else {}
         except Exception:
             pass
         if b_ctrl is not self.bybit:
+            ctrl_urls["booster"] = str(getattr(b_ctrl, "base_url", "")).rstrip("/")
             try:
-                guard_maps["booster"] = b_ctrl.spm._load_guard() if hasattr(b_ctrl.spm, "_load_guard") else {}
+                guard_maps["booster"] = b_ctrl.spm.load_guard() if hasattr(b_ctrl.spm, "load_guard") else {}
             except Exception:
                 guard_maps["booster"] = {}
 
@@ -1328,7 +1331,13 @@ class ControlCenterState:
             avg_px = float(p.get("avgPrice", 0) or 0)
             cur_sl = float(p.get("stopLoss", 0) or 0)
             cur_trail = float(p.get("trailingStop", 0) or 0)
-            g_rec = (guard_maps.get(acc_id) or {}).get(f"{sym}:{p_idx}:{side}") or {}
+            g_map = guard_maps.get(acc_id) or {}
+            acc_url = ctrl_urls.get(acc_id, ctrl_urls["autotrade"])
+            intent_id_p = str(p.get("entry_intent_id") or "").strip()
+            g_rec = g_map.get(f"{acc_url}:{sym}:{p_idx}:{intent_id_p}") if intent_id_p else None
+            if not g_rec:
+                prefix = f"{acc_url}:{sym}:{p_idx}:"
+                g_rec = next((v for k, v in g_map.items() if str(k).startswith(prefix)), None) or {}
             expected_tp1_id = str(g_rec.get("tp1_order") or "").strip()
             tp1_ord = None
             if expected_tp1_id:
@@ -1869,6 +1878,10 @@ def create_wsgi_app(state: ControlCenterState):
                             state.booster_bybit.spm.ledger = state.booster_ledger
                             state.booster_bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_booster.json"
                             state.booster_bybit.owner = state
+                            b_chaser = SmartLimitChaser(state.booster_bybit.spm, state.ws_hub, BASE_DIR / "data")
+                            b_chaser.enabled = state.limit_chaser.enabled
+                            b_chaser.strict_post_only = state.limit_chaser.strict_post_only
+                            state.booster_bybit.attach_chaser(b_chaser)
                         state.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
                     a_creds = state.env_manager.get_account_credentials("autotrade")
                     if a_creds.get("isolated") and a_creds.get("api_key"):
@@ -2058,14 +2071,6 @@ def create_wsgi_app(state: ControlCenterState):
                     state.mark_position_source(sym, "🚀 Booster A+")
                     state.booster.register_booster_symbol(sym)
                     state.add_log("🚀 Booster-сделка [" + str(resp.get("exec_mode", "MAKER")) + "]: " + sym + " " + side + " qty=" + str(resp.get("qty")) + " (Риск $" + str(sizing["risk_usd"]) + ")")
-            elif path == "/api/pos_pyramid":
-                resp = state.bybit.pyramid_position(
-                    data["symbol"], data["side"], float(data.get("size", 0) or 0),
-                    float(data.get("avg_price", 0) or 0), float(data.get("mark_price", 0) or 0),
-                    int(data.get("position_idx", 0) or 0)
-                )
-                if resp.get("ok"):
-                    state.add_log("➕ Пирамидинг +50% выполнен для " + str(data["symbol"]) + ", стоп в безубытке: " + str(resp.get("new_be_sl")))
             elif path == "/api/smart_guard":
                 state.smart_guard_enabled = bool(data.get("enabled", True))
                 state.split_tp_enabled = bool(data.get("split_tp_enabled", True))
@@ -2073,8 +2078,15 @@ def create_wsgi_app(state: ControlCenterState):
                     state.limit_chaser.enabled = bool(data.get("limit_chaser_enabled", True))
                 if "limit_chaser_strict" in data:
                     state.limit_chaser.strict_post_only = bool(data.get("limit_chaser_strict", False))
-                state.bybit.spm.breakeven_trigger_pct = float(data.get("breakeven_trigger_pct", 0.55) or 0.55)
-                state.bybit.spm.trailing_step_pct = float(data.get("trailing_step_pct", 0.40) or 0.40)
+                be_val = float(data.get("breakeven_trigger_pct", 0.55) or 0.55)
+                tr_val = float(data.get("trailing_step_pct", 0.40) or 0.40)
+                for ctrl in state._active_controllers():
+                    ctrl.spm.breakeven_trigger_pct = be_val
+                    ctrl.spm.trailing_step_pct = tr_val
+                    c_ch = getattr(ctrl, "chaser", None)
+                    if c_ch is not None:
+                        c_ch.enabled = state.limit_chaser.enabled
+                        c_ch.strict_post_only = state.limit_chaser.strict_post_only
                 if "max_leverage" in data:
                     state.max_leverage = max(1,min(3,int(data.get("max_leverage", 3) or 3)))
                 if "core_max_positions" in data:

@@ -146,6 +146,16 @@ class SmartPositionManager:
                     return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(u_exc)[:150]}
             return {"ok": False, "symbol": symbol, "mode": "UNKNOWN", "retMsg": str(exc)[:150]}
 
+    def load_guard(self) -> Dict[str, Any]:
+        with self.guard_lock:
+            if not self.guard_path.exists():
+                return {}
+            try:
+                data = json.loads(self.guard_path.read_text(encoding="utf-8"))
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
+
     def audit_and_protect_open_positions(self):
         with self.guard_lock:
             return self._audit_positions()
