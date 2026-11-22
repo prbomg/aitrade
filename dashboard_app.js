@@ -1028,7 +1028,10 @@ function renderState(st) {
 
   document.getElementById("closed-pnl-tbody").innerHTML = cList.map(function(c) {
     const p = Number(c.closedPnl || 0);
-    return "<tr><td><b>" + c.symbol + "</b></td><td>" + c.side + "</td><td>" + c.qty + "</td><td>" + c.avgEntryPrice + "</td><td>" + c.avgExitPrice + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + (c.updatedTime ? new Date(Number(c.updatedTime)).toLocaleTimeString("ru-RU") : "—") + "</td></tr>";
+    const dtStr = c.updatedTime
+      ? new Date(Number(c.updatedTime)).toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit"})
+      : "—";
+    return "<tr><td><b>" + c.symbol + "</b></td><td>" + c.side + "</td><td>" + c.qty + "</td><td>" + c.avgEntryPrice + "</td><td>" + c.avgExitPrice + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + dtStr + "</td></tr>";
   }).join("");
 }
 
