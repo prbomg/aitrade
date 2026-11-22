@@ -140,6 +140,35 @@ class Intraday35KairosBrandingAuthTests(unittest.TestCase):
             self.assertTrue(st_out.startswith("200"))
             self.assertIn("Max-Age=0", hdr_out["Set-Cookie"])
 
+    def test_non_ascii_credentials_do_not_crash(self):
+        env_patch = {
+            "KAIROS_AUTH_USER": "админ",
+            "KAIROS_AUTH_PASSWORD": "Пароль-123!",
+            "KAIROS_AUTH_SECRET": "utf8-test-secret",
+        }
+        with patch.dict(os.environ, env_patch, clear=False):
+            app = create_wsgi_app(self.state)
+            st_bad, _, _ = _call_wsgi(
+                app,
+                "POST",
+                "/api/auth/login",
+                body={"username": "админ", "password": "неверный"},
+                headers={"X-Requested-With": "AItrade"},
+            )
+            self.assertTrue(st_bad.startswith("401"))
+
+            st_ok, hdr_ok, _ = _call_wsgi(
+                app,
+                "POST",
+                "/api/auth/login",
+                body={"username": "админ", "password": "Пароль-123!"},
+                headers={"X-Requested-With": "AItrade"},
+            )
+            self.assertTrue(st_ok.startswith("200"))
+            cookie_val = hdr_ok["Set-Cookie"].split(";", 1)[0]
+            st_api, _, _ = _call_wsgi(app, "GET", "/api/state", headers={"Cookie": cookie_val})
+            self.assertTrue(st_api.startswith("200"))
+
 
 if __name__ == "__main__":
     unittest.main()

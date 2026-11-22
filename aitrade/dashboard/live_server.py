@@ -1617,18 +1617,22 @@ class KairosSessionAuth:
         s = str(os.getenv("KAIROS_AUTH_SECRET", "") or "").strip()
         return (s or self._fallback_secret).encode("utf-8")
 
+    @staticmethod
+    def _safe_eq(a: str, b: str) -> bool:
+        return hmac.compare_digest(str(a or "").encode("utf-8"), str(b or "").encode("utf-8"))
+
     def verify_credentials(self, user: str, pw: str) -> bool:
         if not self.enabled:
             return True
-        if not hmac.compare_digest(str(user or "").strip(), self.username):
+        if not self._safe_eq(str(user or "").strip(), self.username):
             return False
         if self.password_hash:
             expected = self.password_hash.lower()
             if expected.startswith("sha256:"):
                 expected = expected.split(":", 1)[1]
             actual = hashlib.sha256(str(pw or "").encode("utf-8")).hexdigest()
-            return hmac.compare_digest(actual, expected)
-        return hmac.compare_digest(str(pw or ""), self.password)
+            return self._safe_eq(actual, expected)
+        return self._safe_eq(str(pw or ""), self.password)
 
     def _client_ip(self, environ: Dict[str, Any]) -> str:
         fwd = str(environ.get("HTTP_X_FORWARDED_FOR", "") or "").split(",", 1)[0].strip()
@@ -1668,14 +1672,14 @@ class KairosSessionAuth:
         try:
             b64, sig = token.rsplit(".", 1)
             expected = hmac.new(self.secret, b64.encode("ascii"), hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(sig, expected):
+            if not self._safe_eq(sig, expected):
                 return None
             pad = "=" * ((4 - len(b64) % 4) % 4)
             data = json.loads(base64.urlsafe_b64decode((b64 + pad).encode("ascii")).decode("utf-8"))
             if int(data.get("exp", 0)) < int(time.time()):
                 return None
             u = str(data.get("u", ""))
-            if self.enabled and not hmac.compare_digest(u, self.username):
+            if self.enabled and not self._safe_eq(u, self.username):
                 return None
             return u
         except Exception:
