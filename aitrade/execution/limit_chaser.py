@@ -5,7 +5,7 @@ from aitrade.exchange.transport import ExchangeError
 class SmartLimitChaser:
     def __init__(self,spm,ws_hub,data_dir):
         self.spm=spm;self.ws_hub=ws_hub;self.stats_path=data_dir/'chaser_stats.json'
-        self.enabled=True;self.strict_post_only=False;self.max_attempts=4;self.step_wait_sec=2.5;self.max_chase_drift_pct=.60
+        self.enabled=True;self.strict_post_only=False;self.max_attempts=2;self.step_wait_sec=1.5;self.max_chase_drift_pct=.60
         self.stats=json.loads(self.stats_path.read_text()) if self.stats_path.exists() else {'total_orders':0,'maker_filled':0,'fallback_taker_filled':0,'fee_saved_usd':0.,'total_notional_usd':0.}
     def _get_live_bbo(self,symbol,fallback_px):
         try:

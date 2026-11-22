@@ -23,12 +23,17 @@ class AdaptiveMLCalibrator:
     DEFAULT_STRATEGIES = [
         "T1_DONCHIAN_TSMOM",
         "B1_SQUEEZE_BREAKOUT",
+        "B2_DONCHIAN_INTRADAY",
+        "B3_VWAP_MOMENTUM_IMPULSE",
+        "B4_ORB_SESSION_BREAKOUT",
+        "B5_OI_TREND_EXPANSION",
+        "B6_EMA_PULLBACK_TREND",
+        "B7_FUNDING_SQUEEZE_MOMENTUM",
+        "T2_RS_BTC_BREAKOUT",
+        "T3_KELTNER_TREND_4H",
+        "C2_MTF_COMBO_BREAKOUT",
+        "C3_ENSEMBLE_VOTE_2OF3",
         "S1_TREND_RETEST",
-        "S3_VWAP_RANGE",
-        "AUTOTRADE_MOMENTUM_FUNDING",
-        "SHORT SQUEEZE BREAKOUT",
-        "LIQ CASCADE REVERSAL",
-        "LONG SQUEEZE / DUMP",
     ]
     SESSIONS = ("ASIA", "EUROPE", "US_OVERLAP")
     QUARANTINE_TTL_SEC = 48 * 3600
@@ -189,6 +194,9 @@ class AdaptiveMLCalibrator:
                 continue
             raw_s = str(item.get("strategy_id") or "UNATTRIBUTED")
             s_name = raw_s.split(":", 1)[1].strip() if ":" in raw_s else raw_s.strip()
+            # Изолируем legacy/неатрибутированные и ручные сделки от калибровки и порога ML
+            if not s_name or s_name in ("UNATTRIBUTED", "MANUAL"):
+                continue
             ts_ms = int(item.get("entry_created_ms") or item.get("createdTime") or item.get("updatedTime") or 0)
             sess = self.detect_session_utc(ts_ms)
 
@@ -346,8 +354,12 @@ class AdaptiveMLCalibrator:
         cur_sess = session_utc or self.detect_session_utc()
         raw_q = str(strategy_name)
         clean_q = raw_q.split(":", 1)[1].strip() if ":" in raw_q else raw_q.strip()
-        for k, v in strats.items():
-            if k.lower() == clean_q.lower() or k.lower() in clean_q.lower() or clean_q.lower() in k.lower():
+        clean_l = clean_q.lower()
+        matched = next(((k, v) for k, v in strats.items() if k.lower() == clean_l), None)
+        if matched is None and len(clean_l) >= 4:
+            matched = next(((k, v) for k, v in strats.items() if k.lower() in clean_l or clean_l in k.lower()), None)
+        for k, v in ([matched] if matched else []):
+            if True:
                 base_w = float(v.get("weight_multiplier", 1.0))
                 status = v.get("status", "NORMAL")
                 if status == "QUARANTINE" or base_w <= 0.0:
