@@ -158,7 +158,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
         <span style="font-size:11.5px;color:#38bdf8;font-weight:600" id="stage-next-4h-timer">След. 4h-окно T1: —</span>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px" id="stage-strategies-grid">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px" id="stage-strategies-grid">
       <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
           <b style="color:#38bdf8">🎯 T1_DONCHIAN_TSMOM (Автотрейдинг · 4h · 12 пар)</b>
@@ -174,6 +174,14 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
         </div>
         <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-b1-reason">Загрузка статуса B1...</div>
         <div style="font-size:11px;color:var(--muted)" id="stage-b1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · чистые сделки B1: 0 ($0.00)</div>
+      </div>
+      <div style="background:#090d16;border:1px solid #4c1d95;border-radius:8px;padding:9px 11px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
+          <b style="color:#a78bfa">🧪 Live Shadow Полигон (13 стратегий · $1k/под)</b>
+          <span class="badge badge-purple" id="stage-shadow-badge">0 откр.</span>
+        </div>
+        <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-shadow-reason">Ожидание первых сигналов Shadow Lab...</div>
+        <div style="font-size:11px;color:var(--muted)" id="stage-shadow-stats">Открыто: 0 · Закрыто: 0 · Риск: $15/сд. · Без конфликта тикеров</div>
       </div>
     </div>
   </div>
@@ -297,14 +305,14 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     <div class="strat-card" id="card-booster">
       <div>
         <div class="strat-header">
-          <h3 class="strat-title">🚀 1. Автопилот Разгона (B1–B5 + S1 · $1k/страт.)</h3>
+          <h3 class="strat-title">🚀 1. Автопилот Разгона (B1–B7 + S1 · $1k/страт.)</h3>
           <span class="badge badge-amber" id="badge-booster-state">ВЫКЛЮЧЕН</span>
         </div>
         <div class="strat-metrics">
           <div>Капитал: <b class="pos-green" id="deck-b-eq">$1,000.00</b></div>
           <div>Этап: <b id="deck-b-phase">Фаза 1 (дно $920)</b></div>
-          <div>Риск (Келли+HM): <b id="deck-b-risk">$40.00 (4.0%)</b></div>
-          <div>Активно: <b style="color:#c4b5fd">6 стратегий (20 пар)</b> (<span id="deck-b-cycles">0</span>)</div>
+          <div>Риск (Келли+HM): <b id="deck-b-risk">$15.00 (1.5%)</b></div>
+          <div>Активно: <b style="color:#c4b5fd">8 стратегий (20 пар)</b> (<span id="deck-b-cycles">0</span>)</div>
         </div>
       </div>
       <div class="strat-actions">
@@ -316,7 +324,7 @@ table th:first-child, table td:first-child { position:sticky; left:0; background
     <div class="strat-card" id="card-core">
       <div>
         <div class="strat-header">
-          <h3 class="strat-title">🎯 2. Автотрейдинг (T1 + T2 RS + C2 Combo · $1k/страт.)</h3>
+          <h3 class="strat-title">🎯 2. Автотрейдинг (T1–T3 + C2–C3 · $1k/страт.)</h3>
           <span class="badge badge-amber" id="badge-core-state">ВЫКЛЮЧЕН</span>
         </div>
         <div class="strat-metrics">

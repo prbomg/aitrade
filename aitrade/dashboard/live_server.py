@@ -377,6 +377,8 @@ class ControlCenterState:
         self.booster_ledger = Ledger(BASE_DIR / "data" / "execution_ledger_booster.sqlite3")
         self.autotrade_ledger = Ledger(BASE_DIR / "data" / "execution_ledger_autotrade.sqlite3")
         self.oi_scanner = OISqueezeScanner()
+        self._oi_scan_ts: float = 0.0
+        self._oi_scan_cache: List[Dict[str, Any]] = []
         self.strategy_funnel = StrategyFunnel24h(BASE_DIR / "data" / "strategy_funnel_24h.json")
         self.shadow_engine = LiveShadowEngine(BASE_DIR / "data" / "shadow_lab.sqlite3")
         self._live_metrics_cache: Dict[str, Any] = {}
@@ -651,7 +653,7 @@ class ControlCenterState:
             c_ms = int(o.get("createdTime", 0) or 0)
             pure_sltp_keys = ("S1_TREND_RETEST", "S3_VWAP_RANGE", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM", "T1_DONCHIAN_TSMOM", "T2_RS_BTC_BREAKOUT", "T3_KELTNER_TREND_4H", "C2_MTF_COMBO_BREAKOUT", "C3_ENSEMBLE_VOTE_2OF3")
             ttl_min = (
-                45 if any(k in o_strat for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION")) else (
+                45 if any(k in o_strat for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM")) else (
                     30 if "S3_VWAP_RANGE" in o_strat else (
                         90 if "AUTOTRADE_MOMENTUM_FUNDING" in o_strat else (
                             20 if o_strat.startswith("BOOSTER:") else 0
@@ -682,12 +684,16 @@ class ControlCenterState:
             hold = plan.get(
                 "max_hold_minutes",
                 14400 if "T1_DONCHIAN_TSMOM" in strat_s else (
-                    2880 if "T2_RS_BTC_BREAKOUT" in strat_s else (
-                        2160 if "C2_MTF_COMBO_BREAKOUT" in strat_s else (
-                            1080 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY")) else (
-                                720 if "B5_OI_TREND_EXPANSION" in strat_s else (
-                                    480 if any(k in strat_s for k in ("AUTOTRADE_MOMENTUM_FUNDING", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT")) else (
-                                        240 if "S3_VWAP_RANGE" in strat_s else (180 if strat_s.startswith("BOOSTER") else 0)
+                    10080 if "T3_KELTNER_TREND_4H" in strat_s else (
+                        2880 if "T2_RS_BTC_BREAKOUT" in strat_s else (
+                            2160 if "C2_MTF_COMBO_BREAKOUT" in strat_s else (
+                                1440 if "C3_ENSEMBLE_VOTE_2OF3" in strat_s else (
+                                    1080 if any(k in strat_s for k in ("S1_TREND_RETEST", "B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B7_FUNDING_SQUEEZE_MOMENTUM")) else (
+                                        720 if any(k in strat_s for k in ("B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND")) else (
+                                            480 if any(k in strat_s for k in ("AUTOTRADE_MOMENTUM_FUNDING", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT")) else (
+                                                240 if "S3_VWAP_RANGE" in strat_s else (180 if strat_s.startswith("BOOSTER") else 0)
+                                            )
+                                        )
                                     )
                                 )
                             )
@@ -737,8 +743,51 @@ class ControlCenterState:
             self.add_log("⚠️ [Guard History] Не удалось обновить историю сделок (защита позиций выполнена): " + str(h_exc)[:150])
         return active_syms
 
+    @staticmethod
+    def _strategy_priority_rank(strategy_id: str) -> int:
+        """Жёсткий приоритет тикеров: Tier 1 (WFA PASSED) -> Tier 2 (Комбо) -> Tier 3 (Экспериментальные)."""
+        ranks = {
+            "T1_DONCHIAN_TSMOM": 0,
+            "B1_SQUEEZE_BREAKOUT": 1,
+            "C3_ENSEMBLE_VOTE_2OF3": 2,
+            "C2_MTF_COMBO_BREAKOUT": 3,
+            "B2_DONCHIAN_INTRADAY": 4,
+            "T2_RS_BTC_BREAKOUT": 5,
+            "T3_KELTNER_TREND_4H": 6,
+            "B3_VWAP_MOMENTUM_IMPULSE": 7,
+            "B4_ORB_SESSION_BREAKOUT": 8,
+            "B5_OI_TREND_EXPANSION": 9,
+            "B6_EMA_PULLBACK_TREND": 10,
+            "B7_FUNDING_SQUEEZE_MOMENTUM": 11,
+            "S1_TREND_RETEST": 12,
+        }
+        return ranks.get(str(strategy_id or ""), 20)
+
+    @staticmethod
+    def _demo_lab_booster_sizing_metrics(b_metrics: Dict[str, Any], demo_lab_active: bool) -> Dict[str, Any]:
+        """В Demo Lab на общем Demo-счёте Booster-стратегии используют риск 1.5% ($15) от $1,000-пода."""
+        m = dict(b_metrics or {})
+        if demo_lab_active and not bool(m.get("isolated_subaccount", False)):
+            pod_cap = float(m.get("risk_capital_usd", 1000.0) or 1000.0)
+            target_risk = round(pod_cap * 0.015, 2)
+            if target_risk > float(m.get("effective_risk_usd", 0.0) or 0.0):
+                m["effective_risk_usd"] = target_risk
+                m["effective_risk_pct"] = 1.5
+        return m
+
     def _live_bbo_map(self) -> Dict[str, Tuple[float, float]]:
         bbo: Dict[str, Tuple[float, float]] = {}
+        if hasattr(self.ws_hub, "get_bbo"):
+            syms = list(getattr(self.ws_hub, "symbols", None) or self.settings.get("universe", {}).get("core_pairs", []))
+            for sym in syms:
+                try:
+                    bid, ask = self.ws_hub.get_bbo(sym, max_age=30)
+                    if bid > 0 and ask > bid:
+                        bbo[sym] = (float(bid), float(ask))
+                except Exception:
+                    continue
+            if bbo:
+                return bbo
         ws_sum = self.ws_hub.get_summary()
         for m in (ws_sum.get("metrics") or []):
             sym = str(m.get("symbol") or "")
@@ -879,15 +928,23 @@ class ControlCenterState:
             finally:self.scan_status['running']=False
 
     def _run_scan(self, trade_booster: bool = False, trade_core: bool = False) -> Dict[str, Any]:
-        # Сетевой опрос OISqueezeScanner выполняется ВНЕ глобального self._lock (информационная панель)
-        core_pairs_pre = self.settings.get("universe", {}).get("core_pairs", [])
-        ws_sum_pre = self.ws_hub.get_summary()
-        try:
-            squeeze_list = self.oi_scanner.scan_squeeze_setups(core_pairs_pre, ws_sum_pre)
-        except Exception:
-            squeeze_list = []
-        for s in squeeze_list:
-            s["sector"] = self.regime_guard.get_sector(s.get("symbol", ""))
+        # Сетевой опрос OISqueezeScanner выполняется ВНЕ глобального self._lock (в Demo Lab кэшируем на 30 мин)
+        demo_lab_cfg_pre = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
+        demo_lab_pre = bool(demo_lab_cfg_pre.get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
+        now_oi = time.time()
+        if demo_lab_pre and getattr(self, "_oi_scan_cache", None) and (now_oi - float(getattr(self, "_oi_scan_ts", 0.0))) < 1800.0:
+            squeeze_list = list(self._oi_scan_cache)
+        else:
+            core_pairs_pre = self.settings.get("universe", {}).get("core_pairs", [])
+            ws_sum_pre = self.ws_hub.get_summary()
+            try:
+                squeeze_list = self.oi_scanner.scan_squeeze_setups(core_pairs_pre, ws_sum_pre)
+            except Exception:
+                squeeze_list = []
+            for s in squeeze_list:
+                s["sector"] = self.regime_guard.get_sector(s.get("symbol", ""))
+            self._oi_scan_cache = list(squeeze_list)
+            self._oi_scan_ts = now_oi
 
         with self._lock:
             try:
@@ -966,6 +1023,11 @@ class ControlCenterState:
 
             demo_lab_cfg_run = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
             demo_lab_active = bool(demo_lab_cfg_run.get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
+            booster_strat_ids = {"B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM", "S1_TREND_RETEST"}
+            exec_queue: List[Tuple[str, Dict[str, Any]]] = []
+            booster_slots = 0
+            core_slots = 0
+
             if trade_booster and self.booster.state.get("enabled", True) and not self.entry_paused.is_set():
                 if b_metrics["circuit_breaker_tripped"] and not (demo_lab_active and demo_lab_cfg_run.get("disable_daily_stops_on_demo", False)):
                     self.add_log("🛑 [Разгон $1k→$10k] Сработал дневной стоп-кран или стоп цикла. Входы разгона приостановлены.")
@@ -974,77 +1036,81 @@ class ControlCenterState:
                     max_b_slots = max(int(b_metrics["max_positions"]), 12) if demo_lab_active else int(b_metrics["max_positions"])
                     booster_slots = max(0, max_b_slots - len(booster_pos))
                     if booster_slots > 0:
-                        booster_strat_ids = ("B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM", "S1_TREND_RETEST")
-                        b_cands = [
-                            s for s in (scan_res.get("approved_signals") or [])
-                            if s.get("strategy_id") in booster_strat_ids
-                            and s.get("passed_ml_filter")
-                            and s.get("debate_verdict") == "APPROVED"
-                            and s.get("cal_status") != "QUARANTINE"
-                        ]
-                        for s1 in b_cands:
-                            if booster_slots <= 0:
-                                break
-                            side = s1["side"]
-                            strat_code = str(s1.get("strategy_id", "S1_TREND_RETEST"))
-                            if not (demo_lab_active and demo_lab_cfg_run.get("disable_daily_stops_on_demo", False)):
-                                on_cd, cd_left = self.booster.is_symbol_on_cooldown(s1["symbol"])
-                                if on_cd:
-                                    if hasattr(self, "strategy_funnel"):
-                                        self.strategy_funnel.record_guard_block(strat_code, f"Кулдаун {s1['symbol']} ({cd_left} мин)")
-                                    self.add_log("⏳ [Кулдаун после стопа] Пропуск " + s1["symbol"] + ": еще " + str(cd_left) + " мин")
-                                    continue
-                            allowed, guard_msg = self.regime_guard.can_open_position(s1["symbol"], side, positions, ws_sum)
-                            n_mod = self.x_radar.get_coin_modifier(s1["symbol"], "LONG" if side == "Buy" else "SHORT")
-                            if not allowed or not n_mod["allowed"]:
-                                if hasattr(self, "strategy_funnel"):
-                                    self.strategy_funnel.record_guard_block(strat_code, guard_msg if not allowed else str(n_mod.get("reason", "X/News")))
-                                continue
-                            sizing = self.booster.calculate_order_qty(float(s1["entry_price"]), float(s1["stop_loss"]), b_metrics)
-                            w_mult = float(s1.get("cal_weight", 1.0) or 1.0)
-                            adj_qty = round(sizing["qty_coins"] * w_mult, 6)
-                            b_otype = s1.get("order_type") if s1.get("order_type") in ("Market", "Limit") else "Limit"
-                            b_ctrl = getattr(self, "booster_bybit", self.bybit)
-                            r = b_ctrl.place_order(
-                                s1["symbol"], side, b_otype, adj_qty,
-                                float(s1["entry_price"]), float(s1.get("take_profit") or s1["take_profit_2"]), float(s1["stop_loss"]),
-                                sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,
-                                signal_context={"features": s1.get("features", {}), "ml_score": s1.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", "2026.11.21-intraday.22")}
-                            )
-                            if not r.get("ok") and hasattr(self, "strategy_funnel"):
-                                self.strategy_funnel.record_guard_block(strat_code, str(r.get("retMsg", "Ошибка биржи")))
-                            if r.get("ok"):
-                                if hasattr(self, "strategy_funnel"):
-                                    self.strategy_funnel.record_submit(strat_code)
-                                booster_slots -= 1
-                                positions = self.bybit.get_positions()
-                                self.mark_position_source(s1["symbol"], "🚀 Booster A+")
-                                self.booster.register_booster_symbol(s1["symbol"])
-                                self.ml_calibrator.register_entry(s1["symbol"], strat_code)
-                                self.add_log("🚀 [Разгон " + strat_code + "] Вход (" + b_otype + ") " + s1["symbol"] + " " + side + " qty=" + str(r.get("qty")))
+                        for s in (scan_res.get("approved_signals") or []):
+                            if (
+                                s.get("strategy_id") in booster_strat_ids
+                                and s.get("passed_ml_filter")
+                                and s.get("debate_verdict") == "APPROVED"
+                                and s.get("cal_status") != "QUARANTINE"
+                            ):
+                                exec_queue.append(("BOOSTER", s))
 
             if trade_core and not self.entry_paused.is_set():
-                positions = self.bybit.get_positions()
                 eff_core_max = max(self.core_max_positions, 8) if demo_lab_active else self.core_max_positions
                 core_slots = max(0, eff_core_max - len([p for p in positions if str(p.get("strategy_id", "")).startswith("CORE:")]))
                 min_prob = self.core_min_prob_pct / 100.0
-                all_candidates = (scan_res.get("approved_signals", []) or [])
-                booster_only_ids = {"B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM", "S1_TREND_RETEST"}
-                valid_core = [
-                    s for s in all_candidates
-                    if s.get("strategy_id") not in booster_only_ids
-                    and s.get("passed_ml_filter")
-                    and s.get("debate_verdict") == "APPROVED"
-                    and s.get("cal_status") != "QUARANTINE"
-                    and (
-                        ((s.get("features") or {}).get("ml_calibration_status") in ("WARMING_UP", "DEMO_LAB_EXPERIMENTAL"))
-                        or float(s.get("ml_win_probability", 0) or 0) >= (0.60 if s.get("strategy_id") in ("S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING") else min_prob)
+                if core_slots > 0:
+                    for s in (scan_res.get("approved_signals", []) or []):
+                        if (
+                            s.get("strategy_id") not in booster_strat_ids
+                            and s.get("passed_ml_filter")
+                            and s.get("debate_verdict") == "APPROVED"
+                            and s.get("cal_status") != "QUARANTINE"
+                            and (
+                                ((s.get("features") or {}).get("ml_calibration_status") in ("WARMING_UP", "DEMO_LAB_EXPERIMENTAL"))
+                                or float(s.get("ml_win_probability", 0) or 0) >= (0.60 if s.get("strategy_id") in ("S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING") else min_prob)
+                            )
+                        ):
+                            exec_queue.append(("CORE", s))
+
+            # Единая приоритетная очередь: Tier 1 (T1, B1) -> Tier 2 (C3, C2) -> Tier 3 (экспериментальные)
+            exec_queue.sort(key=lambda item: (self._strategy_priority_rank(str(item[1].get("strategy_id", ""))), -float(item[1].get("ml_win_probability", 0) or 0)))
+            b_sizing_metrics = self._demo_lab_booster_sizing_metrics(b_metrics, demo_lab_active)
+
+            for kind, sig in exec_queue:
+                if kind == "BOOSTER":
+                    if booster_slots <= 0:
+                        continue
+                    side = sig["side"]
+                    strat_code = str(sig.get("strategy_id", "S1_TREND_RETEST"))
+                    if not (demo_lab_active and demo_lab_cfg_run.get("disable_daily_stops_on_demo", False)):
+                        on_cd, cd_left = self.booster.is_symbol_on_cooldown(sig["symbol"])
+                        if on_cd:
+                            if hasattr(self, "strategy_funnel"):
+                                self.strategy_funnel.record_guard_block(strat_code, f"Кулдаун {sig['symbol']} ({cd_left} мин)")
+                            self.add_log("⏳ [Кулдаун после стопа] Пропуск " + sig["symbol"] + ": еще " + str(cd_left) + " мин")
+                            continue
+                    allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum)
+                    n_mod = self.x_radar.get_coin_modifier(sig["symbol"], "LONG" if side == "Buy" else "SHORT")
+                    if not allowed or not n_mod["allowed"]:
+                        if hasattr(self, "strategy_funnel"):
+                            self.strategy_funnel.record_guard_block(strat_code, guard_msg if not allowed else str(n_mod.get("reason", "X/News")))
+                        continue
+                    sizing = self.booster.calculate_order_qty(float(sig["entry_price"]), float(sig["stop_loss"]), b_sizing_metrics)
+                    w_mult = float(sig.get("cal_weight", 1.0) or 1.0)
+                    adj_qty = round(sizing["qty_coins"] * w_mult, 6)
+                    b_otype = sig.get("order_type") if sig.get("order_type") in ("Market", "Limit") else "Limit"
+                    b_ctrl = getattr(self, "booster_bybit", self.bybit)
+                    r = b_ctrl.place_order(
+                        sig["symbol"], side, b_otype, adj_qty,
+                        float(sig["entry_price"]), float(sig.get("take_profit") or sig["take_profit_2"]), float(sig["stop_loss"]),
+                        sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,
+                        signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", "2026.11.22-intraday.25")}
                     )
-                ]
-                valid_core.sort(key=lambda x: float(x.get("ml_win_probability", 0) or 0), reverse=True)
-                for sig in valid_core:
+                    if not r.get("ok") and hasattr(self, "strategy_funnel"):
+                        self.strategy_funnel.record_guard_block(strat_code, str(r.get("retMsg", "Ошибка биржи")))
+                    if r.get("ok"):
+                        if hasattr(self, "strategy_funnel"):
+                            self.strategy_funnel.record_submit(strat_code)
+                        booster_slots -= 1
+                        positions = self.bybit.get_positions()
+                        self.mark_position_source(sig["symbol"], "🚀 Booster A+")
+                        self.booster.register_booster_symbol(sig["symbol"])
+                        self.ml_calibrator.register_entry(sig["symbol"], strat_code)
+                        self.add_log("🚀 [Разгон " + strat_code + "] Вход (" + b_otype + ") " + sig["symbol"] + " " + side + " qty=" + str(r.get("qty")))
+                else:
                     if core_slots <= 0:
-                        break
+                        continue
                     side = sig["side"]
                     if side not in ("Buy", "Sell"): raise ValueError("Invalid signal side")
                     core_strat_id = str(sig.get("strategy_id", "UNKNOWN"))
@@ -1064,7 +1130,7 @@ class ControlCenterState:
                     r = self.bybit.place_order(
                         sig["symbol"], side, sig_otype, float(sig.get("position_size_coins", 0) or 0),
                         float(sig.get("entry_price", 0) or 0), float(sig.get("take_profit", 0) or 0),
-                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + core_strat_id,signal_context={"features":sig.get("features",{}),"ml_score":sig.get("ml_win_probability"),"cal_weight":sig.get("cal_weight",1.0),"version":getattr(self, "release_manifest", {}).get("version", "2026.11.19-intraday.8")}
+                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + core_strat_id, signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": sig.get("cal_weight", 1.0), "version": getattr(self, "release_manifest", {}).get("version", "2026.11.22-intraday.25")}
                     )
                     if not r.get("ok"):
                         if hasattr(self, "strategy_funnel"):
@@ -1453,7 +1519,9 @@ def create_wsgi_app(state: ControlCenterState):
                 sl_px = float(data.get("stop_loss", 0) or 0)
                 b_ctrl = getattr(state, "booster_bybit", state.bybit)
                 b_metrics = state.booster.compute_metrics(b_ctrl.get_closed_pnl(), b_ctrl.get_positions())
-                sizing = state.booster.calculate_order_qty(entry_px, sl_px, b_metrics)
+                demo_lab_cfg_m = state.settings.get("demo_lab", {}) if isinstance(state.settings, dict) else {}
+                demo_lab_m = bool(demo_lab_cfg_m.get("enabled", False) and b_ctrl.base_url == "https://api-demo.bybit.com")
+                sizing = state.booster.calculate_order_qty(entry_px, sl_px, state._demo_lab_booster_sizing_metrics(b_metrics, demo_lab_m))
                 resp = b_ctrl.place_order(
                     sym, side, "Market", sizing["qty_coins"], entry_px, tp_px, sl_px, sizing["leverage"], state.split_tp_enabled, strategy_id="BOOSTER:MANUAL"
                 )

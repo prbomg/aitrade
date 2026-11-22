@@ -731,6 +731,24 @@ function renderState(st) {
     }
     document.getElementById("stage-b1-stats").textContent = "24ч: окон " + (b1F.scans_eligible ?? 0) + "/" + (b1F.scans_total ?? 0) + " · кандидатов " + (b1F.candidates ?? 0) + " · отправлено " + (b1F.submitted ?? 0) + " · чистых сделок B1: " + (b1M.trades ?? 0) + " (" + (Number(b1M.net_pnl_usd || 0) >= 0 ? "+" : "") + Number(b1M.net_pnl_usd || 0).toFixed(2) + "$)";
   }
+  const shBadge = document.getElementById("stage-shadow-badge");
+  const shReason = document.getElementById("stage-shadow-reason");
+  const shStats = document.getElementById("stage-shadow-stats");
+  if (shBadge && shReason && shStats) {
+    const shOpen = Number(shLab.total_open || 0);
+    const shClosed = Number(shLab.total_closed || 0);
+    const shBoard = shLab.leaderboard || [];
+    shBadge.className = shOpen > 0 ? "badge badge-green" : "badge badge-purple";
+    shBadge.textContent = shOpen + " откр. / " + shClosed + " закр.";
+    if (shBoard.length > 0) {
+      const top = shBoard[0];
+      const topPnl = Number(top.net_pnl_usd || 0);
+      shReason.textContent = "Лидер: " + top.strategy_id + " (" + (topPnl >= 0 ? "+" : "") + topPnl.toFixed(2) + "$ · WR " + Number(top.win_rate_pct || 0).toFixed(0) + "%)";
+    } else {
+      shReason.textContent = "Ожидание первых сигналов Shadow Lab...";
+    }
+    shStats.textContent = "Стратегий в рейтинге: " + shBoard.length + " · Риск: $" + (shLab.risk_per_trade_usd ?? 15) + "/сд. · Без конфликта тикеров";
+  }
   const wfa = (st.backtest || {}).rolling_wfa || {};
   if (wfa.status === "ok" && document.getElementById("ml-base-thr")) {
     const wfeStr = wfa.wfe == null ? "—" : Number(wfa.wfe).toFixed(2);
