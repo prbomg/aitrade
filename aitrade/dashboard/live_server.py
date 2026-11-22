@@ -763,6 +763,10 @@ class ControlCenterState:
         }
         return ranks.get(str(strategy_id or ""), 20)
 
+    def _is_demo_lab_active(self) -> bool:
+        cfg = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
+        return bool(cfg.get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
+
     @staticmethod
     def _demo_lab_booster_sizing_metrics(b_metrics: Dict[str, Any], demo_lab_active: bool) -> Dict[str, Any]:
         """В Demo Lab на общем Demo-счёте Booster-стратегии используют риск 1.5% ($15) от $1,000-пода."""
@@ -873,7 +877,7 @@ class ControlCenterState:
             closed_list = self._snapshot.get("closed_pnl") or []
             pos_list = self._snapshot.get("positions") or []
             if hasattr(self, "booster"):
-                b_metrics = self.booster.compute_metrics(closed_list, pos_list)
+                b_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(closed_list, pos_list), self._is_demo_lab_active())
                 start_eq = float(b_metrics.get("start_equity", 1000.0) or 1000.0)
                 # Equity curve is rebuilt from the same confirmed campaign ledger.
                 self._snapshot["booster"] = b_metrics
@@ -905,7 +909,7 @@ class ControlCenterState:
         ap.update(booster_enabled=self.autopilot_booster_enabled,core_enabled=self.autopilot_core_enabled,any_enabled=self.autopilot_booster_enabled or self.autopilot_core_enabled,booster_cycles_done=self.booster_cycles_done,core_cycles_done=self.core_cycles_done,next_in_sec=max(0,int(self.autopilot_interval_sec-(time.time()-self._last_auto_ts))))
         if hasattr(self, 'booster') and isinstance(result.get('booster'), dict):
             try:
-                b_metrics = self.booster.compute_metrics(result.get('closed_pnl') or [], result.get('positions') or [])
+                b_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(result.get('closed_pnl') or [], result.get('positions') or []), self._is_demo_lab_active())
                 # Keep curve and HWM from one calculation.
                 result['booster'] = b_metrics
             except Exception:
@@ -1221,7 +1225,7 @@ class ControlCenterState:
         if any_active and self._last_auto_ts > 0:
             next_in_sec = max(0, int(self.autopilot_interval_sec - (time.time() - self._last_auto_ts)))
 
-        booster_metrics = self.booster.compute_metrics(b_closed, b_positions)
+        booster_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(b_closed, b_positions), self._is_demo_lab_active())
         now_m = time.time()
         if not getattr(self, "_live_metrics_cache", None) or (now_m - float(getattr(self, "_live_metrics_ts", 0.0))) >= 20.0:
             active_ledgers = [("autotrade", self.bybit.ledger)]
