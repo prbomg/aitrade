@@ -47,13 +47,32 @@ function showToast(msg, isErr) {
   window._toastTimer = setTimeout(function() { el.style.display = "none"; window._toastTimer = null; }, 4000);
 }
 
-// Звуковой синтезатор Web Audio API (без внешних файлов)
-function playAlertTone(freq, durationMs) {
-  if (!window._soundEnabled) return;
+// Единый переиспользуемый AudioContext с активацией по клику (без предупреждений Chrome)
+window._audioCtx = null;
+window._audioUnlocked = false;
+function updateSoundBtn() {
+  const el = document.getElementById("btn-sound-toggle");
+  if (!el) return;
+  if (!window._soundEnabled) { el.textContent = "🔕 Звук: ВЫКЛ"; }
+  else if (!window._audioUnlocked) { el.textContent = "🔇 Звук (клик)"; el.title = "Нажмите для активации звука в браузере"; }
+  else { el.textContent = "🔔 Звук: ВКЛ"; el.title = "Звуковые оповещения активны"; }
+}
+function unlockAudioContext() {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
+    if (!Ctx) return false;
+    if (!window._audioCtx) window._audioCtx = new Ctx();
+    if (window._audioCtx.state === "suspended") window._audioCtx.resume().catch(function(){});
+    window._audioUnlocked = true;
+    updateSoundBtn();
+    return true;
+  } catch (e) { return false; }
+}
+function playAlertTone(freq, durationMs) {
+  if (!window._soundEnabled || !window._audioUnlocked || !window._audioCtx) return;
+  try {
+    const ctx = window._audioCtx;
+    if (ctx.state === "suspended") return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
@@ -140,10 +159,20 @@ const btnCloseLogs = document.getElementById("btn-close-logs");
 if (btnCloseLogs) btnCloseLogs.addEventListener("click", function() { document.getElementById("drawer-logs").classList.remove("open"); });
 
 document.getElementById("btn-sound-toggle").addEventListener("click", function() {
+  if (window._soundEnabled && !window._audioUnlocked) {
+    unlockAudioContext();
+    playAlertTone(740, 140);
+    showToast("🔔 Звуковые оповещения активированы");
+    return;
+  }
   window._soundEnabled = !window._soundEnabled;
-  this.textContent = window._soundEnabled ? "🔔 Звук" : "🔕 Звук";
-  if (window._soundEnabled) playAlertTone(740, 140);
+  if (window._soundEnabled) {
+    unlockAudioContext();
+    playAlertTone(740, 140);
+  }
+  updateSoundBtn();
 });
+updateSoundBtn();
 
 // Фильтрация логов с сохранением позиции скролла
 document.getElementById("log-filter-bar").addEventListener("click", function(e) {
@@ -293,8 +322,12 @@ document.getElementById("btn-emergency-stop").addEventListener("click", function
   const btn = this;
   requireDoubleTap(btn, "emg_stop", "⚠️ ТОЧНО ОСТАНОВИТЬ И ЗАКРЫТЬ ВСЁ? (Нажмите ещё раз)", async function() {
     showToast("🚨 Выполняется аварийная остановка и закрытие всех позиций...", true);
-    await sendStrategyControl("emergency_stop");
-    showToast("🚨 Все автопилоты выключены, все позиции и ордера закрыты!");
+    try {
+      const r = await sendStrategyControl("emergency_stop");
+      showToast("🚨 " + (r.retMsg || "Аварийный стоп выполнен"), r.status !== "CONFIRMED");
+    } catch (e) {
+      await refreshState(true);
+    }
   });
 });
 
@@ -653,18 +686,30 @@ function renderState(st) {
 
   const posList = st.positions || [];
   const ordList = st.open_orders || [];
-  document.getElementById("kpi-pos-orders").textContent = posList.length + " поз. / " + ordList.length + " орд.";
+  const oc = st.order_counts || {positions: posList.length, entry: 0, protective: ordList.length};
+  document.getElementById("kpi-pos-orders").textContent = oc.positions + " поз. · " + oc.entry + " вход. · " + oc.protective + " защ.";
 
   const upnl = Number(acct.unrealised_pnl || 0);
   const uEl = document.getElementById("kpi-upnl");
   uEl.textContent = (upnl >= 0 ? "+$" : "-$") + Math.abs(upnl).toFixed(2);
   uEl.className = "kpi-mini-val " + (upnl >= 0 ? "pos-green" : "pos-red");
+  const effLim = st.effective_limits || {};
+  const riskSub = document.getElementById("kpi-risk-sub");
+  if (riskSub && effLim.portfolio_risk_cap_usd != null) {
+    riskSub.textContent = "Риск: $" + Number(effLim.portfolio_risk_used_usd || 0).toFixed(0) + " / $" + Number(effLim.portfolio_risk_cap_usd || 0).toFixed(0) + " · своб. слотов: " + (effLim.portfolio_slots_left ?? "—");
+  }
 
-  const rpnl = Number(st.realized_pnl_recent || 0);
+  const ps = st.pnl_summary || null;
+  const newPnl = ps ? Number(ps.new_strategies_pnl_usd || 0) : Number(st.realized_pnl_recent || 0);
   const rEl = document.getElementById("kpi-rpnl");
-  rEl.textContent = (rpnl >= 0 ? "+$" : "-$") + Math.abs(rpnl).toFixed(2);
-  rEl.className = "kpi-mini-val " + (rpnl >= 0 ? "pos-green" : "pos-red");
-  document.getElementById("kpi-winrate").textContent = "Win Rate: " + (st.live_win_rate_pct || 0) + "% (" + (st.closed_trades_count || 0) + " сд.)";
+  rEl.textContent = (newPnl >= 0 ? "+$" : "-$") + Math.abs(newPnl).toFixed(2);
+  rEl.className = "kpi-mini-val " + (newPnl >= 0 ? "pos-green" : "pos-red");
+  if (ps) {
+    const legP = Number(ps.legacy_pnl_usd || 0);
+    document.getElementById("kpi-winrate").textContent = "Новых: " + (ps.new_strategies_positions || 0) + " (WR " + (ps.new_strategies_win_rate_pct || 0) + "%) · Legacy: " + (legP >= 0 ? "+$" : "-$") + Math.abs(legP).toFixed(2);
+  } else {
+    document.getElementById("kpi-winrate").textContent = "Win Rate: " + (st.live_win_rate_pct || 0) + "% (" + (st.closed_trades_count || 0) + " сд.)";
+  }
 
   // Обновляем карту цен для живого калькулятора и скринера
   const ws = st.ws || {};
@@ -890,6 +935,8 @@ function renderState(st) {
   document.getElementById("deck-b-phase").textContent = "Фаза " + (b.phase_num || 1) + " (дно $" + Number(b.floor_usd || 920).toFixed(0) + ")";
   document.getElementById("deck-b-risk").textContent = "$" + Number(b.effective_risk_usd ?? 0).toFixed(2) + " (" + (b.effective_risk_pct ?? 0) + "%)";
   document.getElementById("deck-b-cycles").textContent = String(ap.booster_cycles_done || 0);
+  const bSlotsEl = document.getElementById("deck-b-slots");
+  if (bSlotsEl) bSlotsEl.textContent = (effLim.booster_open ?? 0) + " / " + (effLim.booster_effective_max ?? 12) + (effLim.demo_lab_enabled ? " (Lab)" : "");
 
   document.getElementById("card-booster").className = bOn ? "strat-card active-booster" : "strat-card";
   const badgeB = document.getElementById("badge-booster-state");
@@ -900,8 +947,10 @@ function renderState(st) {
   btnB.textContent = bOn ? "🟢 АВТОПИЛОТ РАЗГОНА: АКТИВЕН" : "🚀 ВКЛЮЧИТЬ АВТОПИЛОТ РАЗГОНА";
 
   const cfg = st.settings || {};
-  document.getElementById("deck-c-lev").textContent = (cfg.max_leverage || 3) + "x (Pure SL/TP · Vol)";
+  document.getElementById("deck-c-lev").textContent = (cfg.max_leverage || 3) + "x";
   document.getElementById("deck-c-cycles").textContent = String(ap.core_cycles_done || 0);
+  const cSlotsEl = document.getElementById("deck-c-slots");
+  if (cSlotsEl) cSlotsEl.textContent = (effLim.core_open ?? 0) + " / " + (effLim.core_effective_max ?? cfg.core_max_positions ?? 4) + (effLim.demo_lab_enabled ? " (Demo Lab)" : "");
   document.getElementById("card-core").className = cOn ? "strat-card active-core" : "strat-card";
   const badgeC = document.getElementById("badge-core-state");
   badgeC.className = cOn ? "badge badge-green" : "badge badge-amber";
@@ -989,10 +1038,13 @@ function renderState(st) {
   const cList = st.closed_pnl || [];
   document.getElementById("cnt-booster").textContent = "A+: " + aPlusCount;
   document.getElementById("cnt-signals").textContent = String(allSigs.length);
-  document.getElementById("cnt-pos").textContent = posList.length + "/" + ordList.length;
+  document.getElementById("cnt-pos").textContent = oc.positions + " · " + oc.entry + "/" + oc.protective;
   document.getElementById("cnt-ws").textContent = String(ws.symbols_live || 0);
   document.getElementById("cnt-scr").textContent = String((sc.screener_top || []).length || 0);
-  document.getElementById("cnt-hist").textContent = String(cList.length);
+  const totHist = ps ? Number(ps.total_records_count || cList.length) : cList.length;
+  document.getElementById("cnt-hist").textContent = totHist > cList.length ? (cList.length + "/" + totHist) : String(cList.length);
+  const hLimLbl = document.getElementById("history-limit-lbl");
+  if (hLimLbl) hLimLbl.textContent = totHist > cList.length ? ("Показано последние " + cList.length + " из " + totHist + " записей (7д)") : ("Всего записей за 7д: " + totHist);
 
   // Таблица OI Squeeze
   const sqBody = document.getElementById("oi-squeeze-tbody");
@@ -1091,8 +1143,12 @@ function renderState(st) {
         const trigPx = Number(o.triggerPrice || 0);
         const dispPx = rawPx > 0 ? fmtPrice(rawPx) : (trigPx > 0 ? (fmtPrice(trigPx) + " <span style=color:var(--muted);font-size:10.5px>(триггер)</span>") : "<span style=color:var(--muted)>Рыночная</span>");
         const stopT = String(o.stopOrderType || "").trim();
-        let purpose = "<span class=\"badge badge-amber\">Лимитный вход</span>";
-        if (stopT && stopT.toLowerCase() !== "unknown") {
+        let purpose = "<span class=\"badge badge-amber\">📥 Лимитный вход</span>";
+        if (stopT.toLowerCase().indexOf("stop") !== -1) {
+          purpose = "<span class=\"badge badge-red\">🛑 Stop Loss</span>";
+        } else if (stopT.toLowerCase().indexOf("take") !== -1 || stopT.toLowerCase().indexOf("profit") !== -1) {
+          purpose = "<span class=\"badge badge-green\">🎯 Take Profit</span>";
+        } else if (stopT && stopT.toLowerCase() !== "unknown") {
           purpose = "<span class=\"badge badge-purple\">🛡 " + escapeHtml(stopT) + "</span>";
         } else if (o.reduceOnly) {
           purpose = "<span class=\"badge badge-blue\">🎯 TP1 50% (Reduce-Only)</span>";

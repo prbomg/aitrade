@@ -7,20 +7,20 @@
 <style>
 :root { --bg:#090d16; --card:#111827; --card2:#162033; --border:#24324d; --text:#e2e8f0; --muted:#94a3b8; }
 * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-body { margin:0; background:var(--bg); color:var(--text); font-size:13px; }
+html, body { margin:0; padding:0; max-width:100%; overflow-x:clip; background:var(--bg); color:var(--text); font-size:13px; }
 
 /* Шапка (компактная, не раздувается по высоте) */
-.topbar { position:sticky; top:0; z-index:200; background:rgba(15,23,42,0.97); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); padding:7px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px 10px; }
-.brand { font-size:14px; font-weight:800; color:#fff; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-.badge { padding:2px 7px; border-radius:6px; font-size:11px; font-weight:600; display:inline-block; white-space:nowrap; }
+.topbar { position:sticky; top:0; z-index:200; background:rgba(15,23,42,0.97); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); padding:7px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px 10px; max-width:100%; }
+.brand { font-size:14px; font-weight:800; color:#fff; display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0; max-width:100%; }
+.badge { padding:2px 7px; border-radius:6px; font-size:11px; font-weight:600; display:inline-block; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 .badge-green { background:rgba(16,185,129,0.18); color:#34d399; border:1px solid rgba(16,185,129,0.4); }
 .badge-amber { background:rgba(245,158,11,0.18); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); }
 .badge-blue { background:rgba(56,189,248,0.18); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); }
 .badge-purple { background:rgba(167,139,250,0.18); color:#c4b5fd; border:1px solid rgba(167,139,250,0.4); }
 .badge-red { background:rgba(239,68,68,0.18); color:#f87171; border:1px solid rgba(239,68,68,0.4); }
 
-.controls-row { display:flex; gap:5px; align-items:center; flex-wrap:wrap; }
-button, select, input { background:#1e293b; color:#fff; border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer; transition:0.15s; }
+.controls-row { display:flex; gap:5px; align-items:center; flex-wrap:wrap; max-width:100%; }
+button, select, input { background:#1e293b; color:#fff; border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer; transition:0.15s; max-width:100%; }
 button:hover:not(:disabled) { filter:brightness(1.14); }
 button:disabled, input:disabled, select:disabled { opacity:0.45; cursor:not-allowed; filter:none !important; }
 .btn-primary { background:#0284c7; border-color:#38bdf8; font-weight:600; }
@@ -35,17 +35,17 @@ button:disabled, input:disabled, select:disabled { opacity:0.45; cursor:not-allo
 @keyframes pulseRed { from { box-shadow:0 0 4px #ef4444; } to { box-shadow:0 0 14px #ef4444; } }
 
 /* Компактная полоса KPI */
-.kpi-strip { background:#0d1322; border-bottom:1px solid var(--border); padding:8px 16px; display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:8px; }
+.kpi-strip { background:#0d1322; border-bottom:1px solid var(--border); padding:8px 16px; display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:8px; max-width:100%; }
 @media (max-width:1150px){ .kpi-strip { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
-@media (max-width:640px){ .kpi-strip { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+@media (max-width:640px){ .kpi-strip { grid-template-columns:repeat(2, minmax(0, 1fr)); padding:6px 10px; gap:6px; } .topbar { padding:6px 10px; } .container, .drawers-host { padding-left:10px; padding-right:10px; } .kpi-mini-lbl { white-space:normal; line-height:1.25; } .kpi-mini-val { font-size:13.5px; } .kpi-mini-sub { white-space:normal; line-height:1.25; } .strat-metrics { grid-template-columns:1fr; } }
 .kpi-mini { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; justify-content:center; min-width:0; }
 .kpi-mini-lbl { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .kpi-mini-val { font-size:15.5px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .kpi-mini-sub { font-size:10.5px; color:var(--muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .kpi-mini-sub.clamp2 { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 
-.container { padding:12px 16px; max-width:1720px; margin:0 auto; }
-.drawers-host { padding:0 16px; max-width:1720px; margin:0 auto; }
+.container { padding:12px 16px; max-width:1720px; width:100%; margin:0 auto; }
+.drawers-host { padding:0 16px; max-width:1720px; width:100%; margin:0 auto; }
 
 /* Выдвижные панели (работают и на главном экране, и на странице стратегии) */
 .drawer-panel { display:none; background:var(--card2); border:1px solid #38bdf8; border-radius:10px; padding:12px 14px; margin-top:10px; box-shadow:0 8px 25px rgba(0,0,0,0.45); }
@@ -157,9 +157,9 @@ tbody tr:hover td:first-child { background:#152136; }
 <div class="kpi-strip">
   <div class="kpi-mini" title="Доступный USDT-баланс на маржинальном счёте Bybit UTA; Эквити учитывает все монеты на демо-кошельке"><span class="kpi-mini-lbl">Баланс Маржи (USDT)</span><span class="kpi-mini-val" id="kpi-usdt">$0.00</span><span class="kpi-mini-sub" id="kpi-equity">UTA Эквити: $0.00</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">Капитал Разгона ($1k→$10k)</span><span class="kpi-mini-val pos-green" id="kpi-booster-eq">$1,000.00</span><span class="kpi-mini-sub" id="kpi-booster-floor">Порог снижения риска: $920.00</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Позиции / Ордера)</span><span class="kpi-mini-val" id="kpi-pos-orders">0 поз. / 0 орд.</span><span class="kpi-mini-sub" id="kpi-guard-sub">Защита Pure SL/TP + Smart Guard</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">Нереализованный PnL</span><span class="kpi-mini-val" id="kpi-upnl">$0.00</span><span class="kpi-mini-sub">По открытым позициям</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">Реализованный PnL (7д)</span><span class="kpi-mini-val" id="kpi-rpnl">$0.00</span><span class="kpi-mini-sub" id="kpi-winrate">Win Rate: —</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Поз · Вход · Защита)</span><span class="kpi-mini-val" id="kpi-pos-orders">0 поз. · 0 вход. · 0 защ.</span><span class="kpi-mini-sub" id="kpi-guard-sub">Защита Pure SL/TP + Smart Guard</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Нереализованный PnL</span><span class="kpi-mini-val" id="kpi-upnl">$0.00</span><span class="kpi-mini-sub" id="kpi-risk-sub">Риск портфеля: $0</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">PnL новых стратегий (Demo)</span><span class="kpi-mini-val" id="kpi-rpnl">$0.00</span><span class="kpi-mini-sub" id="kpi-winrate">Новых: 0 · Legacy: $0.00</span></div>
   <div class="kpi-mini"><span class="kpi-mini-lbl">Поток WebSocket L2</span><span class="kpi-mini-val" id="kpi-ws">0 тиков</span><span class="kpi-mini-sub" id="kpi-ws-sub">Загрузка потока</span></div>
 </div>
 
@@ -294,26 +294,26 @@ tbody tr:hover td:first-child { background:#152136; }
         <span style="font-size:11.5px;color:#38bdf8;font-weight:600" id="stage-next-4h-timer">След. 4h-окно T1: —</span>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px" id="stage-strategies-grid">
-      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
-          <button type="button" class="strat-link" data-strategy-detail="T1_DONCHIAN_TSMOM" style="color:#38bdf8">T1_DONCHIAN_TSMOM (Core · 4h · 12 пар)</button>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:10px" id="stage-strategies-grid">
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+          <button type="button" class="strat-link" data-strategy-detail="T1_DONCHIAN_TSMOM" style="color:#38bdf8">T1_DONCHIAN_TSMOM (Core · 4h)</button>
           <span class="badge badge-blue" id="stage-t1-badge">Ожидание</span>
         </div>
         <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-t1-reason">Загрузка статуса T1...</div>
         <div style="font-size:11px;color:var(--muted)" id="stage-t1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · сделки T1: 0 ($0.00)</div>
       </div>
-      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
-          <button type="button" class="strat-link" data-strategy-detail="B1_SQUEEZE_BREAKOUT" style="color:#c4b5fd">B1_SQUEEZE_BREAKOUT (Разгон · 15m/1h · 6 пар)</button>
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+          <button type="button" class="strat-link" data-strategy-detail="B1_SQUEEZE_BREAKOUT" style="color:#c4b5fd">B1_SQUEEZE_BREAKOUT (Разгон · 15m/1h)</button>
           <span class="badge badge-purple" id="stage-b1-badge">Ожидание</span>
         </div>
         <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-b1-reason">Загрузка статуса B1...</div>
         <div style="font-size:11px;color:var(--muted)" id="stage-b1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · сделки B1: 0 ($0.00)</div>
       </div>
-      <div style="background:#090d16;border:1px solid #4c1d95;border-radius:8px;padding:9px 11px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
-          <b style="color:#a78bfa">🧪 Live Shadow Полигон (13 стратегий · $1k/страт.)</b>
+      <div style="background:#090d16;border:1px solid #4c1d95;border-radius:8px;padding:9px 11px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+          <b style="color:#a78bfa">🧪 Live Shadow Полигон (13 стратегий · расч. $1k)</b>
           <span class="badge badge-purple" id="stage-shadow-badge">0 откр.</span>
         </div>
         <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-shadow-reason">Ожидание первых сигналов Shadow Lab...</div>
@@ -327,14 +327,14 @@ tbody tr:hover td:first-child { background:#152136; }
     <div class="strat-card" id="card-booster">
       <div>
         <div class="strat-header">
-          <h3 class="strat-title">🚀 1. Автопилот Разгона (B1–B7 + S1 · $1k/страт.)</h3>
+          <h3 class="strat-title" title="Расчётный капитал $1,000 на стратегию; на общем Demo-счёте без отдельных субаккаунтов">🚀 1. Автопилот Разгона (B1–B7 + S1 · расч. $1k)</h3>
           <span class="badge badge-amber" id="badge-booster-state">ВЫКЛЮЧЕН</span>
         </div>
         <div class="strat-metrics">
           <div>Капитал: <b class="pos-green" id="deck-b-eq">$1,000.00</b></div>
           <div>Этап: <b id="deck-b-phase">Фаза 1 (дно $920)</b></div>
           <div>Риск (Келли+HM): <b id="deck-b-risk">$15.00 (1.5%)</b></div>
-          <div>Фоновых циклов: <b id="deck-b-cycles">0</b> <span style="color:var(--muted)">(8 страт.)</span></div>
+          <div>Слоты / циклы: <b id="deck-b-slots">0 / 12</b> · <span id="deck-b-cycles">0</span></div>
         </div>
       </div>
       <div class="strat-actions">
@@ -346,14 +346,14 @@ tbody tr:hover td:first-child { background:#152136; }
     <div class="strat-card" id="card-core">
       <div>
         <div class="strat-header">
-          <h3 class="strat-title">🎯 2. Автотрейдинг Core (T1–T3 + C2–C3 · $1k/страт.)</h3>
+          <h3 class="strat-title" title="Расчётный капитал $1,000 на стратегию; на общем Demo-счёте без отдельных субаккаунтов">🎯 2. Автотрейдинг Core (T1–T3 + C2–C3 · расч. $1k)</h3>
           <span class="badge badge-amber" id="badge-core-state">ВЫКЛЮЧЕН</span>
         </div>
         <div class="strat-metrics">
           <div>Мин. оценка: <b><input type="number" id="core-min-prob" value="58" min="50" max="90" step="1" style="width:46px;padding:1px 4px">%</b></div>
-          <div>Макс. сделок: <b><input type="number" id="core-max-pos" value="4" min="1" max="12" step="1" style="width:42px;padding:1px 4px"></b></div>
-          <div>Режим: <b id="deck-c-lev">3x (Pure SL/TP · Vol)</b></div>
-          <div>Фоновых циклов: <b id="deck-c-cycles">0</b> <span style="color:var(--muted)">(5 страт.)</span></div>
+          <div>Настр. лимит: <b><input type="number" id="core-max-pos" value="4" min="1" max="12" step="1" style="width:42px;padding:1px 4px"></b></div>
+          <div>Факт. слоты: <b id="deck-c-slots">0 / 8</b></div>
+          <div>Циклы / режим: <b id="deck-c-cycles">0</b> · <span id="deck-c-lev" style="color:var(--muted)">3x</span></div>
         </div>
       </div>
       <div class="strat-actions">
@@ -679,7 +679,7 @@ tbody tr:hover td:first-child { background:#152136; }
   <!-- ВКЛАДКА 6: ИСТОРИЯ -->
   <div id="tab-history" class="tab-content">
     <div class="panel">
-      <div class="panel-header"><h3 class="panel-title">💰 История закрытых сделок и частичных тейков TP1 (Closed PnL)</h3></div>
+      <div class="panel-header"><h3 class="panel-title">💰 История закрытых сделок и частичных тейков TP1 (Closed PnL)</h3><span style="font-size:11.5px;color:var(--muted)" id="history-limit-lbl">Показано 0 записей (7д)</span></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Монета</th><th>Стратегия</th><th>Направление</th><th>Объем</th><th>Цена входа</th><th>Цена выхода</th><th>Закрытый PnL (USDT)</th><th>Плечо</th><th>Дата и время</th></tr></thead>

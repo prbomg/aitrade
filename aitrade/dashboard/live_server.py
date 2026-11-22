@@ -582,6 +582,111 @@ class ControlCenterState:
             ctrls.append(b_ctrl)
         return ctrls
 
+    def execute_emergency_stop(self) -> Dict[str, Any]:
+        """Безопасный аварийный стоп: сначала отменяет только входные ордера, затем закрывает позиции
+        по каждому контуру в отдельном try/except, сверяет остаток и сохраняет SL/TP при частичном выходе."""
+        self.autopilot_booster_enabled = False
+        self.autopilot_core_enabled = False
+        self.entry_paused.set()
+        self.entry_pause_reason = "Аварийный стоп"
+        self.entry_paused_at = time.time()
+        try:
+            self.save_persisted_state()
+        except Exception:
+            pass
+
+        accounts_report: List[Dict[str, Any]] = []
+        any_error = False
+        any_partial = False
+
+        for idx, ctrl in enumerate(self._active_controllers()):
+            acc_name = "autotrade" if ctrl is self.bybit else f"booster_{idx}"
+            acc_rep: Dict[str, Any] = {
+                "account": acc_name,
+                "ok": True,
+                "entry_orders_cancelled": 0,
+                "close_submitted": 0,
+                "remaining_positions": 0,
+                "unprotected_positions": [],
+                "errors": [],
+            }
+            try:
+                open_orders = ctrl.get_open_orders()
+                for o in open_orders:
+                    stop_t = str(o.get("stopOrderType") or "").strip()
+                    is_prot = bool(o.get("reduceOnly")) or (bool(stop_t) and stop_t.lower() != "unknown")
+                    if is_prot:
+                        continue
+                    c_res = ctrl.cancel_order(str(o.get("symbol", "")), str(o.get("orderId", "")))
+                    if c_res.get("ok"):
+                        acc_rep["entry_orders_cancelled"] += 1
+                    else:
+                        acc_rep["errors"].append(f"Отмена входа {o.get('symbol')}: {c_res.get('retMsg', 'error')}")
+            except Exception as exc:
+                acc_rep["errors"].append(f"Ошибка отмены входных ордеров: {str(exc)[:140]}")
+
+            try:
+                positions = ctrl.get_positions()
+                for p in positions:
+                    try:
+                        cl_res = ctrl.close_position(
+                            str(p.get("symbol", "")),
+                            str(p.get("side", "Buy")),
+                            str(p.get("size", "0")),
+                            int(p.get("positionIdx", 0) or 0),
+                        )
+                        if cl_res.get("ok"):
+                            acc_rep["close_submitted"] += 1
+                        else:
+                            acc_rep["errors"].append(f"Закрытие {p.get('symbol')}: {cl_res.get('retMsg', 'error')}")
+                    except Exception as p_exc:
+                        acc_rep["errors"].append(f"Закрытие {p.get('symbol')}: {str(p_exc)[:120]}")
+            except Exception as exc:
+                acc_rep["errors"].append(f"Ошибка чтения/закрытия позиций: {str(exc)[:140]}")
+
+            try:
+                rem_pos = ctrl.get_positions()
+                acc_rep["remaining_positions"] = len(rem_pos)
+                if not rem_pos:
+                    try:
+                        for ro in ctrl.get_open_orders():
+                            ctrl.cancel_order(str(ro.get("symbol", "")), str(ro.get("orderId", "")))
+                    except Exception:
+                        pass
+                else:
+                    any_partial = True
+                    for rp in rem_pos:
+                        if float(rp.get("stopLoss") or 0) <= 0:
+                            acc_rep["unprotected_positions"].append(str(rp.get("symbol", "")))
+            except Exception as exc:
+                acc_rep["errors"].append(f"Ошибка сверки остатка: {str(exc)[:140]}")
+
+            if acc_rep["errors"] or acc_rep["unprotected_positions"]:
+                acc_rep["ok"] = False
+                any_error = True
+            accounts_report.append(acc_rep)
+
+        status = "ERROR" if any_error else ("PARTIAL" if any_partial else "CONFIRMED")
+        ok = (status == "CONFIRMED")
+        if status == "CONFIRMED":
+            summary_msg = "Аварийный стоп подтверждён: входные ордера отменены, позиции закрыты."
+        elif status == "PARTIAL":
+            rem_total = sum(a["remaining_positions"] for a in accounts_report)
+            summary_msg = f"Частичное исполнение аварийного стопа: осталось позиций {rem_total}, защитные SL/TP сохранены."
+        else:
+            summary_msg = "Аварийный стоп завершился с ошибками на части счетов — проверьте остаток и защиту."
+        self.add_log(f"🚨 [АВАРИЙНЫЙ СТОП · {status}] {summary_msg}")
+        return {
+            "ok": ok,
+            "status": status,
+            "booster_enabled": False,
+            "core_enabled": False,
+            "entry_paused": True,
+            "entry_pause_reason": self.entry_pause_reason,
+            "accounts": accounts_report,
+            "retMsg": summary_msg,
+        }
+
     def check_autotrade_drawdown(self, equity_usd: float) -> Tuple[float, bool]:
         """3-уровневый Kill-Switch Автотрейдинга: -8% от HWM -> риск 0.5x, -15% -> полная остановка."""
         eq = float(equity_usd or 0.0)
@@ -1191,6 +1296,28 @@ class ControlCenterState:
         ws_sum = self.ws_hub.get_summary()
         btc_reg = self.regime_guard.update_btc_regime(ws_sum)
 
+        guard_maps = {"autotrade": {}}
+        try:
+            guard_maps["autotrade"] = self.bybit.spm._load_guard() if hasattr(self.bybit.spm, "_load_guard") else {}
+        except Exception:
+            pass
+        if b_ctrl is not self.bybit:
+            try:
+                guard_maps["booster"] = b_ctrl.spm._load_guard() if hasattr(b_ctrl.spm, "_load_guard") else {}
+            except Exception:
+                guard_maps["booster"] = {}
+
+        entry_orders_cnt = 0
+        protective_orders_cnt = 0
+        for o in open_orders:
+            stop_t = str(o.get("stopOrderType") or "").strip()
+            is_prot = bool(o.get("reduceOnly")) or (bool(stop_t) and stop_t.lower() != "unknown")
+            o["order_role"] = "protective" if is_prot else "entry"
+            if is_prot:
+                protective_orders_cnt += 1
+            else:
+                entry_orders_cnt += 1
+
         for p in positions:
             sym = p.get("symbol", "")
             acc_id = p.get("account", "autotrade")
@@ -1199,15 +1326,25 @@ class ControlCenterState:
             avg_px = float(p.get("avgPrice", 0) or 0)
             cur_sl = float(p.get("stopLoss", 0) or 0)
             cur_trail = float(p.get("trailingStop", 0) or 0)
-            tp1_ord = next((
-                o for o in open_orders
-                if o.get("account", "autotrade") == acc_id
-                and o.get("symbol") == sym
-                and int(o.get("positionIdx", 0) or 0) == p_idx
-                and bool(o.get("reduceOnly"))
-                and o.get("orderType") == "Limit"
-                and not str(o.get("stopOrderType") or "").strip()
-            ), None)
+            g_rec = (guard_maps.get(acc_id) or {}).get(f"{sym}:{p_idx}:{side}") or {}
+            expected_tp1_id = str(g_rec.get("tp1_order") or "").strip()
+            tp1_ord = None
+            if expected_tp1_id:
+                tp1_ord = next((
+                    o for o in open_orders
+                    if o.get("account", "autotrade") == acc_id and str(o.get("orderId") or "") == expected_tp1_id
+                ), None)
+            if tp1_ord is None:
+                tp1_ord = next((
+                    o for o in open_orders
+                    if o.get("account", "autotrade") == acc_id
+                    and o.get("symbol") == sym
+                    and int(o.get("positionIdx", 0) or 0) == p_idx
+                    and bool(o.get("reduceOnly"))
+                    and o.get("orderType") == "Limit"
+                    and not str(o.get("stopOrderType") or "").strip()
+                ), None)
+            p["tp1_order_id"] = tp1_ord.get("orderId", "") if tp1_ord else expected_tp1_id
             p["tp1_order_price"] = tp1_ord.get("price", "") if tp1_ord else ""
             p["tp1_order_qty"] = tp1_ord.get("qty", "") if tp1_ord else ""
             p["is_breakeven"] = (side == "Buy" and cur_sl >= avg_px) or (side == "Sell" and 0 < cur_sl <= avg_px)
@@ -1220,12 +1357,31 @@ class ControlCenterState:
         wins = sum(1 for c in closed_pnl if float(c.get("closedPnl", 0) or 0) > 0)
         win_rate = round((wins / len(closed_pnl)) * 100.0, 1) if closed_pnl else 0.0
 
+        # Агрегируем закрытия новых стратегий по entry_intent_id (частичные TP1 + финал = 1 позиция)
+        new_pos_pnl: Dict[str, float] = {}
+        legacy_pnl = 0.0
+        legacy_cnt = 0
+        for c in closed_pnl:
+            sid_c = str(c.get("strategy_id") or "UNATTRIBUTED")
+            pnl_c = float(c.get("closedPnl", 0) or 0)
+            if sid_c in ("", "UNATTRIBUTED", "MANUAL", "LEGACY"):
+                legacy_pnl += pnl_c
+                legacy_cnt += 1
+            else:
+                key_c = str(c.get("entry_intent_id") or c.get("orderId") or f"{c.get('symbol')}:{c.get('updatedTime')}")
+                new_pos_pnl[key_c] = new_pos_pnl.get(key_c, 0.0) + pnl_c
+        new_strat_pnl = round(sum(new_pos_pnl.values()), 2)
+        new_strat_wins = sum(1 for v in new_pos_pnl.values() if v > 0)
+        new_strat_wr = round((new_strat_wins / len(new_pos_pnl)) * 100.0, 1) if new_pos_pnl else 0.0
+
         any_active = self.autopilot_booster_enabled or self.autopilot_core_enabled
         next_in_sec = 0
         if any_active and self._last_auto_ts > 0:
             next_in_sec = max(0, int(self.autopilot_interval_sec - (time.time() - self._last_auto_ts)))
 
-        booster_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(b_closed, b_positions), self._is_demo_lab_active())
+        demo_lab_on = self._is_demo_lab_active()
+        demo_lab_cfg_st = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
+        booster_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(b_closed, b_positions), demo_lab_on)
         now_m = time.time()
         if not getattr(self, "_live_metrics_cache", None) or (now_m - float(getattr(self, "_live_metrics_ts", 0.0))) >= 20.0:
             active_ledgers = [("autotrade", self.bybit.ledger)]
@@ -1245,6 +1401,57 @@ class ControlCenterState:
             else {"enabled": False, "leaderboard": [], "total_open": 0, "total_closed": 0}
         )
 
+        usdt_bal = float(acct.get("usdt_balance", 0) or 0)
+        shared_acc = b_ctrl is self.bybit
+        port_cap_usd = min(float(demo_lab_cfg_st.get("portfolio_cap_usdt", 50000.0) or 50000.0), usdt_bal) if demo_lab_on else min(1000.0, usdt_bal)
+        port_risk_cap_pct = 25 if demo_lab_on else 6
+        port_risk_used = 0.0
+        for p in positions:
+            ep = float(p.get("avgPrice", 0) or 0)
+            psl = float(p.get("stopLoss", 0) or 0)
+            sz = float(p.get("size", 0) or 0)
+            if ep > 0 and psl > 0 and sz > 0:
+                port_risk_used += sz * (abs(ep - psl) + ep * 0.0054)
+        core_open_cnt = sum(1 for p in positions if str(p.get("strategy_id", "")).startswith("CORE:"))
+        booster_open_cnt = sum(1 for p in positions if str(p.get("strategy_id", "")).startswith("BOOSTER:"))
+        core_eff_max = max(self.core_max_positions, 8) if demo_lab_on else self.core_max_positions
+        booster_cfg_max = int(booster_metrics.get("max_positions", 2) or 2)
+        booster_eff_max = max(booster_cfg_max, 12) if demo_lab_on else booster_cfg_max
+        max_conc_cfg = int(demo_lab_cfg_st.get("max_concurrent_positions", 20) or 20) if demo_lab_on else (core_eff_max + booster_eff_max)
+        effective_limits = {
+            "demo_lab_enabled": demo_lab_on,
+            "shared_demo_account": shared_acc,
+            "core_configured_max": self.core_max_positions,
+            "core_effective_max": core_eff_max,
+            "core_open": core_open_cnt,
+            "booster_configured_max": booster_cfg_max,
+            "booster_effective_max": booster_eff_max,
+            "booster_open": booster_open_cnt,
+            "portfolio_max_concurrent": max_conc_cfg,
+            "portfolio_slots_left": max(0, max_conc_cfg - len(positions)),
+            "portfolio_cap_usd": round(port_cap_usd, 2),
+            "portfolio_risk_used_usd": round(port_risk_used, 2),
+            "portfolio_risk_cap_pct": port_risk_cap_pct,
+            "portfolio_risk_cap_usd": round(port_cap_usd * (port_risk_cap_pct / 100.0), 2),
+            "capital_note": "Расчётный капитал $1,000/страт. (общий Demo-счёт)" if (demo_lab_on and shared_acc) else "Изолированный расчёт капитала",
+        }
+        order_counts = {
+            "positions": len(positions),
+            "entry": entry_orders_cnt,
+            "protective": protective_orders_cnt,
+            "total_orders": len(open_orders),
+        }
+        pnl_summary = {
+            "total_realized_usd": round(realized_sum, 2),
+            "total_records_count": len(closed_pnl),
+            "displayed_records_count": min(100, len(closed_pnl)),
+            "new_strategies_pnl_usd": new_strat_pnl,
+            "new_strategies_positions": len(new_pos_pnl),
+            "new_strategies_win_rate_pct": new_strat_wr,
+            "legacy_pnl_usd": round(legacy_pnl, 2),
+            "legacy_records_count": legacy_cnt,
+        }
+
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "last_scan_ts": self.last_scan_ts,
@@ -1254,6 +1461,9 @@ class ControlCenterState:
             "realized_pnl_recent": round(realized_sum, 2),
             "closed_trades_count": len(closed_pnl),
             "live_win_rate_pct": win_rate,
+            "pnl_summary": pnl_summary,
+            "order_counts": order_counts,
+            "effective_limits": effective_limits,
             "positions": positions,
             "open_orders": open_orders,
             "closed_pnl": closed_pnl[:100],
@@ -1529,42 +1739,73 @@ def create_wsgi_app(state: ControlCenterState):
                 if "core_min_prob_pct" in data:
                     state.core_min_prob_pct = float(data.get("core_min_prob_pct", 58.0) or 58.0)
 
-                if mode in ("stop_all","emergency_stop"):state.entry_paused.set()
-                elif mode in ("enable_both","toggle_booster","toggle_core"):state.entry_paused.clear()
+                guard_err_active = bool((getattr(state, "guard_status", {}) or {}).get("last_error"))
+                emg_report = None
+                ret_msg = ""
                 if mode == "toggle_booster":
                     state.autopilot_booster_enabled = not state.autopilot_booster_enabled
                     if state.autopilot_booster_enabled:
                         state._last_auto_ts = 0.0
-                    state.add_log("🚀 Автопилот Разгона ($1k→$10k): " + ("ВКЛЮЧЕН" if state.autopilot_booster_enabled else "ВЫКЛЮЧЕН"))
+                        if not guard_err_active:
+                            state.entry_paused.clear()
+                            state.entry_pause_reason = ""
+                        else:
+                            ret_msg = "Автопилот включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                    elif not state.autopilot_core_enabled:
+                        state.entry_paused.set()
+                        if not guard_err_active:
+                            state.entry_pause_reason = "Автопилоты выключены пользователем"
+                            state.entry_paused_at = time.time()
+                    state.add_log("🚀 Автопилот Разгона: " + ("ВКЛЮЧЕН" if state.autopilot_booster_enabled else "ВЫКЛЮЧЕН"))
                 elif mode == "toggle_core":
                     state.autopilot_core_enabled = not state.autopilot_core_enabled
                     if state.autopilot_core_enabled:
                         state._last_auto_ts = 0.0
-                    state.add_log("🎯 Автопилот Основной ИИ-стратегии: " + ("ВКЛЮЧЕН" if state.autopilot_core_enabled else "ВЫКЛЮЧЕН"))
+                        if not guard_err_active:
+                            state.entry_paused.clear()
+                            state.entry_pause_reason = ""
+                        else:
+                            ret_msg = "Автопилот включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                    elif not state.autopilot_booster_enabled:
+                        state.entry_paused.set()
+                        if not guard_err_active:
+                            state.entry_pause_reason = "Автопилоты выключены пользователем"
+                            state.entry_paused_at = time.time()
+                    state.add_log("🎯 Автотрейдинг Core: " + ("ВКЛЮЧЕН" if state.autopilot_core_enabled else "ВЫКЛЮЧЕН"))
                 elif mode == "enable_both":
                     state.autopilot_booster_enabled = True
                     state.autopilot_core_enabled = True
                     state._last_auto_ts = 0.0
-                    state.add_log("⚡ Включены ОБА автопилота: Разгон ($1k→$10k) + Основная ИИ-стратегия!")
+                    if not guard_err_active:
+                        state.entry_paused.clear()
+                        state.entry_pause_reason = ""
+                    else:
+                        ret_msg = "Автопилоты включены, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                    state.add_log("⚡ Включены ОБА автопилота: Разгон + Core!")
                 elif mode == "stop_all":
                     state.autopilot_booster_enabled = False
                     state.autopilot_core_enabled = False
+                    state.entry_paused.set()
+                    if not guard_err_active:
+                        state.entry_pause_reason = "Остановлено пользователем"
+                        state.entry_paused_at = time.time()
                     state.add_log("⏸ ВСЕ автопилоты остановлены пользователем. Открытые позиции под защитой Smart Guard.")
                 elif mode == "emergency_stop":
-                    state.autopilot_booster_enabled = False
-                    state.autopilot_core_enabled = False
-                    state.save_persisted_state()
-                    for ctrl in state._active_controllers():
-                        ctrl.cancel_all_orders()
-                        ctrl.close_all_positions()
-                    state.add_log("🚨 АВАРИЙНЫЙ СТОП: автопилоты выключены; запросы отмены и закрытия отправлены на все активные контуры.")
+                    emg_report = state.execute_emergency_stop()
 
                 state.save_persisted_state()
-                resp = {
-                    "ok": True,
-                    "booster_enabled": state.autopilot_booster_enabled,
-                    "core_enabled": state.autopilot_core_enabled,
-                }
+                if emg_report is not None:
+                    resp = emg_report
+                else:
+                    resp = {
+                        "ok": True,
+                        "booster_enabled": state.autopilot_booster_enabled,
+                        "core_enabled": state.autopilot_core_enabled,
+                        "entry_paused": state.entry_paused.is_set(),
+                        "entry_pause_reason": getattr(state, "entry_pause_reason", ""),
+                    }
+                    if ret_msg:
+                        resp["retMsg"] = ret_msg
             elif path == "/api/booster_config":
                 if data.get("reset"):
                     state.booster.reset_challenge(float(data.get("start_equity", 1000.0)), float(data.get("target_equity", 10000.0)))

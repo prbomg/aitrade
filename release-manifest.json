@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.22-intraday.33",
-  "built_at": "2026-11-22T10:52:58.358886+00:00",
+  "version": "2026.11.22-intraday.34",
+  "built_at": "2026-11-22T11:20:04.820588+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
     "aitrade/agents/__init__.py": "8f490c3f80fbc2a59fa6d72e4eff9f82c5567789d6947cbd47fb0fe691eb6282",
@@ -16,7 +16,7 @@
     "aitrade/booster/x_news_radar.py": "1fc7221e63101020225b5a1240c5eb45434c85cabb2c01c15a5006dab12f0848",
     "aitrade/config.py": "babd1974cf673e654c59cdf0e04567f5b33b2ca88bd737edd9e9c1532e736417",
     "aitrade/dashboard/__init__.py": "37a1c4c9d956b0aaf3af30834eb697e360d6e72327b88054fa418d01a774611c",
-    "aitrade/dashboard/live_server.py": "13dbe19dbd9c5a392f80380a0cf241c420b11d0d59b1d5bbef14a08970d3d6b4",
+    "aitrade/dashboard/live_server.py": "17cc27ba7a7d944adbf221c70d946e18ba67c40b7efd1ca00c82f0a25d8c7b7a",
     "aitrade/dashboard/report_generator.py": "e3195e5f2d6fd98c14c85901a728edd56eee4f326203001d4fe83fb9230fceee",
     "aitrade/engine.py": "ce6f39b591fffb4aaedbbe9ca47e134009149048b0c598f97c88adee9f86d815",
     "aitrade/exchange/__init__.py": "619cd760e7300c5e3b50fd67f57d975ba98c5db68fa596a8847782614a3c9a6f",
@@ -67,8 +67,8 @@
     "aitrade/strategies/vwap_momentum_impulse.py": "e9af7acd2284f843b19a1bcd8469bbe125db3253df734042407422d14ebe02ce",
     "config/freqtrade_freqai_bybit.json": "369aa7f060824db84521d2fc744158610eddcac1034cc1cbccba2db6bfa89ca4",
     "config/settings.json": "8813abc2a84783a9f389dd2ff16a299c674a23256853831df6da8fbee4d3c11f",
-    "dashboard_app.js": "b44894099273b1d856bc55b420dd5a85460a5497686a00b8a071194cae79adde",
-    "dashboard_report.html": "701412f02dccb199bbc640400f3923dfe64bd6c62ace3518eefbad171819a25d",
+    "dashboard_app.js": "688dbfcf72dfff71892d39db566c1cf312d304cf20f59930706adcc5497ab983",
+    "dashboard_report.html": "302302c68b36b69b68100bdf4535e4461c18e54993af8b8c6cecc9f9791f21a6",
     "gui_app.py": "3de4e46d5340a147a167292a4bd17d61c8d7c60b03a35b3ec7234f838c1d5f20",
     "run_combine.py": "85b0fbf9ef7bfec5fd99149db9ad317249a8d7fd6c9887ce60195c2d14e830e2",
     "scripts/live_audit_report.py": "4cad82351df00be6d92d8b511c7066c52e7e60832b731809b35b9c4c76d48d0f",
@@ -93,6 +93,7 @@
     "tests/test_intraday31_strategy_detail.py": "220df671edd22cf7c2a2d373541652b67a9df005920533303ac8781a2e074bc7",
     "tests/test_intraday32_ui_ux.py": "33aabfd22c43e87b66549a03993d80f97eb05c4e90f8c398ab7cdf2daf9f1a21",
     "tests/test_intraday33_news_nlp.py": "85da9cbfc5551a46b2a8e71699c0533bb96b3c463effc2c478fad0be23c382e5",
+    "tests/test_intraday34_audit_fixes.py": "889e8a6b64198da2a0a1adc78984194bb76a15ec91fda176ace294d4e38f3751",
     "tests/test_intraday6_audit.py": "a2baf5229538ce19447032566e59404c58cebea4b63b0112f5feb3416b47b683",
     "tests/test_intraday7_p0_fixes.py": "cd072f1648d57b74d414d4d283ee94b5f02cfeec26984f03a304e38f400a88df",
     "tests/test_intraday8_infra.py": "ad25951092b6980f98325b04529b314d10e70f9a64052fc3c1c3e3d4ed25e244",
@@ -106,7 +107,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "e59b8e6f81ddc760875e0573a055641024e130bf9d6625f8ce432c322dba50bc",
+  "build_sha256": "1d61e7956813ea866ffb92af89b1337da250f701bb8110d4c7c7f8912c3fac22",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"
