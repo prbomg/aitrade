@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.23-intraday.39"
+DEFAULT_RELEASE_VERSION = "2026.11.23-intraday.40"
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
@@ -459,9 +459,13 @@ class ControlCenterState:
         self.entry_paused = threading.Event()
         self.entry_pause_reason = ""
         self.entry_paused_at = 0.0
+        self._entry_pause_source = ""
+        self._guard_consecutive_errors = 0
+        self._guard_consecutive_ok = 0
         if not (self.autopilot_core_enabled or self.autopilot_booster_enabled):
             self.entry_paused.set()
             self.entry_pause_reason = "Автопилоты выключены при старте"
+            self._entry_pause_source = "user"
         self.scan_status = {"running":False,"last_error":"","last_success":0.,"last_attempt":0.,"heartbeat":time.time(),"failed_cycles":0}
         self._scan_executor = ThreadPoolExecutor(max_workers=1)
         self._manual_future = None
@@ -593,6 +597,7 @@ class ControlCenterState:
         self.entry_paused.set()
         self.entry_pause_reason = "Аварийный стоп"
         self.entry_paused_at = time.time()
+        self._entry_pause_source = "emergency"
         try:
             self.save_persisted_state()
         except Exception:
@@ -738,15 +743,89 @@ class ControlCenterState:
             return False
         return True
 
-    def _run_guard_cycle_for_controller(self, ctrl: BybitV5DirectController) -> set:
+    CRITICAL_GUARD_ACTIONS = frozenset({
+        "MISSING_STOP_LOSS",
+        "UNOWNED_MISSING_STOP_LOSS",
+        "EXCHANGE_LIQUIDATION_DISTANCE_LOW",
+    })
+    GUARD_TRANSIENT_PAUSE_THRESHOLD = 3
+    GUARD_RECOVERY_OK_THRESHOLD = 3
+
+    def _handle_guard_cycle_outcome(self, transient_errors: List[str], critical_errors: List[str]) -> None:
+        if critical_errors:
+            self._guard_consecutive_ok = 0
+            self._guard_consecutive_errors = getattr(self, "_guard_consecutive_errors", 0) + 1
+            self.guard_status["last_error"] = " | ".join(critical_errors + transient_errors)[:200]
+            self.entry_paused.set()
+            self.entry_pause_reason = critical_errors[0][:120]
+            self.entry_paused_at = time.time()
+            self._entry_pause_source = "guard_critical"
+            return
+        if transient_errors:
+            self._guard_consecutive_ok = 0
+            self._guard_consecutive_errors = getattr(self, "_guard_consecutive_errors", 0) + 1
+            self.guard_status["last_error"] = " | ".join(transient_errors)[:200]
+            if self._guard_consecutive_errors >= self.GUARD_TRANSIENT_PAUSE_THRESHOLD:
+                cur_src = getattr(self, "_entry_pause_source", "")
+                if (not self.entry_paused.is_set()) or cur_src in ("", "guard_transient"):
+                    was_paused = self.entry_paused.is_set()
+                    self.entry_paused.set()
+                    self.entry_pause_reason = transient_errors[0][:120]
+                    self.entry_paused_at = time.time()
+                    self._entry_pause_source = "guard_transient"
+                    if not was_paused:
+                        self.add_log(
+                            f"⏸ Smart Guard: входы на автопаузе после {self._guard_consecutive_errors} сбоев подряд "
+                            f"({self.entry_pause_reason}). Автовосстановление после {self.GUARD_RECOVERY_OK_THRESHOLD} успешных циклов."
+                        )
+            return
+        self._guard_consecutive_errors = 0
+        self._guard_consecutive_ok = getattr(self, "_guard_consecutive_ok", 0) + 1
+        self.guard_status.update(last_success=time.time(), last_error="")
+        if (
+            self.entry_paused.is_set()
+            and getattr(self, "_entry_pause_source", "") == "guard_transient"
+            and (getattr(self, "autopilot_booster_enabled", False) or getattr(self, "autopilot_core_enabled", False))
+            and self._guard_consecutive_ok >= self.GUARD_RECOVERY_OK_THRESHOLD
+        ):
+            self.entry_paused.clear()
+            self.entry_pause_reason = ""
+            self.entry_paused_at = 0.0
+            self._entry_pause_source = ""
+            self.add_log(
+                f"✅ Smart Guard восстановился ({self._guard_consecutive_ok} успешных циклов подряд): "
+                "входы автоматически сняты с паузы."
+            )
+
+    def _run_guard_cycle_for_controller(
+        self,
+        ctrl: BybitV5DirectController,
+        transient_errors: Optional[List[str]] = None,
+        critical_errors: Optional[List[str]] = None,
+    ) -> set:
         ctrl.spm.split_tp_enabled = self.split_tp_enabled
         actions = ctrl.spm.audit_and_protect_open_positions()
         for act in actions:
             if not act.get("ok"):
                 self.add_log("ОШИБКА ЗАЩИТЫ: " + str(act))
-                self.entry_paused.set()
-                self.entry_pause_reason = "Ошибка защиты позиции: " + str(act.get("action", "UNKNOWN"))
-                self.entry_paused_at = time.time()
+                act_name = str(act.get("action", "UNKNOWN"))
+                msg = "Ошибка защиты позиции: " + act_name
+                if act_name in self.CRITICAL_GUARD_ACTIONS:
+                    if critical_errors is not None:
+                        critical_errors.append(msg)
+                    else:
+                        self.entry_paused.set()
+                        self.entry_pause_reason = msg
+                        self.entry_paused_at = time.time()
+                        self._entry_pause_source = "guard_critical"
+                else:
+                    if transient_errors is not None:
+                        transient_errors.append(msg)
+                    else:
+                        self.entry_paused.set()
+                        self.entry_pause_reason = msg
+                        self.entry_paused_at = time.time()
+                        self._entry_pause_source = "guard_transient"
             if act.get("ok"):
                 self.add_log("🛡 Smart Guard (фон): " + str(act.get("action")) + " для " + str(act.get("symbol")))
 
@@ -910,45 +989,47 @@ class ControlCenterState:
                 bbo[sym] = (mid - half, mid + half)
         return bbo
 
-    def _smart_guard_loop(self) -> None:
-        while True:
-            time.sleep(5)
-            self.guard_status["heartbeat"]=time.time()
-            if hasattr(self, "shadow_engine"):
-                try:
-                    self.shadow_engine.update_open_positions(self._live_bbo_map())
-                except Exception:
-                    pass
-            if not self.smart_guard_enabled:
-                continue
+    def _run_smart_guard_tick(self) -> None:
+        self.guard_status["heartbeat"] = time.time()
+        if hasattr(self, "shadow_engine"):
             try:
-                self._check_dead_mans_switch()
-                active_syms: set = set()
-                ctrl_errors: List[str] = []
-                for ctrl in self._active_controllers():
-                    try:
-                        active_syms |= self._run_guard_cycle_for_controller(ctrl)
-                    except Exception as c_exc:
-                        err_txt = str(c_exc)[:180]
-                        ctrl_errors.append(err_txt)
-                        self.add_log("Ошибка Smart Guard (контур): " + err_txt)
+                self.shadow_engine.update_open_positions(self._live_bbo_map())
+            except Exception:
+                pass
+        if not self.smart_guard_enabled:
+            return
+        try:
+            self._check_dead_mans_switch()
+            active_syms: set = set()
+            transient_errors: List[str] = []
+            critical_errors: List[str] = []
+            for ctrl in self._active_controllers():
+                try:
+                    active_syms |= self._run_guard_cycle_for_controller(
+                        ctrl,
+                        transient_errors=transient_errors,
+                        critical_errors=critical_errors,
+                    )
+                except Exception as c_exc:
+                    err_txt = str(c_exc)[:180]
+                    transient_errors.append("Ошибка Smart Guard: " + err_txt)
+                    self.add_log("Ошибка Smart Guard (контур): " + err_txt)
+            if not transient_errors and not critical_errors:
                 for old_s in list(self.position_opened_ts.keys()):
                     if old_s not in active_syms:
                         del self.position_opened_ts[old_s]
-                if ctrl_errors:
-                    self.guard_status['last_error'] = " | ".join(ctrl_errors)[:200]
-                    self.entry_paused.set()
-                    self.entry_pause_reason = "Ошибка Smart Guard: " + ctrl_errors[0][:120]
-                    self.entry_paused_at = time.time()
-                else:
-                    self.guard_status.update(last_success=time.time(),last_error='')
-            except Exception as exc:
-                self.guard_status['last_error']=str(exc)[:200]
-                self.entry_paused.set()
-                self.entry_pause_reason = "Ошибка Smart Guard: " + str(exc)[:120]
-                self.entry_paused_at = time.time()
-                self.add_log("Ошибка Smart Guard: " + str(exc)[:200])
-            finally:self.guard_status['heartbeat']=time.time()
+            self._handle_guard_cycle_outcome(transient_errors, critical_errors)
+        except Exception as exc:
+            err_txt = "Ошибка Smart Guard: " + str(exc)[:180]
+            self.add_log(err_txt)
+            self._handle_guard_cycle_outcome([err_txt], [])
+        finally:
+            self.guard_status["heartbeat"] = time.time()
+
+    def _smart_guard_loop(self) -> None:
+        while True:
+            time.sleep(5)
+            self._run_smart_guard_tick()
 
     def _autopilot_loop(self):
         while True:
@@ -1005,7 +1086,7 @@ class ControlCenterState:
         if not liveness:reasons.append('Остановлен или завис рабочий поток')
         return {"ok":liveness and not reasons,"liveness_ok":liveness,"version":getattr(self,"release_manifest",{}).get("version",DEFAULT_RELEASE_VERSION),
                 "build_sha256":getattr(self,"release_manifest",{}).get("build_sha256"),
-                "autopilot_alive":alive,"entry_paused":self.entry_paused.is_set(),"entry_pause_reason":getattr(self,"entry_pause_reason",""),"entry_paused_at":getattr(self,"entry_paused_at",0.0),"scan":scan,
+                "autopilot_alive":alive,"entry_paused":self.entry_paused.is_set(),"entry_pause_reason":getattr(self,"entry_pause_reason",""),"entry_pause_source":getattr(self,"_entry_pause_source",""),"entry_paused_at":getattr(self,"entry_paused_at",0.0),"scan":scan,
                 "guard":guard,"snapshot_age_sec":round(age,1) if age is not None else None,
                 "snapshot_error":self._snapshot_error,"readiness_errors":reasons}
 
@@ -1899,6 +1980,9 @@ def create_wsgi_app(state: ControlCenterState):
                     t_mode = data.get("target_mode", "demo")
                     if t_mode != "demo":raise ValueError("Mainnet отключён до отдельной валидации")
                     state.entry_paused.set()
+                    state.entry_pause_reason = "Переключение контура биржи"
+                    state.entry_paused_at = time.time()
+                    state._entry_pause_source = "user"
                     sw = state.env_manager.switch_environment(t_mode)
                     if sw.get("ok"):
                         # При смене контура ставим автопилоты на паузу для безопасности
@@ -1964,6 +2048,7 @@ def create_wsgi_app(state: ControlCenterState):
                         if not guard_err_active:
                             state.entry_paused.clear()
                             state.entry_pause_reason = ""
+                            state._entry_pause_source = ""
                         else:
                             ret_msg = "Автопилот включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
                     elif not state.autopilot_core_enabled:
@@ -1971,6 +2056,7 @@ def create_wsgi_app(state: ControlCenterState):
                         if not guard_err_active:
                             state.entry_pause_reason = "Автопилоты выключены пользователем"
                             state.entry_paused_at = time.time()
+                            state._entry_pause_source = "user"
                     state.add_log("🚀 Автопилот Разгона: " + ("ВКЛЮЧЕН" if state.autopilot_booster_enabled else "ВЫКЛЮЧЕН"))
                 elif mode == "toggle_core":
                     state.autopilot_core_enabled = not state.autopilot_core_enabled
@@ -1979,6 +2065,7 @@ def create_wsgi_app(state: ControlCenterState):
                         if not guard_err_active:
                             state.entry_paused.clear()
                             state.entry_pause_reason = ""
+                            state._entry_pause_source = ""
                         else:
                             ret_msg = "Автопилот включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
                     elif not state.autopilot_booster_enabled:
@@ -1986,6 +2073,7 @@ def create_wsgi_app(state: ControlCenterState):
                         if not guard_err_active:
                             state.entry_pause_reason = "Автопилоты выключены пользователем"
                             state.entry_paused_at = time.time()
+                            state._entry_pause_source = "user"
                     state.add_log("🎯 Автотрейдинг Core: " + ("ВКЛЮЧЕН" if state.autopilot_core_enabled else "ВЫКЛЮЧЕН"))
                 elif mode == "enable_both":
                     state.autopilot_booster_enabled = True
@@ -1994,6 +2082,7 @@ def create_wsgi_app(state: ControlCenterState):
                     if not guard_err_active:
                         state.entry_paused.clear()
                         state.entry_pause_reason = ""
+                        state._entry_pause_source = ""
                     else:
                         ret_msg = "Автопилоты включены, но защитная пауза Smart Guard сохранена до устранения ошибки"
                     state.add_log("⚡ Включены ОБА автопилота: Разгон + Core!")
@@ -2004,6 +2093,7 @@ def create_wsgi_app(state: ControlCenterState):
                     if not guard_err_active:
                         state.entry_pause_reason = "Остановлено пользователем"
                         state.entry_paused_at = time.time()
+                        state._entry_pause_source = "user"
                     state.add_log("⏸ ВСЕ автопилоты остановлены пользователем. Открытые позиции под защитой Smart Guard.")
                 elif mode == "emergency_stop":
                     emg_report = state.execute_emergency_stop()
@@ -2027,6 +2117,8 @@ def create_wsgi_app(state: ControlCenterState):
                     state.bybit.reconcile_and_clear_unresolved()
                     if state.autopilot_booster_enabled or state.autopilot_core_enabled:
                         state.entry_paused.clear()
+                        state.entry_pause_reason = ""
+                        state._entry_pause_source = ""
                     state.refresh_booster_snapshot()
                     state.add_log("🚀 ПОЛНЫЙ СБРОС РАЗГОНА: Баланс $1,000.00, дневной стоп-кран и все кулдауны монет полностью очищены!")
                 elif data.get("unlock_limits"):
@@ -2034,6 +2126,8 @@ def create_wsgi_app(state: ControlCenterState):
                     state.bybit.reconcile_and_clear_unresolved()
                     if state.autopilot_booster_enabled or state.autopilot_core_enabled:
                         state.entry_paused.clear()
+                        state.entry_pause_reason = ""
+                        state._entry_pause_source = ""
                     state.refresh_booster_snapshot()
                     state.add_log("🔓 Дневной стоп-кран (-3%), счётчик дневных входов и кулдауны монет сняты! Торговля продолжается с текущим балансом.")
                 elif "training_mode" in data:
@@ -2043,6 +2137,8 @@ def create_wsgi_app(state: ControlCenterState):
                         state.bybit.reconcile_and_clear_unresolved()
                         if state.autopilot_booster_enabled or state.autopilot_core_enabled:
                             state.entry_paused.clear()
+                            state.entry_pause_reason = ""
+                            state._entry_pause_source = ""
                     state.refresh_booster_snapshot()
                     state.add_log("🧪 Режим обучения ИИ на Demo (без стоп-крана дня и кулдаунов): " + ("ВКЛЮЧЕН (24/7 без пауз)" if t_on else "ВЫКЛЮЧЕН (штатная защита -3%)"))
                 else:

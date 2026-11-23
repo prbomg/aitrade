@@ -627,7 +627,7 @@ async function refreshState(force) {
     if (scan.last_error) message += " · Ошибка скана: " + scan.last_error;
     else if (scan.running) message += " · идёт скан";
     if (!h.autopilot_alive) message += " · поток автопилота остановлен";
-    if (h.entry_paused) message += " · входы на паузе";
+    if (h.entry_paused) message += " · входы на паузе" + (h.entry_pause_reason ? " (" + h.entry_pause_reason + ")" : "");
     if ((st.booster || {}).circuit_breaker_tripped) message += " · лимит риска достигнут";
     document.getElementById("runtime-status").textContent = message;
     if (!h.autopilot_alive || scan.last_error) document.getElementById("master-status-badge").textContent = "⚠️ Ошибка автопилота";
@@ -857,6 +857,7 @@ function renderState(st) {
   const svcB = document.getElementById("stage-service-badge");
   if (svcB) {
     const isScanRun = Boolean((hNow.scan || {}).running);
+    svcB.title = hNow.entry_pause_reason || "";
     if (!hNow.ok) {
       svcB.className = "badge badge-amber";
       svcB.textContent = isScanRun ? "⏳ Прогрев..." : "⚠️ Требует внимания";
