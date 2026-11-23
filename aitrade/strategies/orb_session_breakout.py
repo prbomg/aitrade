@@ -16,6 +16,23 @@ from aitrade.strategies.base import TradeSignal
 SESSION_OPEN_HOURS_UTC = (0, 7, 13)
 
 
+def get_orb_session_start_hour(timestamp_ms: Optional[int]) -> Optional[int]:
+    """Возвращает час открытия активной сессии (00/07/13 UTC), если время попадает в окно пробоя h+1..h+4 UTC."""
+    if timestamp_ms is not None and int(timestamp_ms) > 0:
+        dt = datetime.datetime.fromtimestamp(int(timestamp_ms) / 1000.0, tz=datetime.timezone.utc)
+    else:
+        dt = datetime.datetime.now(tz=datetime.timezone.utc)
+    for h in sorted(SESSION_OPEN_HOURS_UTC, reverse=True):
+        if h + 1 <= dt.hour <= h + 4:
+            return h
+    return None
+
+
+def is_in_orb_session_window(timestamp_ms: Optional[int]) -> bool:
+    """Проверяет, попадает ли время в активное окно торговли B4 ORB (01–04, 08–11, 14–17 UTC)."""
+    return get_orb_session_start_hour(timestamp_ms) is not None
+
+
 def generate_orb_session_signal(
     symbol: str,
     bars_15m: List[Candle],
@@ -33,11 +50,7 @@ def generate_orb_session_signal(
     dt = datetime.datetime.fromtimestamp(last_bar.timestamp / 1000.0, tz=datetime.timezone.utc)
 
     # Находим ближайший старт сессии (00/07/13 UTC) в пределах последних 1..4 часов
-    session_start_hour: Optional[int] = None
-    for h in sorted(SESSION_OPEN_HOURS_UTC, reverse=True):
-        if h + 1 <= dt.hour <= h + 4:
-            session_start_hour = h
-            break
+    session_start_hour = get_orb_session_start_hour(int(last_bar.timestamp))
     if session_start_hour is None:
         return None
 

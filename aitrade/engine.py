@@ -37,7 +37,7 @@ from aitrade.strategies.funding_squeeze_momentum import generate_funding_squeeze
 from aitrade.strategies.keltner_trend_4h import generate_keltner_trend_4h_signal
 from aitrade.strategies.mtf_combo_breakout import generate_mtf_combo_signal
 from aitrade.strategies.oi_trend_expansion import generate_oi_trend_expansion_signal
-from aitrade.strategies.orb_session_breakout import generate_orb_session_signal
+from aitrade.strategies.orb_session_breakout import generate_orb_session_signal, is_in_orb_session_window
 from aitrade.strategies.rs_btc_breakout import generate_rs_btc_signal
 from aitrade.strategies.vwap_momentum_impulse import generate_vwap_momentum_signal
 from aitrade.strategies.funding_carry import FundingCarryEngine
@@ -343,15 +343,16 @@ class AITradeCombineEngine:
                     if b3_sig is not None:
                         sym_signals.append(b3_sig)
 
-                    diag["B4_ORB_SESSION_BREAKOUT"]["eligible_window"] = True
-                    diag["B4_ORB_SESSION_BREAKOUT"]["pairs_checked"] += 1
-                    b4_sig = generate_orb_session_signal(
-                        sym, ctx.candles_15m,
-                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
-                        reference_open_px=ref_px_15,
-                    )
-                    if b4_sig is not None:
-                        sym_signals.append(b4_sig)
+                    if is_in_orb_session_window(int(ctx.candles_15m[-1].timestamp)):
+                        diag["B4_ORB_SESSION_BREAKOUT"]["eligible_window"] = True
+                        diag["B4_ORB_SESSION_BREAKOUT"]["pairs_checked"] += 1
+                        b4_sig = generate_orb_session_signal(
+                            sym, ctx.candles_15m,
+                            rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
+                            reference_open_px=ref_px_15,
+                        )
+                        if b4_sig is not None:
+                            sym_signals.append(b4_sig)
 
                     diag["B5_OI_TREND_EXPANSION"]["eligible_window"] = True
                     diag["B5_OI_TREND_EXPANSION"]["pairs_checked"] += 1
@@ -499,7 +500,12 @@ class AITradeCombineEngine:
             diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = "Есть одобренный сигнал B4 (Session ORB)"
         elif not diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"]:
             p_chk4 = diag["B4_ORB_SESSION_BREAKOUT"]["pairs_checked"]
-            diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = f"Нет свежего пробоя диапазона сессии (00/07/13 UTC) на {p_chk4} парах" if p_chk4 > 0 else "Нет пар в игре (CoinsInPlay)"
+            if not diag["B4_ORB_SESSION_BREAKOUT"]["eligible_window"]:
+                diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = "Вне окна ORB (ждёт 01:00–04:59 / 08:00–11:59 / 14:00–17:59 UTC)"
+            elif p_chk4 > 0:
+                diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = f"Нет свежего пробоя диапазона сессии (00/07/13 UTC) на {p_chk4} парах"
+            else:
+                diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = "Нет пар в игре (CoinsInPlay)"
 
         if diag["B5_OI_TREND_EXPANSION"]["approved"] > 0:
             diag["B5_OI_TREND_EXPANSION"]["idle_reason"] = "Есть одобренный сигнал B5 (OI-пробой)"

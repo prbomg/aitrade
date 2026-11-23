@@ -68,6 +68,22 @@ class Intraday38Audit2FixesTests(unittest.TestCase):
         self.assertNotIn("data-action=exec_sig", js)
         self.assertNotIn("data-action=booster_exec", js)
 
+    def test_b4_orb_window_helper_and_idle_reason(self):
+        import datetime
+        from aitrade.strategies.orb_session_breakout import is_in_orb_session_window
+
+        def ts(hour, minute=15):
+            return int(datetime.datetime(2026, 11, 23, hour, minute, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+
+        for active_h in (1, 4, 8, 11, 14, 17):
+            self.assertTrue(is_in_orb_session_window(ts(active_h)), f"Expected active at {active_h}:15 UTC")
+        for idle_h in (0, 5, 7, 12, 13, 18, 23):
+            self.assertFalse(is_in_orb_session_window(ts(idle_h)), f"Expected idle at {idle_h}:15 UTC")
+
+        eng_src = (BASE_DIR / "aitrade" / "engine.py").read_text(encoding="utf-8")
+        self.assertIn("is_in_orb_session_window(", eng_src)
+        self.assertIn("Вне окна ORB (ждёт 01:00–04:59 / 08:00–11:59 / 14:00–17:59 UTC)", eng_src)
+
 
 if __name__ == "__main__":
     unittest.main()

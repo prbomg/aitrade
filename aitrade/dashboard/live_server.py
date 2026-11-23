@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.22-intraday.38"
+DEFAULT_RELEASE_VERSION = "2026.11.23-intraday.39"
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
