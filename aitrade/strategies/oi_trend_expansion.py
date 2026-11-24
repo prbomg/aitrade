@@ -46,16 +46,20 @@ def generate_oi_trend_expansion_signal(
         return None
 
     last_bar = bars_15m[-1]
+    prev_bar = bars_15m[-2]
     prev_20 = bars_15m[-21:-1]
     hi_20 = max(c.high for c in prev_20)
     lo_20 = min(c.low for c in prev_20)
+    prev_20_prior = bars_15m[-22:-2]
+    hi_20_prev = max(c.high for c in prev_20_prior)
+    lo_20_prev = min(c.low for c in prev_20_prior)
 
     side: Optional[str] = None
-    if last_bar.close > hi_20 and last_bar.close > last_bar.open:
+    if last_bar.close > hi_20 and prev_bar.close <= hi_20_prev and last_bar.close > last_bar.open:
         if funding_rate > 0.0005:
             return None
         side = "Buy"
-    elif last_bar.close < lo_20 and last_bar.close < last_bar.open:
+    elif last_bar.close < lo_20 and prev_bar.close >= lo_20_prev and last_bar.close < last_bar.open:
         if funding_rate < -0.0005:
             return None
         side = "Sell"

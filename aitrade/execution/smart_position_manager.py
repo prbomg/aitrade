@@ -163,7 +163,7 @@ class SmartPositionManager:
     def _audit_positions(self):
         positions=[p for p in self.paged_get("/v5/position/list",{"category":"linear","settleCoin":"USDT","limit":200}) if float(p.get("size") or 0)>0]
         orders=self.paged_get("/v5/order/realtime",{"category":"linear","settleCoin":"USDT","limit":50})
-        guard=json.loads(self.guard_path.read_text()) if self.guard_path.exists() else {}
+        guard=self.load_guard()
         actions=[];active=set()
         for p in positions:
             sym=p["symbol"];side=p["side"];idx=int(p.get("positionIdx") or 0);size=float(p["size"]);avg=float(p["avgPrice"]);mark=float(p["markPrice"])
@@ -180,7 +180,10 @@ class SmartPositionManager:
                     actions.append({"ok":False,"symbol":sym,"action":"MISSING_STOP_LOSS"})
                     continue
                 liq=float(p.get('liqPrice') or 0)
-                if liq>0 and abs(avg-liq)<5*abs(avg-float(intent.get('sl') or p['stopLoss'])):
+                sl_ref=float(intent.get('sl') or p['stopLoss'])
+                sl_dist=abs(avg-sl_ref)
+                min_liq_dist=max(2.2*sl_dist, sl_dist + avg*0.03)
+                if liq>0 and abs(avg-liq)<min_liq_dist:
                     actions.append({'ok':False,'symbol':sym,'action':'EXCHANGE_LIQUIDATION_DISTANCE_LOW'})
                 own=[o for o in orders if int(o.get("positionIdx") or 0)==idx and o.get("symbol")==sym and o.get("orderLinkId")==record["tp1_link"]]
                 if record.get("tp1_order") and not own and not record["tp1_done"]:

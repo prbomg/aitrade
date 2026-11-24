@@ -42,11 +42,15 @@ def generate_mtf_combo_signal(
     if vwap <= 0:
         return None
 
-    # Фактор 4: Пробой 8-часового канала на 1h
+    # Фактор 4: Свежий пробой 8-часового канала на 1h
     last_1h = bars_1h[-1]
+    prev_1h = bars_1h[-2]
     prev_8h = bars_1h[-9:-1]
     hi_8h = max(c.high for c in prev_8h)
     lo_8h = min(c.low for c in prev_8h)
+    prev_8h_prior = bars_1h[-10:-2]
+    hi_8h_prev = max(c.high for c in prev_8h_prior)
+    lo_8h_prev = min(c.low for c in prev_8h_prior)
 
     side: Optional[str] = None
     if (
@@ -54,6 +58,7 @@ def generate_mtf_combo_signal(
         and rs_spread >= 0.8
         and last_1h.close > vwap
         and last_1h.close > hi_8h
+        and prev_1h.close <= hi_8h_prev
         and last_1h.close > last_1h.open
     ):
         if funding_rate > 0.0005:
@@ -64,6 +69,7 @@ def generate_mtf_combo_signal(
         and rs_spread <= -0.8
         and last_1h.close < vwap
         and last_1h.close < lo_8h
+        and prev_1h.close >= lo_8h_prev
         and last_1h.close < last_1h.open
     ):
         if funding_rate < -0.0005:

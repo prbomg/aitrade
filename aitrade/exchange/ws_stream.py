@@ -16,6 +16,8 @@ class BybitV5WebSocketHub:
         self.connected = False
         self.msg_count = 0
         self.last_msg_ts = 0.0
+        self._last_rx_ts = 0.0
+        self.zombie_timeout_sec = 45.0
         self._running = False
         self._lock = threading.RLock()
         self.book_timestamps = {}
@@ -26,8 +28,6 @@ class BybitV5WebSocketHub:
         self.wall_first_seen: Dict[str, Dict[float, float]] = {}
         self.trade_events: Dict[str, Deque[Tuple[float, float, bool]]] = {}
         self.liq_events: Dict[str, Deque[Tuple[float, float, bool]]] = {}
-        self.seen_trade_ids: Dict[str, Deque[str]] = {}
-        self.seen_trade_sets: Dict[str, set] = {}
         self.liquidations: List[Dict[str, Any]] = []
 
         for s in self.symbols:
@@ -35,8 +35,6 @@ class BybitV5WebSocketHub:
             self.wall_first_seen[s] = {}
             self.trade_events[s] = deque()
             self.liq_events[s] = deque()
-            self.seen_trade_ids[s] = deque(maxlen=2000)
-            self.seen_trade_sets[s] = set()
 
     def start(self) -> None:
         if self._running:
@@ -63,10 +61,9 @@ class BybitV5WebSocketHub:
             return bid,ask
 
     @staticmethod
-    def _send_ws_text(sock: ssl.SSLSocket, text: str) -> None:
-        payload = text.encode("utf-8")
+    def _send_ws_frame(sock: ssl.SSLSocket, opcode: int, payload: bytes) -> None:
         mask_key = os.urandom(4)
-        header = bytearray([0x81])
+        header = bytearray([0x80 | (opcode & 0x0F)])
         length = len(payload)
         if length < 126:
             header.append(0x80 | length)
@@ -79,6 +76,10 @@ class BybitV5WebSocketHub:
         header.extend(mask_key)
         masked = bytearray(payload[i] ^ mask_key[i % 4] for i in range(length))
         sock.sendall(header + masked)
+
+    @classmethod
+    def _send_ws_text(cls, sock: ssl.SSLSocket, text: str) -> None:
+        cls._send_ws_frame(sock, 0x1, text.encode("utf-8"))
 
     @staticmethod
     def _recv_exact(sock: ssl.SSLSocket, n: int) -> bytes:
@@ -103,9 +104,14 @@ class BybitV5WebSocketHub:
         data = self._recv_exact(sock, length)
         if masked:
             data = bytes(data[i] ^ mask_key[i % 4] for i in range(length))
+        self._last_rx_ts = time.time()
         if opcode == 0x8:
             raise ConnectionError("Server sent close frame")
         if opcode == 0x9:
+            try:
+                self._send_ws_frame(sock, 0xA, data[:125])
+            except Exception:
+                raise ConnectionError("Failed to send pong frame")
             return None
         if opcode == 0x1:
             return data.decode("utf-8", errors="ignore")
@@ -149,9 +155,12 @@ class BybitV5WebSocketHub:
                     self._send_ws_text(sock, sub_msg)
 
                 last_ping = time.time()
+                self._last_rx_ts = last_ping
                 sock.settimeout(5.0)
                 while self._running:
                     now = time.time()
+                    if now - self._last_rx_ts > self.zombie_timeout_sec:
+                        raise ConnectionError("WebSocket stale/zombie timeout")
                     if now - last_ping >= 18.0:
                         self._send_ws_text(sock, json.dumps({"op": "ping"}))
                         last_ping = now
@@ -173,8 +182,14 @@ class BybitV5WebSocketHub:
 
     @staticmethod
     def _prune_deque(q: Deque[Tuple[float, float, bool]], cutoff: float) -> None:
-        valid=[e for e in q if e[0]>=cutoff]
-        q.clear();q.extend(valid)
+        if not q:
+            return
+        while q and q[0][0] < cutoff:
+            q.popleft()
+        if any(e[0] < cutoff for e in q):
+            valid = [e for e in q if e[0] >= cutoff]
+            q.clear()
+            q.extend(valid)
 
     def _handle_message(self, raw_msg: str) -> None:
         with self._lock:
@@ -184,6 +199,10 @@ class BybitV5WebSocketHub:
         try:
             msg = json.loads(raw_msg)
         except Exception:
+            return
+        self._last_rx_ts = time.time()
+        if msg.get("op") == "pong" or msg.get("ret_msg") == "pong":
+            self.last_msg_ts = self._last_rx_ts
             return
         topic = msg.get("topic", "")
         if not topic:

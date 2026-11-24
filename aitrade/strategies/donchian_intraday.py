@@ -54,21 +54,25 @@ def generate_donchian_intraday_signal(
     if trend_bias == 0:
         return None
 
+    prev_bar = bars_1h[-2]
     prev_fast = bars_1h[-(fast_window + 1) : -1]
     prev_slow = bars_1h[-(slow_window + 1) : -1]
     hi_fast = max(c.high for c in prev_fast)
     lo_fast = min(c.low for c in prev_fast)
     hi_slow = max(c.high for c in prev_slow)
     lo_slow = min(c.low for c in prev_slow)
+    prev_fast_prior = bars_1h[-(fast_window + 2) : -2]
+    hi_fast_prev = max(c.high for c in prev_fast_prior)
+    lo_fast_prev = min(c.low for c in prev_fast_prior)
 
     side: Optional[str] = None
     channel_tag = ""
-    if trend_bias > 0 and last_bar.close > hi_fast and last_bar.close > last_bar.open:
+    if trend_bias > 0 and last_bar.close > hi_fast and prev_bar.close <= hi_fast_prev and last_bar.close > last_bar.open:
         if funding_rate > 0.0005:
             return None
         side = "Buy"
         channel_tag = "24h" if last_bar.close > hi_slow else "12h"
-    elif trend_bias < 0 and last_bar.close < lo_fast and last_bar.close < last_bar.open:
+    elif trend_bias < 0 and last_bar.close < lo_fast and prev_bar.close >= lo_fast_prev and last_bar.close < last_bar.open:
         if funding_rate < -0.0005:
             return None
         side = "Sell"

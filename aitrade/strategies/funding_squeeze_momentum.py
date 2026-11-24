@@ -29,14 +29,18 @@ def generate_funding_squeeze_signal(
 
     fr = float(funding_rate or 0.0)
     last_bar = bars_1h[-1]
+    prev_bar = bars_1h[-2]
     prev_4h = bars_1h[-5:-1]
     hi_4h = max(c.high for c in prev_4h)
     lo_4h = min(c.low for c in prev_4h)
+    prev_4h_prior = bars_1h[-6:-2]
+    hi_4h_prev = max(c.high for c in prev_4h_prior)
+    lo_4h_prev = min(c.low for c in prev_4h_prior)
 
     side: Optional[str] = None
-    if fr <= short_squeeze_funding and last_bar.close > hi_4h and last_bar.close > last_bar.open:
+    if fr <= short_squeeze_funding and last_bar.close > hi_4h and prev_bar.close <= hi_4h_prev and last_bar.close > last_bar.open:
         side = "Buy"
-    elif fr >= long_squeeze_funding and last_bar.close < lo_4h and last_bar.close < last_bar.open:
+    elif fr >= long_squeeze_funding and last_bar.close < lo_4h and prev_bar.close >= lo_4h_prev and last_bar.close < last_bar.open:
         side = "Sell"
 
     if side is None:

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import json, re, subprocess, time
+import json, re, time, urllib.request
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
@@ -74,8 +74,8 @@ class XNewsSentimentRadar:
         "hot cpi": -30, "cpi higher": -30, "cpi above": -28, "inflation surge*": -30, "recession": -30,
     }
 
-    # Глобальный PANIC только по системным биржевым инцидентам; монетные hack/exploit привязаны к тикеру
-    PANIC_TRIGGERS = ["insolven*", "bankrupt*", "binance halt", "bybit halt", "exchange halt", "withdrawals suspended", "depeg*"]
+    # Глобальный PANIC только по системным биржевым инцидентам и крупным стейблкоинам
+    PANIC_TRIGGERS = ["insolven*", "bankrupt*", "binance halt", "bybit halt", "exchange halt", "withdrawals suspended", "usdt depeg*", "usdc depeg*", "tether depeg*", "major stablecoin depeg*"]
 
     def __init__(self) -> None:
         self.enabled: bool = True
@@ -93,11 +93,9 @@ class XNewsSentimentRadar:
     @staticmethod
     def _curl_json(url: str) -> Any:
         try:
-            out = subprocess.check_output(
-                ["curl", "-sS", "-m", "5", "-A", "Mozilla/5.0", url],
-                text=True,
-            )
-            return json.loads(out)
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return json.load(r)
         except Exception:
             return None
 

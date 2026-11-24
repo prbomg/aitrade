@@ -404,9 +404,11 @@ class AITradeCombineEngine:
 
                     # 2) B1_SQUEEZE_BREAKOUT (Разгон Ядро B1, 6 пар, с фильтром выходных NoWeekendChop)
                     if sym in booster_set:
+                        ref_px_b1 = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
                         b1_sig = generate_booster_breakout_signal(
                             sym,
                             ctx.candles_15m,
+                            reference_open_px=ref_px_b1,
                             bars_1h=ctx.candles_1h,
                             funding_rate=ctx.screener.funding_rate,
                             obi_smoothed=ctx.micro.smoothed_obi,

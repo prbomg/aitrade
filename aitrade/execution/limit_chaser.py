@@ -24,8 +24,9 @@ class SmartLimitChaser:
         spec=self.spm.get_spec(symbol);qs=self.spm.fmt_step(qty,spec['qty_step'],True);total=float(qs)
         bid,ask=self._get_live_bbo(symbol,ref_price);price=bid if side=='Buy' else ask
         if abs(price/ref_price-1)*100>self.max_chase_drift_pct:raise ExchangeError('Цена ушла от сигнала')
-        payload={'category':'linear','symbol':symbol,'side':side,'orderType':'Limit','qty':qs,'price':self.spm.fmt_step(price,spec['tick_size'],side=='Buy'),'timeInForce':'PostOnly','positionIdx':position_idx,'orderLinkId':order_link_id or 'at-'+uuid.uuid4().hex[:30], 'takeProfit':self.spm.fmt_step(take_profit,spec['tick_size'],False),'stopLoss':self.spm.fmt_step(stop_loss,spec['tick_size'],False),'tpslMode':'Full'}
-        if getattr(self.spm,'ledger',None):self.spm.ledger.prepare_order(payload,order_link_id)
+        effective_link_id = order_link_id or ('at-' + uuid.uuid4().hex[:30])
+        payload={'category':'linear','symbol':symbol,'side':side,'orderType':'Limit','qty':qs,'price':self.spm.fmt_step(price,spec['tick_size'],side=='Buy'),'timeInForce':'PostOnly','positionIdx':position_idx,'orderLinkId':effective_link_id, 'takeProfit':self.spm.fmt_step(take_profit,spec['tick_size'],False),'stopLoss':self.spm.fmt_step(stop_loss,spec['tick_size'],False),'tpslMode':'Full'}
+        if getattr(self.spm,'ledger',None):self.spm.ledger.prepare_order(payload,effective_link_id)
         r=self.spm.signed_post('/v5/order/create',payload);oid=r['result']['orderId'];status=None
         for _ in range(self.max_attempts):
             time.sleep(self.step_wait_sec);status=self._status(symbol,oid)
@@ -45,7 +46,7 @@ class SmartLimitChaser:
             # Revalidate TP/SL side and drift before fallback; quantity never increases.
             valid=(stop_loss<market_px<take_profit if side=='Buy' else take_profit<market_px<stop_loss)
             if valid and abs(market_px/ref_price-1)*100<=self.max_chase_drift_pct:
-                fb=dict(payload,orderType='Limit',timeInForce='IOC',qty=self.spm.fmt_step(rem,spec['qty_step'],True),orderLinkId=payload['orderLinkId'][:30]+'-m')
+                fb=dict(payload,orderType='Limit',timeInForce='IOC',qty=self.spm.fmt_step(rem,spec['qty_step'],True),orderLinkId=effective_link_id[:30]+'-m')
                 cap=market_px*(1.0015 if side=='Buy' else .9985)
                 if not (stop_loss<cap<take_profit if side=='Buy' else take_profit<cap<stop_loss):
                     if filled>0:
@@ -54,7 +55,7 @@ class SmartLimitChaser:
                         raise ExchangeError('IOC price cap outside TP/SL',uncertain=False)
                 else:
                     fb['price']=self.spm.fmt_step(cap,spec['tick_size'],side=='Buy')
-                    if getattr(self.spm,'ledger',None):self.spm.ledger.prepare_order(fb,order_link_id)
+                    if getattr(self.spm,'ledger',None):self.spm.ledger.prepare_order(fb,effective_link_id)
                     res=self.spm.signed_post('/v5/order/create',fb);fid=res['result']['orderId'];ids.append(fid)
                     for _ in range(8):
                         time.sleep(.3);fs=self._status(symbol,fid)
