@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.23-intraday.40"
+DEFAULT_RELEASE_VERSION = "2026.11.24-intraday.41"
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
@@ -97,11 +97,30 @@ class BybitV5DirectController:
     def get_open_orders(self):
         return self.spm.paged_get('/v5/order/realtime',{'category':'linear','settleCoin':'USDT','limit':50})
 
-    def _reconcile_intent(self, intent_id, symbol, stored):
+    UNCERTAIN_STALE_TTL_SEC = 1800.0
+
+    def _exchange_has_no_open_state(self, symbol: str) -> bool:
+        try:
+            open_orders = self.spm.paged_get('/v5/order/realtime', {'category': 'linear', 'symbol': symbol})
+            if open_orders:
+                return False
+            pos_rows = self.spm.paged_get('/v5/position/list', {'category': 'linear', 'symbol': symbol})
+            if any(float(p.get('size') or 0) > 0 for p in pos_rows):
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _reconcile_intent(self, intent_id, symbol, stored, created=None):
+        is_stale = created is not None and (time.time() - float(created)) >= self.UNCERTAIN_STALE_TTL_SEC
         children=self.ledger.orders_for(intent_id)
         if not children:
             # Pre-journal ambiguous chaser errors cannot be cleared by querying only a parent.
-            if stored.get('error') and not stored.get('orderIds') and not stored.get('orderId'):return
+            if stored.get('error') and not stored.get('orderIds') and not stored.get('orderId'):
+                if is_stale and self._exchange_has_no_open_state(symbol):
+                    self.ledger.finish(intent_id, 'REJECTED', {'reconcile_note': 'stale_uncertain_auto_cleared_no_exchange_state'})
+                    self.ledger.event('UNCERTAIN_STALE_CLEARED', {'intent_id': intent_id, 'symbol': symbol})
+                return
             children=[{'orderLinkId':intent_id,'orderId':oid} for oid in (stored.get('orderIds') or [stored.get('orderId','')])]
         terminal={'Filled','Cancelled','Rejected','PartiallyFilledCanceled','Deactivated'}
         total=0.;all_terminal=True;missing=False;ids=[]
@@ -118,6 +137,10 @@ class BybitV5DirectController:
             ids.append(found['orderId']);total+=float(found.get('cumExecQty') or 0)
             all_terminal=all_terminal and found.get('orderStatus') in terminal
             self.ledger.order_result(child['orderLinkId'],found.get('orderStatus','UNKNOWN'),found)
+        if missing and is_stale and total == 0 and self._exchange_has_no_open_state(symbol):
+            self.ledger.finish(intent_id, 'REJECTED', {'confirmedQty': 0.0, 'orderIds': ids, 'reconcile_note': 'stale_missing_order_auto_cleared'})
+            self.ledger.event('UNCERTAIN_STALE_CLEARED', {'intent_id': intent_id, 'symbol': symbol})
+            return
         status='UNCERTAIN' if missing else ('PENDING' if not all_terminal else ('FILLED' if total>=float(stored.get('requestedQty',stored.get('qty',0)) or 0)-1e-10 and total>0 else ('PARTIAL' if total>0 else 'REJECTED')))
         self.ledger.finish(intent_id,status,{'confirmedQty':total,'orderIds':ids})
 
@@ -125,8 +148,8 @@ class BybitV5DirectController:
         if not self._entry_lock.acquire(blocking=False):return
         try:
             with self.ledger.connect() as c:
-                rows=c.execute("SELECT id,symbol,payload FROM intents WHERE environment=? AND status IN ('SUBMITTING','UNCERTAIN','PENDING')",(self.ledger.environment,)).fetchall()
-            for iid,symbol,raw in rows:self._reconcile_intent(iid,symbol,json.loads(raw))
+                rows=c.execute("SELECT id,symbol,payload,created FROM intents WHERE environment=? AND status IN ('SUBMITTING','UNCERTAIN','PENDING')",(self.ledger.environment,)).fetchall()
+            for iid,symbol,raw,created in rows:self._reconcile_intent(iid,symbol,json.loads(raw),created=created)
             for order in self.ledger.pending_exit_orders():
                 q={'category':'linear','symbol':order['symbol']}
                 q.update({'orderId':order['orderId']} if order.get('orderId') else {'orderLinkId':order['orderLinkId']})
@@ -139,8 +162,9 @@ class BybitV5DirectController:
     def reconcile_and_clear_unresolved(self):
         with self._entry_lock:self.reconcile_pending()
 
-    def get_closed_pnl(self):
-        self.reconcile_pending()
+    def get_closed_pnl(self, reconcile: bool = True):
+        if reconcile:
+            self.reconcile_pending()
         with self._history_lock:
             if time.time()-self._history_ts>10:
                 now=int(time.time()*1000)
@@ -160,9 +184,16 @@ class BybitV5DirectController:
     def pyramid_position(self,*args,**kwargs):
         return {'ok':False,'retMsg':'Доливка отключена: сначала требуется отдельный расчёт совокупного риска'}
 
-    def close_position(self, symbol: str, side: str, size: str, position_idx: int = 0) -> Dict[str, Any]:
-        with self._entry_lock:
+    def close_position(self, symbol: str, side: str, size: str, position_idx: int = 0, lock_timeout: Optional[float] = None) -> Dict[str, Any]:
+        if lock_timeout is None:
+            with self._entry_lock:
+                return self._close_position_locked(symbol,side,size,position_idx)
+        acquired = self._entry_lock.acquire(timeout=float(lock_timeout))
+        try:
             return self._close_position_locked(symbol,side,size,position_idx)
+        finally:
+            if acquired:
+                self._entry_lock.release()
 
     def _close_position_locked(self, symbol, side, size, position_idx):
         close_side = "Sell" if side == "Buy" else "Buy"
@@ -264,6 +295,9 @@ class BybitV5DirectController:
                 max_spread=8.0 if symbol in ('BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT') else 20.0
                 if spread_bps>max_spread:raise ValueError(f'Спред {spread_bps:.1f} bps > {max_spread:.0f} bps')
                 fr_map=getattr(owner,'funding_rates',None)
+                if (not isinstance(fr_map,dict) or symbol not in fr_map or time.time()-getattr(owner,'funding_updated_at',0)>600) and hasattr(owner,'refresh_funding_rates'):
+                    owner.refresh_funding_rates()
+                    fr_map=getattr(owner,'funding_rates',None)
                 if not isinstance(fr_map,dict) or symbol not in fr_map or time.time()-getattr(owner,'funding_updated_at',0)>600:raise ValueError('Нет свежего фандинга: обновите скан')
                 fr_val=float(fr_map[symbol])
                 if (side=='Buy' and fr_val>0.0005) or (side=='Sell' and fr_val<-0.0005):
@@ -429,6 +463,13 @@ class ControlCenterState:
         self.limit_chaser.strict_post_only = bool(saved.get("limit_chaser_strict", False))
         self.bybit.spm.breakeven_trigger_pct = float(saved.get("breakeven_trigger_pct", 0.55) or 0.55)
         self.bybit.spm.trailing_step_pct = float(saved.get("trailing_step_pct", 0.40) or 0.40)
+        if self.booster_bybit is not self.bybit:
+            self.booster_bybit.spm.breakeven_trigger_pct = self.bybit.spm.breakeven_trigger_pct
+            self.booster_bybit.spm.trailing_step_pct = self.bybit.spm.trailing_step_pct
+            b_ch = getattr(self.booster_bybit, "chaser", None)
+            if b_ch is not None:
+                b_ch.enabled = self.limit_chaser.enabled
+                b_ch.strict_post_only = self.limit_chaser.strict_post_only
         self.max_leverage = int(saved.get("max_leverage", self.settings.get("risk", {}).get("max_leverage", 3)) or 3)
         self.core_max_positions = int(saved.get("core_max_positions", 4) or 4)
         self.core_min_prob_pct = float(saved.get("core_min_prob_pct", 58.0) or 58.0)
@@ -450,6 +491,8 @@ class ControlCenterState:
 
         self.last_scan_ts = "—"
         self.logs: List[str] = []
+        self._logs_lock = threading.Lock()
+        self._state_save_lock = threading.Lock()
         self._lock = threading.RLock()
         self._command_lock = threading.Lock()
         self._snapshot = {}
@@ -493,35 +536,42 @@ class ControlCenterState:
         return {}
 
     def save_persisted_state(self) -> None:
-        payload = {
-            "autotrade_hwm": self.autotrade_hwm,
-            "autopilot_booster_enabled": self.autopilot_booster_enabled,
-            "autopilot_core_enabled": self.autopilot_core_enabled,
-            "autopilot_interval_sec": self.autopilot_interval_sec,
-            "booster_cycles_done": self.booster_cycles_done,
-            "core_cycles_done": self.core_cycles_done,
-            "smart_guard_enabled": self.smart_guard_enabled,
-            "split_tp_enabled": self.split_tp_enabled,
-            "limit_chaser_enabled": self.limit_chaser.enabled,
-            "limit_chaser_strict": self.limit_chaser.strict_post_only,
-            "breakeven_trigger_pct": self.bybit.spm.breakeven_trigger_pct,
-            "trailing_step_pct": self.bybit.spm.trailing_step_pct,
-            "max_leverage": self.max_leverage,
-            "core_max_positions": self.core_max_positions,
-            "core_min_prob_pct": self.core_min_prob_pct,
-            "sound_alerts_enabled": self.sound_alerts_enabled,
-            "btc_guard_enabled": self.regime_guard.enabled,
-            "max_same_sector": self.regime_guard.max_same_sector,
-            "max_same_direction_total": self.regime_guard.max_same_direction_total,
-            "time_stop_enabled": self.regime_guard.time_stop_enabled,
-            "time_stop_minutes": self.regime_guard.time_stop_minutes,
-            "time_stop_band_pct": self.regime_guard.time_stop_band_pct,
-            "position_sources": self.position_sources,
-            "position_opened_ts": self.position_opened_ts,
-            "manual_prefs": self.manual_prefs,
-            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        atomic_json(STATE_FILE, payload)
+        lock = getattr(self, "_state_save_lock", None)
+        if lock is not None:
+            lock.acquire()
+        try:
+            payload = {
+                "autotrade_hwm": self.autotrade_hwm,
+                "autopilot_booster_enabled": self.autopilot_booster_enabled,
+                "autopilot_core_enabled": self.autopilot_core_enabled,
+                "autopilot_interval_sec": self.autopilot_interval_sec,
+                "booster_cycles_done": self.booster_cycles_done,
+                "core_cycles_done": self.core_cycles_done,
+                "smart_guard_enabled": self.smart_guard_enabled,
+                "split_tp_enabled": self.split_tp_enabled,
+                "limit_chaser_enabled": self.limit_chaser.enabled,
+                "limit_chaser_strict": self.limit_chaser.strict_post_only,
+                "breakeven_trigger_pct": self.bybit.spm.breakeven_trigger_pct,
+                "trailing_step_pct": self.bybit.spm.trailing_step_pct,
+                "max_leverage": self.max_leverage,
+                "core_max_positions": self.core_max_positions,
+                "core_min_prob_pct": self.core_min_prob_pct,
+                "sound_alerts_enabled": self.sound_alerts_enabled,
+                "btc_guard_enabled": self.regime_guard.enabled,
+                "max_same_sector": self.regime_guard.max_same_sector,
+                "max_same_direction_total": self.regime_guard.max_same_direction_total,
+                "time_stop_enabled": self.regime_guard.time_stop_enabled,
+                "time_stop_minutes": self.regime_guard.time_stop_minutes,
+                "time_stop_band_pct": self.regime_guard.time_stop_band_pct,
+                "position_sources": dict(self.position_sources),
+                "position_opened_ts": dict(self.position_opened_ts),
+                "manual_prefs": dict(self.manual_prefs),
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            atomic_json(STATE_FILE, payload)
+        finally:
+            if lock is not None:
+                lock.release()
 
     def mark_position_source(self, symbol: str, source_tag: str) -> None:
         self.position_sources[symbol] = source_tag
@@ -569,10 +619,24 @@ class ControlCenterState:
                 self.backtest_cache = {"status": "error", "note": str(exc)[:200]}
             time.sleep(3600)
 
+    def _get_logs_copy(self) -> List[str]:
+        lock = getattr(self, "_logs_lock", None)
+        if lock is not None:
+            with lock:
+                return list(self.logs)
+        return list(self.logs)
+
     def add_log(self, msg: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
-        self.logs.insert(0, "[" + ts + "] " + str(msg))
-        self.logs = self.logs[:120]
+        entry = "[" + ts + "] " + str(msg)
+        lock = getattr(self, "_logs_lock", None)
+        if lock is not None:
+            with lock:
+                self.logs.insert(0, entry)
+                del self.logs[120:]
+        else:
+            self.logs.insert(0, entry)
+            self.logs = self.logs[:120]
         print("KAIROS " + str(msg), flush=True)
         self.bybit.ledger.event("LOG", {"message": str(msg)[:1000]})
 
@@ -637,12 +701,21 @@ class ControlCenterState:
                 positions = ctrl.get_positions()
                 for p in positions:
                     try:
-                        cl_res = ctrl.close_position(
-                            str(p.get("symbol", "")),
-                            str(p.get("side", "Buy")),
-                            str(p.get("size", "0")),
-                            int(p.get("positionIdx", 0) or 0),
-                        )
+                        try:
+                            cl_res = ctrl.close_position(
+                                str(p.get("symbol", "")),
+                                str(p.get("side", "Buy")),
+                                str(p.get("size", "0")),
+                                int(p.get("positionIdx", 0) or 0),
+                                lock_timeout=3.0,
+                            )
+                        except TypeError:
+                            cl_res = ctrl.close_position(
+                                str(p.get("symbol", "")),
+                                str(p.get("side", "Buy")),
+                                str(p.get("size", "0")),
+                                int(p.get("positionIdx", 0) or 0),
+                            )
                         if cl_res.get("ok"):
                             acc_rep["close_submitted"] += 1
                         else:
@@ -1103,8 +1176,31 @@ class ControlCenterState:
                 result['booster'] = b_metrics
             except Exception:
                 pass
-        result['logs']=list(self.logs)
+        result['logs']=self._get_logs_copy()
         return result
+
+    def refresh_funding_rates(self) -> bool:
+        try:
+            tickers = self.engine.client.get_tickers() or []
+            rates = {
+                str(t["symbol"]): float(t.get("fundingRate", 0) or 0)
+                for t in tickers
+                if t.get("symbol") and t.get("fundingRate") not in (None, "")
+            }
+            if rates:
+                self.funding_rates = rates
+                self.funding_updated_at = time.time()
+                return True
+            return False
+        except Exception as exc:
+            self.add_log("⚠️ Не удалось обновить ставки фандинга: " + str(exc)[:150])
+            return False
+
+    def _get_all_positions(self) -> List[Dict[str, Any]]:
+        combined: List[Dict[str, Any]] = []
+        for ctrl in self._active_controllers():
+            combined.extend(ctrl.get_positions())
+        return combined
 
     def run_scan(self, trade_booster=False, trade_core=False):
         with self._lock:
@@ -1140,15 +1236,7 @@ class ControlCenterState:
             self._oi_scan_ts = now_oi
 
         with self._lock:
-            try:
-                self.funding_rates = {
-                    str(t["symbol"]): float(t.get("fundingRate", 0) or 0)
-                    for t in (self.engine.client.get_tickers() or [])
-                    if t.get("symbol") and t.get("fundingRate") not in (None, "")
-                }
-                self.funding_updated_at=time.time()
-            except Exception:
-                pass
+            self.refresh_funding_rates()
             core_pairs = self.settings.get("universe", {}).get("core_pairs", [])
             ws_sum = self.ws_hub.get_summary()
             btc_reg = self.regime_guard.update_btc_regime(ws_sum)
@@ -1167,7 +1255,7 @@ class ControlCenterState:
             scan_res["oi_squeeze_signals"] = squeeze_list
             scan_res["btc_regime"] = btc_reg
 
-            positions = self.bybit.get_positions()
+            positions = self._get_all_positions()
             closed_pnl = self.bybit.get_closed_pnl()
             cal_summary = self.ml_calibrator.calibrate_from_closed_pnl(closed_pnl)
             if self.ml_calibrator.state.get("enabled", True):
@@ -1259,6 +1347,8 @@ class ControlCenterState:
             # Единая приоритетная очередь: Tier 1 (T1, B1) -> Tier 2 (C3, C2) -> Tier 3 (экспериментальные)
             exec_queue.sort(key=lambda item: (self._strategy_priority_rank(str(item[1].get("strategy_id", ""))), -float(item[1].get("ml_win_probability", 0) or 0)))
             b_sizing_metrics = self._demo_lab_booster_sizing_metrics(b_metrics, demo_lab_active)
+            if exec_queue and (time.time() - float(getattr(self, "funding_updated_at", 0.0) or 0.0) > 600.0):
+                self.refresh_funding_rates()
 
             for kind, sig in exec_queue:
                 if kind == "BOOSTER":
@@ -1299,7 +1389,7 @@ class ControlCenterState:
                         if hasattr(self, "strategy_funnel"):
                             self.strategy_funnel.record_submit(strat_code)
                         booster_slots -= 1
-                        positions = self.bybit.get_positions()
+                        positions = self._get_all_positions()
                         self.mark_position_source(sig["symbol"], "🚀 Booster A+")
                         self.booster.register_booster_symbol(sig["symbol"])
                         self.ml_calibrator.register_entry(sig["symbol"], strat_code)
@@ -1336,7 +1426,7 @@ class ControlCenterState:
                         if hasattr(self, "strategy_funnel"):
                             self.strategy_funnel.record_submit(core_strat_id)
                         core_slots -= 1
-                        positions = self.bybit.get_positions()
+                        positions = self._get_all_positions()
                         self.mark_position_source(sig["symbol"], "🎯 ML Core")
                         self.ml_calibrator.register_entry(sig["symbol"], str(sig.get("strategy_id") or sig.get("strategy_name", "S1_TREND_RETEST")))
                         self.add_log(
@@ -1363,12 +1453,21 @@ class ControlCenterState:
 
     def get_full_state(self) -> Dict[str, Any]:
         acct = self.bybit.get_account_summary()
-        closed_pnl = self.bybit.get_closed_pnl()
+        try:
+            closed_pnl = self.bybit.get_closed_pnl(reconcile=False)
+        except TypeError:
+            closed_pnl = self.bybit.get_closed_pnl()
         positions = [dict(p, account="autotrade") for p in self.bybit.get_positions()]
         open_orders = [dict(o, account="autotrade") for o in self.bybit.get_open_orders()]
         b_ctrl = getattr(self, "booster_bybit", self.bybit)
         b_acct = None
-        b_closed = b_ctrl.get_closed_pnl() if b_ctrl is not self.bybit else closed_pnl
+        if b_ctrl is not self.bybit:
+            try:
+                b_closed = b_ctrl.get_closed_pnl(reconcile=False)
+            except TypeError:
+                b_closed = b_ctrl.get_closed_pnl()
+        else:
+            b_closed = closed_pnl
         b_positions = [dict(p, account="booster") for p in b_ctrl.get_positions()] if b_ctrl is not self.bybit else positions
         if b_ctrl is not self.bybit:
             try:
@@ -1606,7 +1705,7 @@ class ControlCenterState:
                 "core_cycles_done": self.core_cycles_done,
                 "next_in_sec": next_in_sec,
             },
-            "logs": self.logs,
+            "logs": self._get_logs_copy(),
         }
 
     def get_strategy_detail(self, strategy_id: str) -> Dict[str, Any]:

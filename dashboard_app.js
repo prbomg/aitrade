@@ -300,19 +300,31 @@ async function sendStrategyControl(mode) {
 document.getElementById("btn-toggle-booster").addEventListener("click", async function() {
   const r = await sendStrategyControl("toggle_booster");
   playAlertTone(r.booster_enabled ? 880 : 440, 160);
-  showToast(r.booster_enabled ? "🚀 Автопилот РАЗГОНА ВКЛЮЧЕН!" : "⏸ Автопилот Разгона выключен.");
+  if (r.retMsg && r.entry_paused) {
+    showToast("⚠️ " + r.retMsg, true);
+  } else {
+    showToast(r.booster_enabled ? "🚀 Автопилот РАЗГОНА ВКЛЮЧЕН!" : "⏸ Автопилот Разгона выключен.");
+  }
 });
 
 document.getElementById("btn-toggle-core").addEventListener("click", async function() {
   const r = await sendStrategyControl("toggle_core");
   playAlertTone(r.core_enabled ? 880 : 440, 160);
-  showToast(r.core_enabled ? "🎯 Автотрейдинг CORE ВКЛЮЧЕН!" : "⏸ Автотрейдинг Core выключен.");
+  if (r.retMsg && r.entry_paused) {
+    showToast("⚠️ " + r.retMsg, true);
+  } else {
+    showToast(r.core_enabled ? "🎯 Автотрейдинг CORE ВКЛЮЧЕН!" : "⏸ Автотрейдинг Core выключен.");
+  }
 });
 
 document.getElementById("btn-enable-both").addEventListener("click", async function() {
-  await sendStrategyControl("enable_both");
+  const r = await sendStrategyControl("enable_both");
   playAlertTone(960, 200);
-  showToast("⚡ ОБА автопилота (Разгон + Core) ВКЛЮЧЕНЫ!");
+  if (r && r.retMsg && r.entry_paused) {
+    showToast("⚠️ " + r.retMsg, true);
+  } else {
+    showToast("⚡ ОБА автопилота (Разгон + Core) ВКЛЮЧЕНЫ!");
+  }
 });
 
 document.getElementById("btn-stop-all").addEventListener("click", async function() {
