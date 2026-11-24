@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,7 @@ class AdaptiveMLCalibrator:
     QUARANTINE_TTL_SEC = 48 * 3600
 
     def __init__(self, data_dir: Path) -> None:
+        self._lock = threading.RLock()
         self.file_path = data_dir / "ml_calibration.json"
         self.state = self._load()
         self._last_closed_sig: Optional[Tuple[int, int, float]] = None
@@ -65,6 +67,7 @@ class AdaptiveMLCalibrator:
             "symbol_strategy_map": {},
             "processed_trades": {},
             "quarantine_timers": {},
+            "quarantine_released_at_trades": {},
             "shadow_trades": {},
             "last_calibrated_at": "—",
             "portfolio_stats": {
@@ -99,31 +102,35 @@ class AdaptiveMLCalibrator:
         if not symbol or not strategy_name:
             return
         clean_name = str(strategy_name).strip()
-        self.state.setdefault("symbol_strategy_map", {})[symbol] = clean_name
-        self._save(self.state)
+        with self._lock:
+            self.state.setdefault("symbol_strategy_map", {})[symbol] = clean_name
+            self._save(self.state)
 
     def record_shadow_trade(self, strategy_name: str, pnl_usd: float) -> None:
         """Фиксирует виртуальную (теневую) сделку для автовыхода стратегии из QUARANTINE."""
         clean = strategy_name.split(":", 1)[1].strip() if ":" in strategy_name else strategy_name.strip()
-        shadows = self.state.setdefault("shadow_trades", {}).setdefault(clean, [])
-        shadows.append(float(pnl_usd))
-        self.state["shadow_trades"][clean] = shadows[-20:]
-        self._save(self.state)
+        with self._lock:
+            shadows = self.state.setdefault("shadow_trades", {}).setdefault(clean, [])
+            shadows.append(float(pnl_usd))
+            self.state["shadow_trades"][clean] = shadows[-20:]
+            self._save(self.state)
 
     def reset_calibration(self, base_threshold_pct: float = 58.0) -> Dict[str, Any]:
-        sym_map = self.state.get("symbol_strategy_map", {})
-        self.state = self._default_state()
-        self.state["base_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
-        self.state["recommended_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
-        self.state["symbol_strategy_map"] = sym_map
-        self._last_closed_sig = None
-        self._save(self.state)
-        return self.state
+        with self._lock:
+            sym_map = self.state.get("symbol_strategy_map", {})
+            self.state = self._default_state()
+            self.state["base_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
+            self.state["recommended_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
+            self.state["symbol_strategy_map"] = sym_map
+            self._last_closed_sig = None
+            self._save(self.state)
+            return self.state
 
     def set_enabled(self, enabled: bool, base_threshold_pct: float = 58.0) -> None:
-        self.state["enabled"] = bool(enabled)
-        self.state["base_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
-        self._save(self.state)
+        with self._lock:
+            self.state["enabled"] = bool(enabled)
+            self.state["base_ml_threshold_pct"] = float(base_threshold_pct or 58.0)
+            self._save(self.state)
 
     def _infer_strategy_for_symbol(self, symbol: str, index_hint: int = 0) -> str:
         return "UNATTRIBUTED"
@@ -157,7 +164,18 @@ class AdaptiveMLCalibrator:
         m = self._calc_bucket_metrics(shadows[-10:])
         return m["profit_factor"] is None or m["profit_factor"] >= 1.10
 
+    QUARANTINE_GRACE_TRADES = 5
+
     def calibrate_from_closed_pnl(
+        self,
+        closed_pnl_list: List[Dict[str, Any]],
+        force: bool = False,
+        now_ts: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            return self._calibrate_locked(closed_pnl_list, force=force, now_ts=now_ts)
+
+    def _calibrate_locked(
         self,
         closed_pnl_list: List[Dict[str, Any]],
         force: bool = False,
@@ -171,6 +189,7 @@ class AdaptiveMLCalibrator:
 
         # Не перезаписываем JSON на диск, если закрытые сделки не менялись и не истёк таймер карантина
         q_timers = self.state.setdefault("quarantine_timers", {})
+        q_released = self.state.setdefault("quarantine_released_at_trades", {})
         any_expired = any(float(ts or 0) > 0 and now >= float(ts) for ts in q_timers.values())
         if not force and self._last_closed_sig == sig and not any_expired:
             return self.get_summary()
@@ -277,17 +296,22 @@ class AdaptiveMLCalibrator:
 
             if s_name != "UNATTRIBUTED" and pf is not None:
                 if cnt >= 25 and pf < 0.75:
-                    # Проверка автовыхода из QUARANTINE: истёк таймер 48ч ИЛИ теневые сделки дали PF >= 1.10
-                    if (q_until > 0 and now >= q_until) or self._shadow_recovered(s_name):
+                    # Грейс-окно после выхода из карантина: минимум QUARANTINE_GRACE_TRADES новых сделок в COOLING
+                    released_at = q_released.get(s_name)
+                    in_grace = released_at is not None and (len(pnls) - int(released_at)) < self.QUARANTINE_GRACE_TRADES
+                    if in_grace or (q_until > 0 and now >= q_until) or self._shadow_recovered(s_name):
                         weight = 0.50
                         status = "COOLING"
                         badge = "⚠️ ВЫХОД ИЗ КАРАНТИНА (0.50x)"
                         prob_bonus_pct = -3.0
                         q_timers[s_name] = 0.0
+                        if not in_grace:
+                            q_released[s_name] = len(pnls)
                     else:
                         if q_until <= 0:
                             q_until = now + self.QUARANTINE_TTL_SEC
                             q_timers[s_name] = q_until
+                        q_released.pop(s_name, None)
                         weight = 0.0
                         status = "QUARANTINE"
                         badge = "🥶 КАРАНТИН (0.0x / 48ч)"
@@ -298,18 +322,23 @@ class AdaptiveMLCalibrator:
                     badge = "⚠️ ОХЛАЖДЕНИЕ (0.50x)"
                     prob_bonus_pct = -3.0
                     q_timers[s_name] = 0.0
+                    q_released.pop(s_name, None)
                 elif cnt >= 20 and pf >= 1.50 and wr >= 55.0 and payoff >= 0.85:
                     weight = 1.30
                     status = "BOOST"
                     badge = "🚀 БУСТ ЛИДЕРА (1.30x)"
                     prob_bonus_pct = 3.5
                     q_timers[s_name] = 0.0
+                    q_released.pop(s_name, None)
                 elif cnt >= 20 and (pf >= 1.20 or (streak >= 2 and pf >= 1.05)) and payoff >= 0.85:
                     weight = 1.15
                     status = "BOOST"
                     badge = "🟢 ПОВЫШЕН (1.15x)"
                     prob_bonus_pct = 2.0
                     q_timers[s_name] = 0.0
+                    q_released.pop(s_name, None)
+                else:
+                    q_released.pop(s_name, None)
 
             sess_map: Dict[str, Any] = {}
             for s_key, s_pnls in strat_session_buckets.get(s_name, {}).items():
@@ -348,9 +377,10 @@ class AdaptiveMLCalibrator:
         return self.get_summary()
 
     def get_strategy_modifier(self, strategy_name: str, session_utc: Optional[str] = None) -> Dict[str, Any]:
-        if not self.state.get("enabled", True):
-            return {"weight": 1.0, "prob_adj": 0.0, "status": "NORMAL", "badge": "⚖️ 1.0x", "session": "ALL"}
-        strats = self.state.get("strategies", {})
+        with self._lock:
+            if not self.state.get("enabled", True):
+                return {"weight": 1.0, "prob_adj": 0.0, "status": "NORMAL", "badge": "⚖️ 1.0x", "session": "ALL"}
+            strats = dict(self.state.get("strategies", {}))
         cur_sess = session_utc or self.detect_session_utc()
         raw_q = str(strategy_name)
         clean_q = raw_q.split(":", 1)[1].strip() if ":" in raw_q else raw_q.strip()
@@ -359,42 +389,42 @@ class AdaptiveMLCalibrator:
         if matched is None and len(clean_l) >= 4:
             matched = next(((k, v) for k, v in strats.items() if k.lower() in clean_l or clean_l in k.lower()), None)
         for k, v in ([matched] if matched else []):
-            if True:
-                base_w = float(v.get("weight_multiplier", 1.0))
-                status = v.get("status", "NORMAL")
-                if status == "QUARANTINE" or base_w <= 0.0:
-                    return {
-                        "weight": 0.0,
-                        "prob_adj": float(v.get("prob_adjustment_pct", 0.0)) / 100.0,
-                        "status": "QUARANTINE",
-                        "badge": v.get("badge", "🥶 КАРАНТИН (0.0x)"),
-                        "session": cur_sess,
-                    }
-                sess_info = (v.get("sessions") or {}).get(cur_sess) or {}
-                sess_mult = float(sess_info.get("session_multiplier", 1.0) or 1.0)
-                eff_w = round(max(0.30, min(1.40, base_w * sess_mult)), 2)
-                badge = v.get("badge", "⚖️ 1.0x")
-                if sess_mult != 1.0:
-                    badge = f"{badge} [{cur_sess} {sess_mult}x]"
+            base_w = float(v.get("weight_multiplier", 1.0))
+            status = v.get("status", "NORMAL")
+            if status == "QUARANTINE" or base_w <= 0.0:
                 return {
-                    "weight": eff_w,
+                    "weight": 0.0,
                     "prob_adj": float(v.get("prob_adjustment_pct", 0.0)) / 100.0,
-                    "status": status,
-                    "badge": badge,
+                    "status": "QUARANTINE",
+                    "badge": v.get("badge", "🥶 КАРАНТИН (0.0x)"),
                     "session": cur_sess,
                 }
+            sess_info = (v.get("sessions") or {}).get(cur_sess) or {}
+            sess_mult = float(sess_info.get("session_multiplier", 1.0) or 1.0)
+            eff_w = round(max(0.30, min(1.40, base_w * sess_mult)), 2)
+            badge = v.get("badge", "⚖️ 1.0x")
+            if sess_mult != 1.0:
+                badge = f"{badge} [{cur_sess} {sess_mult}x]"
+            return {
+                "weight": eff_w,
+                "prob_adj": float(v.get("prob_adjustment_pct", 0.0)) / 100.0,
+                "status": status,
+                "badge": badge,
+                "session": cur_sess,
+            }
         return {"weight": 1.0, "prob_adj": 0.0, "status": "NORMAL", "badge": "⚖️ 1.0x", "session": cur_sess}
 
     def get_summary(self) -> Dict[str, Any]:
-        s_list = list(self.state.get("strategies", {}).values())
-        s_list.sort(key=lambda x: (x.get("weight_multiplier", 1.0), x.get("net_pnl_usd", 0.0)), reverse=True)
-        return {
-            "enabled": bool(self.state.get("enabled", True)),
-            "active_session_utc": self.state.get("active_session_utc", self.detect_session_utc()),
-            "base_ml_threshold_pct": float(self.state.get("base_ml_threshold_pct", 58.0)),
-            "recommended_ml_threshold_pct": float(self.state.get("recommended_ml_threshold_pct", 58.0)),
-            "last_calibrated_at": self.state.get("last_calibrated_at", "—"),
-            "portfolio_stats": self.state.get("portfolio_stats", {}),
-            "session_stats": self.state.get("session_stats", {}),
-            "strategy_list": s_list,
-        }
+        with self._lock:
+            s_list = list(self.state.get("strategies", {}).values())
+            s_list.sort(key=lambda x: (x.get("weight_multiplier", 1.0), x.get("net_pnl_usd", 0.0)), reverse=True)
+            return {
+                "enabled": bool(self.state.get("enabled", True)),
+                "active_session_utc": self.state.get("active_session_utc", self.detect_session_utc()),
+                "base_ml_threshold_pct": float(self.state.get("base_ml_threshold_pct", 58.0)),
+                "recommended_ml_threshold_pct": float(self.state.get("recommended_ml_threshold_pct", 58.0)),
+                "last_calibrated_at": self.state.get("last_calibrated_at", "—"),
+                "portfolio_stats": dict(self.state.get("portfolio_stats", {})),
+                "session_stats": dict(self.state.get("session_stats", {})),
+                "strategy_list": s_list,
+            }

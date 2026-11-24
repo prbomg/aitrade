@@ -56,6 +56,11 @@ class LiveShadowEngine:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         with self._connect() as conn:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS shadow_trades (

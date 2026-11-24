@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,7 @@ class DepositBoosterManager:
     ]
 
     def __init__(self, data_dir: Path, isolated_subaccount: bool = False) -> None:
+        self._lock = threading.RLock()
         self.file_path = data_dir / "booster_state.json"
         self.state = self._load(isolated_subaccount=isolated_subaccount)
 
@@ -87,37 +89,41 @@ class DepositBoosterManager:
         atomic_json(self.file_path, st)
 
     def register_booster_symbol(self, symbol: str) -> None:
-        syms = set(self.state.get("booster_symbols", []) or [])
-        syms.add(str(symbol))
-        self.state["booster_symbols"] = sorted(list(syms))
-        self._save(self.state)
+        with self._lock:
+            syms = set(self.state.get("booster_symbols", []) or [])
+            syms.add(str(symbol))
+            self.state["booster_symbols"] = sorted(list(syms))
+            self._save(self.state)
 
     def reset_challenge(self, start_equity: float = 1000.0, target_equity: float = 10000.0) -> Dict[str, Any]:
-        keep_iso = bool(self.state.get("isolated_subaccount", False))
-        self.state = self._default_state(isolated_subaccount=keep_iso)
-        self.state["start_equity"] = float(start_equity or 1000.0)
-        self.state["target_equity"] = float(target_equity or 10000.0)
-        self.state["high_water_mark"] = self.state["start_equity"]
-        self.state["active_high_water_mark"] = self.state["start_equity"]
-        self.state["ratchet_base_equity"] = self.state["start_equity"]
-        self.state["training_unlimited_mode"] = False
-        self._save(self.state)
-        return self.state
+        with self._lock:
+            keep_iso = bool(self.state.get("isolated_subaccount", False))
+            self.state = self._default_state(isolated_subaccount=keep_iso)
+            self.state["start_equity"] = float(start_equity or 1000.0)
+            self.state["target_equity"] = float(target_equity or 10000.0)
+            self.state["high_water_mark"] = self.state["start_equity"]
+            self.state["active_high_water_mark"] = self.state["start_equity"]
+            self.state["ratchet_base_equity"] = self.state["start_equity"]
+            self.state["training_unlimited_mode"] = False
+            self._save(self.state)
+            return dict(self.state)
 
     def unlock_limits_only(self) -> Dict[str, Any]:
-        now_ms = int(time.time() * 1000)
-        self.state["limits_reset_at_ms"] = now_ms
-        self.state["symbol_cooldowns"] = {}
-        self._save(self.state)
-        return self.state
+        with self._lock:
+            now_ms = int(time.time() * 1000)
+            self.state["limits_reset_at_ms"] = now_ms
+            self.state["symbol_cooldowns"] = {}
+            self._save(self.state)
+            return dict(self.state)
 
     def toggle_training_mode(self, enabled: bool) -> Dict[str, Any]:
-        self.state["training_unlimited_mode"] = bool(enabled)
-        if enabled:
-            self.state["limits_reset_at_ms"] = int(time.time() * 1000)
-            self.state["symbol_cooldowns"] = {}
-        self._save(self.state)
-        return self.state
+        with self._lock:
+            self.state["training_unlimited_mode"] = bool(enabled)
+            if enabled:
+                self.state["limits_reset_at_ms"] = int(time.time() * 1000)
+                self.state["symbol_cooldowns"] = {}
+            self._save(self.state)
+            return dict(self.state)
 
     def update_config(
         self,
@@ -127,21 +133,23 @@ class DepositBoosterManager:
         isolated_subaccount: bool | None = None,
         kelly_risk_pct: float | None = None,
     ) -> Dict[str, Any]:
-        self.state["enabled"] = bool(enabled)
-        self.state["auto_pyramid"] = bool(auto_pyramid)
-        self.state["daily_loss_limit_pct"] = float(daily_loss_limit_pct or 3.0)
-        if isolated_subaccount is not None:
-            self.state["isolated_subaccount"] = bool(isolated_subaccount)
-        if kelly_risk_pct is not None:
-            self.state["kelly_risk_pct"] = max(1.0, min(4.5, float(kelly_risk_pct)))
-        self._save(self.state)
-        return self.state
+        with self._lock:
+            self.state["enabled"] = bool(enabled)
+            self.state["auto_pyramid"] = bool(auto_pyramid)
+            self.state["daily_loss_limit_pct"] = float(daily_loss_limit_pct or 3.0)
+            if isolated_subaccount is not None:
+                self.state["isolated_subaccount"] = bool(isolated_subaccount)
+            if kelly_risk_pct is not None:
+                self.state["kelly_risk_pct"] = max(1.0, min(4.5, float(kelly_risk_pct)))
+            self._save(self.state)
+            return dict(self.state)
 
     def is_symbol_on_cooldown(self, symbol: str) -> Tuple[bool, int]:
-        if bool(self.state.get("training_unlimited_mode", False)):
-            return False, 0
-        cd_map = self.state.get("symbol_cooldowns", {}) or {}
-        until_ts = float(cd_map.get(symbol, 0) or 0)
+        with self._lock:
+            if bool(self.state.get("training_unlimited_mode", False)):
+                return False, 0
+            cd_map = self.state.get("symbol_cooldowns", {}) or {}
+            until_ts = float(cd_map.get(symbol, 0) or 0)
         now = time.time()
         if until_ts > now:
             left_min = max(1, int(math.ceil((until_ts - now) / 60.0)))
@@ -149,6 +157,10 @@ class DepositBoosterManager:
         return False, 0
 
     def compute_metrics(self, closed_pnl_list: List[Dict[str, Any]], open_positions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        with self._lock:
+            return self._compute_metrics_locked(closed_pnl_list, open_positions)
+
+    def _compute_metrics_locked(self, closed_pnl_list: List[Dict[str, Any]], open_positions: List[Dict[str, Any]]) -> Dict[str, Any]:
         start_ms = int(self.state.get("started_at_ms", 0) or 0)
         utc_midnight_ms = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
         reset_ms = int(self.state.get("limits_reset_at_ms", 0) or 0)

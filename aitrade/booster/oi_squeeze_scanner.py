@@ -19,21 +19,39 @@ class OISqueezeScanner:
     MIN_LIQ_USD = 50_000.0
     MIN_OI_DELTA_PCT = 1.50
     MIN_FUNDING_PCT = 0.030
+    ENDPOINTS = ("https://api.bybit.com", "https://api-demo.bybit.com", "https://api.bytick.com")
 
     def __init__(self) -> None:
         self.last_scan_ts = "—"
         self.cached_signals: List[Dict[str, Any]] = []
+        self._active_url = self.ENDPOINTS[0]
 
-    @staticmethod
-    def _curl_json(url: str) -> Dict[str, Any]:
-        try:
-            with urllib.request.urlopen(url, timeout=6) as r:
-                data = json.load(r)
-            if not isinstance(data, dict) or data.get("retCode") != 0:
-                raise RuntimeError("Ошибка рыночного API Bybit")
-            return data
-        except Exception as exc:
-            raise RuntimeError("Нет подтверждённых данных рынка: " + type(exc).__name__) from None
+    def _curl_json(self, url: str) -> Dict[str, Any]:
+        path_suffix = None
+        for ep in self.ENDPOINTS:
+            if url.startswith(ep):
+                path_suffix = url[len(ep):]
+                break
+        if path_suffix is None and url.startswith("/"):
+            path_suffix = url
+        candidates = (
+            [self._active_url + path_suffix] + [ep + path_suffix for ep in self.ENDPOINTS if ep != self._active_url]
+            if path_suffix is not None
+            else [url]
+        )
+        last_exc: Optional[Exception] = None
+        for cand_url in candidates:
+            try:
+                with urllib.request.urlopen(cand_url, timeout=6) as r:
+                    data = json.load(r)
+                if not isinstance(data, dict) or data.get("retCode") != 0:
+                    raise RuntimeError("Ошибка рыночного API Bybit")
+                if path_suffix is not None:
+                    self._active_url = cand_url[:-len(path_suffix)]
+                return data
+            except Exception as exc:
+                last_exc = exc
+        raise RuntimeError("Нет подтверждённых данных рынка: " + type(last_exc).__name__) from None
 
     def _compute_15m_atr_and_anti_chase(self, sym: str, last_px: float) -> Tuple[float, bool, bool, str]:
         # Загружаем 17 свечей 15m и отбрасываем k_list[0] (текущая незакрытая свеча!)

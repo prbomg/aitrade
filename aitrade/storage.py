@@ -19,6 +19,11 @@ class Ledger:
     def __init__(self, path, environment='demo'):
         self.path = Path(path); self.path.parent.mkdir(parents=True, exist_ok=True); self.environment=environment
         with self.connect() as c:
+            try:
+                c.execute('PRAGMA journal_mode=WAL')
+                c.execute('PRAGMA synchronous=NORMAL')
+            except Exception:
+                pass
             c.executescript('''CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, payload TEXT);
             CREATE TABLE IF NOT EXISTS exchange_records(environment TEXT, kind TEXT, id TEXT, payload TEXT, PRIMARY KEY(environment,kind,id));
             CREATE TABLE IF NOT EXISTS intents(id TEXT PRIMARY KEY, environment TEXT, created REAL, symbol TEXT, strategy TEXT, risk REAL, status TEXT, payload TEXT);
@@ -83,8 +88,14 @@ class Ledger:
         terminal={'Filled','Cancelled','Rejected','PartiallyFilledCanceled','Deactivated','REJECTED'}
         with self.connect() as c:
             rows=c.execute('SELECT link,status,payload FROM orders WHERE environment=?',(self.environment,)).fetchall()
-        return [dict(json.loads(raw),orderLinkId=link,journal_status=status) for link,status,raw in rows
-                if status not in terminal and json.loads(raw).get('reduceOnly')]
+        out=[]
+        for link,status,raw in rows:
+            if status in terminal:
+                continue
+            parsed=json.loads(raw)
+            if parsed.get('reduceOnly'):
+                out.append(dict(parsed,orderLinkId=link,journal_status=status))
+        return out
 
     def _execution_lifecycles(self):
         """Replay confirmed fills, including external fills, in exchange time order.

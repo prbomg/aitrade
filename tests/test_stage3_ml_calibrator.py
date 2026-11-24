@@ -107,12 +107,16 @@ class Stage3MlAndCalibratorTests(unittest.TestCase):
             self.assertEqual(mod_exit["status"], "COOLING")
             self.assertEqual(mod_exit["weight"], 0.50)
 
-            # 4) Возврат в карантин и автовыход через 10 теневых сделок с PF >= 1.10
-            cal.calibrate_from_closed_pnl(bad_25, force=True, now_ts=now + 50 * 3600)
+            # 4) Возврат в карантин после 5 новых убыточных сделок в COOLING и автовыход через 10 теневых сделок с PF >= 1.10
+            bad_30 = bad_25 + [
+                {"strategy_id": "CORE:S1_TREND_RETEST", "closedPnl": -5.0, "updatedTime": int((now + 49 * 3600 + i * 60) * 1000)}
+                for i in range(5)
+            ]
+            cal.calibrate_from_closed_pnl(bad_30, force=True, now_ts=now + 50 * 3600)
             self.assertEqual(cal.get_strategy_modifier("S1_TREND_RETEST")["status"], "QUARANTINE")
             for i in range(10):
                 cal.record_shadow_trade("S1_TREND_RETEST", 4.0 if i % 2 == 0 else -2.0)
-            cal.calibrate_from_closed_pnl(bad_25, force=True, now_ts=now + 50 * 3600 + 60)
+            cal.calibrate_from_closed_pnl(bad_30, force=True, now_ts=now + 50 * 3600 + 60)
             self.assertEqual(cal.get_strategy_modifier("S1_TREND_RETEST")["status"], "COOLING")
 
 

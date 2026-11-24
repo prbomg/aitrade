@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -26,6 +27,7 @@ class BybitEnvManager:
     ACCOUNTS = ("booster", "autotrade")
 
     def __init__(self, data_dir: Path, default_demo_key: str = "", default_demo_secret: str = "") -> None:
+        self._lock = threading.RLock()
         self.vault_path = data_dir / "env_vault.json"
         self.state = self._load(default_demo_key, default_demo_secret)
 
@@ -97,10 +99,11 @@ class BybitEnvManager:
         return k[:4] + "••••" + k[-4:]
 
     def get_active_credentials(self) -> Dict[str, str]:
-        mode = self.state.get("active_mode", "demo")
-        if mode not in ("demo", "mainnet"):
-            mode = "demo"
-        block = self.state.get(mode, {})
+        with self._lock:
+            mode = self.state.get("active_mode", "demo")
+            if mode not in ("demo", "mainnet"):
+                mode = "demo"
+            block = dict(self.state.get(mode, {}))
         return {
             "mode": mode,
             "api_key": str(block.get("api_key", "") or "").strip(),
@@ -115,10 +118,12 @@ class BybitEnvManager:
         выполняется явный fallback на общий demo-ключ с пометкой `isolated=False`.
         """
         acc = account if account in self.ACCOUNTS else "autotrade"
-        mode = self.state.get("active_mode", "demo")
-        if mode not in ("demo", "mainnet"):
-            mode = "demo"
-        sub = ((self.state.get("subaccounts") or {}).get(acc) or {}).get(mode) or {}
+        with self._lock:
+            mode = self.state.get("active_mode", "demo")
+            if mode not in ("demo", "mainnet"):
+                mode = "demo"
+            sub = dict(((self.state.get("subaccounts") or {}).get(acc) or {}).get(mode) or {})
+            shared_demo = bool(self.state.get("shared_demo_account", True))
         sk = str(sub.get("api_key", "") or "").strip()
         ss = str(sub.get("api_secret", "") or "").strip()
         if sk and ss:
@@ -130,7 +135,7 @@ class BybitEnvManager:
                 "base_url": self.URLS[mode],
                 "isolated": True,
             }
-        if mode == "demo" and bool(self.state.get("shared_demo_account", True)):
+        if mode == "demo" and shared_demo:
             base = self.get_active_credentials()
             return {
                 "account": acc,
@@ -154,39 +159,43 @@ class BybitEnvManager:
     ) -> Dict[str, Any]:
         if account not in self.ACCOUNTS or target_mode not in ("demo", "mainnet"):
             return {"ok": False, "retMsg": "Некорректный субаккаунт или контур"}
-        sub = self.state.setdefault("subaccounts", {}).setdefault(
-            account, {"demo": {"api_key": "", "api_secret": ""}, "mainnet": {"api_key": "", "api_secret": ""}}
-        )
-        cur = sub.setdefault(target_mode, {})
-        if api_key and "••••" not in api_key:
-            cur["api_key"] = api_key.strip()
-        if api_secret and "••••" not in api_secret:
-            cur["api_secret"] = api_secret.strip()
-        try:
-            self._save(self.state, raise_on_error=True)
-        except Exception as exc:
-            return {"ok": False, "retMsg": "Ошибка записи env_vault.json: " + str(exc)[:140]}
+        with self._lock:
+            sub = self.state.setdefault("subaccounts", {}).setdefault(
+                account, {"demo": {"api_key": "", "api_secret": ""}, "mainnet": {"api_key": "", "api_secret": ""}}
+            )
+            cur = sub.setdefault(target_mode, {})
+            if api_key and "••••" not in api_key:
+                cur["api_key"] = api_key.strip()
+            if api_secret and "••••" not in api_secret:
+                cur["api_secret"] = api_secret.strip()
+            try:
+                self._save(self.state, raise_on_error=True)
+            except Exception as exc:
+                return {"ok": False, "retMsg": "Ошибка записи env_vault.json: " + str(exc)[:140]}
+            masked = self.mask_key(cur.get("api_key", ""))
         return {
             "ok": True,
             "account": account,
             "mode": target_mode,
-            "masked_key": self.mask_key(cur.get("api_key", "")),
+            "masked_key": masked,
         }
 
     def save_keys(self, target_mode: str, api_key: str, api_secret: str) -> Dict[str, Any]:
         if target_mode not in ("demo", "mainnet"):
             return {"ok": False, "retMsg": "Некорректный контур"}
-        cur = self.state.setdefault(target_mode, {})
-        if api_key and "••••" not in api_key:
-            cur["api_key"] = api_key.strip()
-        if api_secret and "••••" not in api_secret:
-            cur["api_secret"] = api_secret.strip()
-        cur["base_url"] = self.URLS[target_mode]
-        try:
-            self._save(self.state, raise_on_error=True)
-        except Exception as exc:
-            return {"ok": False, "retMsg": "Ошибка записи env_vault.json: " + str(exc)[:140]}
-        return {"ok": True, "mode": target_mode, "masked_key": self.mask_key(cur.get("api_key", ""))}
+        with self._lock:
+            cur = self.state.setdefault(target_mode, {})
+            if api_key and "••••" not in api_key:
+                cur["api_key"] = api_key.strip()
+            if api_secret and "••••" not in api_secret:
+                cur["api_secret"] = api_secret.strip()
+            cur["base_url"] = self.URLS[target_mode]
+            try:
+                self._save(self.state, raise_on_error=True)
+            except Exception as exc:
+                return {"ok": False, "retMsg": "Ошибка записи env_vault.json: " + str(exc)[:140]}
+            masked = self.mask_key(cur.get("api_key", ""))
+        return {"ok": True, "mode": target_mode, "masked_key": masked}
 
     @staticmethod
     def _signed_get(base_url: str, api_key: str, api_secret: str, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -298,8 +307,9 @@ class BybitEnvManager:
         if target_mode not in ("demo", "mainnet"):
             return {"ok": False, "retMsg": "Неизвестный контур"}
         if target_mode == "demo" or force_demo:
-            self.state["active_mode"] = "demo"
-            self._save(self.state)
+            with self._lock:
+                self.state["active_mode"] = "demo"
+                self._save(self.state)
             return {"ok": True, "active_mode": "demo", "retMsg": "Переключено на учебный контур 🧪 Bybit Demo"}
 
         chk = self.run_preflight_checklist("mainnet")
@@ -310,8 +320,9 @@ class BybitEnvManager:
                 "checklist": chk,
                 "retMsg": chk.get("summary", "Чек-лист не пройден"),
             }
-        self.state["active_mode"] = "mainnet"
-        self._save(self.state)
+        with self._lock:
+            self.state["active_mode"] = "mainnet"
+            self._save(self.state)
         return {
             "ok": True,
             "active_mode": "mainnet",
@@ -320,26 +331,27 @@ class BybitEnvManager:
         }
 
     def get_public_status(self) -> Dict[str, Any]:
-        act = self.state.get("active_mode", "demo")
-        b_creds = self.get_account_credentials("booster")
-        a_creds = self.get_account_credentials("autotrade")
-        return {
-            "active_mode": act,
-            "is_mainnet": act == "mainnet",
-            "shared_demo_account": bool(self.state.get("shared_demo_account", True)),
-            "active_url": self.URLS.get(act, self.URLS["demo"]),
-            "demo_key_masked": self.mask_key(self.state.get("demo", {}).get("api_key", "")),
-            "mainnet_key_masked": self.mask_key(self.state.get("mainnet", {}).get("api_key", "")),
-            "mainnet_configured": bool(self.state.get("mainnet", {}).get("api_key")),
-            "subaccounts": {
-                "booster": {
-                    "isolated": b_creds["isolated"],
-                    "key_masked": self.mask_key(b_creds["api_key"]),
+        with self._lock:
+            act = self.state.get("active_mode", "demo")
+            b_creds = self.get_account_credentials("booster")
+            a_creds = self.get_account_credentials("autotrade")
+            return {
+                "active_mode": act,
+                "is_mainnet": act == "mainnet",
+                "shared_demo_account": bool(self.state.get("shared_demo_account", True)),
+                "active_url": self.URLS.get(act, self.URLS["demo"]),
+                "demo_key_masked": self.mask_key(self.state.get("demo", {}).get("api_key", "")),
+                "mainnet_key_masked": self.mask_key(self.state.get("mainnet", {}).get("api_key", "")),
+                "mainnet_configured": bool(self.state.get("mainnet", {}).get("api_key")),
+                "subaccounts": {
+                    "booster": {
+                        "isolated": b_creds["isolated"],
+                        "key_masked": self.mask_key(b_creds["api_key"]),
+                    },
+                    "autotrade": {
+                        "isolated": a_creds["isolated"],
+                        "key_masked": self.mask_key(a_creds["api_key"]),
+                    },
                 },
-                "autotrade": {
-                    "isolated": a_creds["isolated"],
-                    "key_masked": self.mask_key(a_creds["api_key"]),
-                },
-            },
-            "last_checklist": self.state.get("last_checklist", {}),
-        }
+                "last_checklist": dict(self.state.get("last_checklist", {})),
+            }

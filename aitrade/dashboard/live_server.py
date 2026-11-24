@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.24-intraday.42"
+DEFAULT_RELEASE_VERSION = "2026.11.24-intraday.43"
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
@@ -53,12 +53,13 @@ class BybitV5DirectController:
     def attach_chaser(self, chaser: SmartLimitChaser) -> None:
         self.chaser = chaser
 
-    def apply_credentials(self, api_key: str, api_secret: str, base_url: str) -> None:
+    def apply_credentials(self, api_key: str, api_secret: str, base_url: str, sync_engine_client: bool = True) -> None:
         self.base_url = base_url
-        self.engine.client.api_key = api_key
-        self.engine.client.api_secret = api_secret
-        self.engine.client.trade_base_url = base_url
-        self.engine.client.mode = "demo" if "api-demo" in base_url else "live"
+        if sync_engine_client:
+            self.engine.client.api_key = api_key
+            self.engine.client.api_secret = api_secret
+            self.engine.client.trade_base_url = base_url
+            self.engine.client.mode = "demo" if "api-demo" in base_url else "live"
         self.ledger.environment = "demo" if "api-demo" in base_url else "mainnet"
         self._history_ts = 0.0
         self.spm.api_key = api_key
@@ -441,7 +442,7 @@ class ControlCenterState:
             self.booster_bybit.spm.ledger = self.booster_ledger
             self.booster_bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_booster.json"
             self.booster_bybit.owner = self
-            self.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
+            self.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"], sync_engine_client=False)
             self.booster_bybit.attach_chaser(SmartLimitChaser(self.booster_bybit.spm, self.ws_hub, BASE_DIR / "data"))
         else:
             self.booster_bybit = self.bybit
@@ -492,9 +493,11 @@ class ControlCenterState:
         self.last_scan_ts = "—"
         self.logs: List[str] = []
         self._logs_lock = threading.Lock()
-        self._state_save_lock = threading.Lock()
+        self._state_save_lock = threading.RLock()
         self._lock = threading.RLock()
         self._command_lock = threading.Lock()
+        self._last_booster_closed: List[Dict[str, Any]] = []
+        self._last_booster_positions: List[Dict[str, Any]] = []
         self._snapshot = {}
         self._snapshot_ts = 0.0
         self._snapshot_error = "Первый снимок загружается"
@@ -574,25 +577,39 @@ class ControlCenterState:
                 lock.release()
 
     def mark_position_source(self, symbol: str, source_tag: str) -> None:
-        self.position_sources[symbol] = source_tag
-        self.position_opened_ts[symbol] = time.time()
-        self.save_persisted_state()
+        lock = getattr(self, "_state_save_lock", None)
+        if lock is not None:
+            with lock:
+                self.position_sources[symbol] = source_tag
+                self.position_opened_ts[symbol] = time.time()
+                self.save_persisted_state()
+        else:
+            self.position_sources[symbol] = source_tag
+            self.position_opened_ts[symbol] = time.time()
+            self.save_persisted_state()
 
     def get_position_age_minutes(self, pos: Dict[str, Any]) -> float:
         sym = str(pos.get("symbol", ""))
         now = time.time()
         if pos.get("opened_ms"):return round(max(0.,(now*1000-pos["opened_ms"])/60000),1)
-        if sym in self.position_opened_ts and self.position_opened_ts[sym] > 0:
-            return round(max(0.0, (now - float(self.position_opened_ts[sym])) / 60.0), 1)
-        c_ms = int(pos.get("createdTime", 0) or pos.get("updatedTime", 0) or 0)
-        if c_ms > 0:
-            open_ts = c_ms / 1000.0
-            age_m = (now - open_ts) / 60.0
-            if 0 <= age_m <= 1440:
-                self.position_opened_ts[sym] = open_ts
-                return round(age_m, 1)
-        self.position_opened_ts[sym] = now
-        return 0.1
+        lock = getattr(self, "_state_save_lock", None)
+        if lock is not None:
+            lock.acquire()
+        try:
+            if sym in self.position_opened_ts and self.position_opened_ts[sym] > 0:
+                return round(max(0.0, (now - float(self.position_opened_ts[sym])) / 60.0), 1)
+            c_ms = int(pos.get("createdTime", 0) or pos.get("updatedTime", 0) or 0)
+            if c_ms > 0:
+                open_ts = c_ms / 1000.0
+                age_m = (now - open_ts) / 60.0
+                if 0 <= age_m <= 1440:
+                    self.position_opened_ts[sym] = open_ts
+                    return round(age_m, 1)
+            self.position_opened_ts[sym] = now
+            return 0.1
+        finally:
+            if lock is not None:
+                lock.release()
 
     def _init_background(self) -> None:
         last_backup_day = ""
@@ -1088,9 +1105,16 @@ class ControlCenterState:
                     transient_errors.append("Ошибка Smart Guard: " + err_txt)
                     self.add_log("Ошибка Smart Guard (контур): " + err_txt)
             if not transient_errors and not critical_errors:
-                for old_s in list(self.position_opened_ts.keys()):
-                    if old_s not in active_syms:
-                        del self.position_opened_ts[old_s]
+                lock = getattr(self, "_state_save_lock", None)
+                if lock is not None:
+                    with lock:
+                        for old_s in list(self.position_opened_ts.keys()):
+                            if old_s not in active_syms:
+                                del self.position_opened_ts[old_s]
+                else:
+                    for old_s in list(self.position_opened_ts.keys()):
+                        if old_s not in active_syms:
+                            del self.position_opened_ts[old_s]
             self._handle_guard_cycle_outcome(transient_errors, critical_errors)
         except Exception as exc:
             err_txt = "Ошибка Smart Guard: " + str(exc)[:180]
@@ -1136,11 +1160,10 @@ class ControlCenterState:
 
     def refresh_booster_snapshot(self):
         with self._snapshot_lock:
-            closed_list = self._snapshot.get("closed_pnl") or []
-            pos_list = self._snapshot.get("positions") or []
+            closed_list = list(getattr(self, "_last_booster_closed", None) or self._snapshot.get("closed_pnl") or [])
+            pos_list = list(getattr(self, "_last_booster_positions", None) or self._snapshot.get("positions") or [])
             if hasattr(self, "booster"):
                 b_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(closed_list, pos_list), self._is_demo_lab_active())
-                start_eq = float(b_metrics.get("start_equity", 1000.0) or 1000.0)
                 # Equity curve is rebuilt from the same confirmed campaign ledger.
                 self._snapshot["booster"] = b_metrics
 
@@ -1169,13 +1192,6 @@ class ControlCenterState:
         result['manual_task']=dict(self.manual_task)
         ap=result.setdefault('autopilot',{})
         ap.update(booster_enabled=self.autopilot_booster_enabled,core_enabled=self.autopilot_core_enabled,any_enabled=self.autopilot_booster_enabled or self.autopilot_core_enabled,booster_cycles_done=self.booster_cycles_done,core_cycles_done=self.core_cycles_done,next_in_sec=max(0,int(self.autopilot_interval_sec-(time.time()-self._last_auto_ts))))
-        if hasattr(self, 'booster') and isinstance(result.get('booster'), dict):
-            try:
-                b_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(result.get('closed_pnl') or [], result.get('positions') or []), self._is_demo_lab_active())
-                # Keep curve and HWM from one calculation.
-                result['booster'] = b_metrics
-            except Exception:
-                pass
         result['logs']=self._get_logs_copy()
         return result
 
@@ -1202,11 +1218,41 @@ class ControlCenterState:
             combined.extend(ctrl.get_positions())
         return combined
 
+    def _get_all_closed_pnl(self, reconcile: bool = True) -> List[Dict[str, Any]]:
+        combined: List[Dict[str, Any]] = []
+        for ctrl in self._active_controllers():
+            try:
+                rows = ctrl.get_closed_pnl(reconcile=reconcile)
+            except TypeError:
+                rows = ctrl.get_closed_pnl()
+            combined.extend(rows or [])
+        return combined
+
+    def _prefetch_oi_squeeze(self) -> List[Dict[str, Any]]:
+        demo_lab_cfg_pre = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
+        demo_lab_pre = bool(demo_lab_cfg_pre.get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
+        now_oi = time.time()
+        if demo_lab_pre and getattr(self, "_oi_scan_cache", None) and (now_oi - float(getattr(self, "_oi_scan_ts", 0.0))) < 1800.0:
+            return list(self._oi_scan_cache)
+        core_pairs_pre = self.settings.get("universe", {}).get("core_pairs", [])
+        ws_sum_pre = self.ws_hub.get_summary()
+        try:
+            squeeze_list = self.oi_scanner.scan_squeeze_setups(core_pairs_pre, ws_sum_pre)
+        except Exception:
+            squeeze_list = []
+        for s in squeeze_list:
+            s["sector"] = self.regime_guard.get_sector(s.get("symbol", ""))
+        self._oi_scan_cache = list(squeeze_list)
+        self._oi_scan_ts = now_oi
+        return squeeze_list
+
     def run_scan(self, trade_booster=False, trade_core=False):
+        # Сетевой опрос OISqueezeScanner выполняется ВНЕ глобального self._lock
+        squeeze_list = self._prefetch_oi_squeeze()
         with self._lock:
             self.scan_status.update(running=True,last_attempt=time.time(),last_error="")
             try:
-                r=self._run_scan(trade_booster,trade_core)
+                r=self._run_scan(trade_booster,trade_core,squeeze_list=squeeze_list)
                 self.scan_status['last_success']=time.time()
                 self.scan_status['failed_cycles']=0
                 return r
@@ -1216,24 +1262,9 @@ class ControlCenterState:
                 raise
             finally:self.scan_status['running']=False
 
-    def _run_scan(self, trade_booster: bool = False, trade_core: bool = False) -> Dict[str, Any]:
-        # Сетевой опрос OISqueezeScanner выполняется ВНЕ глобального self._lock (в Demo Lab кэшируем на 30 мин)
-        demo_lab_cfg_pre = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
-        demo_lab_pre = bool(demo_lab_cfg_pre.get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
-        now_oi = time.time()
-        if demo_lab_pre and getattr(self, "_oi_scan_cache", None) and (now_oi - float(getattr(self, "_oi_scan_ts", 0.0))) < 1800.0:
-            squeeze_list = list(self._oi_scan_cache)
-        else:
-            core_pairs_pre = self.settings.get("universe", {}).get("core_pairs", [])
-            ws_sum_pre = self.ws_hub.get_summary()
-            try:
-                squeeze_list = self.oi_scanner.scan_squeeze_setups(core_pairs_pre, ws_sum_pre)
-            except Exception:
-                squeeze_list = []
-            for s in squeeze_list:
-                s["sector"] = self.regime_guard.get_sector(s.get("symbol", ""))
-            self._oi_scan_cache = list(squeeze_list)
-            self._oi_scan_ts = now_oi
+    def _run_scan(self, trade_booster: bool = False, trade_core: bool = False, squeeze_list: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        if squeeze_list is None:
+            squeeze_list = self._prefetch_oi_squeeze()
 
         with self._lock:
             self.refresh_funding_rates()
@@ -1257,12 +1288,13 @@ class ControlCenterState:
 
             positions = self._get_all_positions()
             closed_pnl = self.bybit.get_closed_pnl()
-            cal_summary = self.ml_calibrator.calibrate_from_closed_pnl(closed_pnl)
-            if self.ml_calibrator.state.get("enabled", True):
-                self.core_min_prob_pct = float(cal_summary.get("recommended_ml_threshold_pct", self.core_min_prob_pct))
             b_ctrl_m = getattr(self, "booster_bybit", self.bybit)
             b_pos_m = b_ctrl_m.get_positions() if b_ctrl_m is not self.bybit else positions
             b_closed_m = b_ctrl_m.get_closed_pnl() if b_ctrl_m is not self.bybit else closed_pnl
+            all_closed_pnl = (list(closed_pnl) + list(b_closed_m)) if b_ctrl_m is not self.bybit else closed_pnl
+            cal_summary = self.ml_calibrator.calibrate_from_closed_pnl(all_closed_pnl)
+            if self.ml_calibrator.state.get("enabled", True):
+                self.core_min_prob_pct = float(cal_summary.get("recommended_ml_threshold_pct", self.core_min_prob_pct))
             b_metrics = self.booster.compute_metrics(b_closed_m, b_pos_m)
 
             # Обогащаем сигналы OI Squeeze и ИИ-ансамбля весами из AdaptiveMLCalibrator
@@ -1572,6 +1604,8 @@ class ControlCenterState:
 
         demo_lab_on = self._is_demo_lab_active()
         demo_lab_cfg_st = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
+        self._last_booster_closed = list(b_closed)
+        self._last_booster_positions = list(b_positions)
         booster_metrics = self._demo_lab_booster_sizing_metrics(self.booster.compute_metrics(b_closed, b_positions), demo_lab_on)
         now_m = time.time()
         if not getattr(self, "_live_metrics_cache", None) or (now_m - float(getattr(self, "_live_metrics_ts", 0.0))) >= 20.0:
@@ -1846,6 +1880,12 @@ class KairosSessionAuth:
         ip = self._client_ip(environ)
         now = time.time()
         with self._fail_lock:
+            if len(self._failed_attempts) > 500:
+                self._failed_attempts = {
+                    k: [t for t in v if now - t < 300.0]
+                    for k, v in self._failed_attempts.items()
+                }
+                self._failed_attempts = {k: v for k, v in self._failed_attempts.items() if v}
             attempts = [t for t in self._failed_attempts.get(ip, []) if now - t < 300.0]
             attempts.append(now)
             self._failed_attempts[ip] = attempts
@@ -2057,12 +2097,14 @@ def create_wsgi_app(state: ControlCenterState):
                             state.booster_bybit.ledger = state.booster_ledger
                             state.booster_bybit.spm.ledger = state.booster_ledger
                             state.booster_bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_booster.json"
+                            state.booster_bybit.spm.breakeven_trigger_pct = state.bybit.spm.breakeven_trigger_pct
+                            state.booster_bybit.spm.trailing_step_pct = state.bybit.spm.trailing_step_pct
                             state.booster_bybit.owner = state
                             b_chaser = SmartLimitChaser(state.booster_bybit.spm, state.ws_hub, BASE_DIR / "data")
                             b_chaser.enabled = state.limit_chaser.enabled
                             b_chaser.strict_post_only = state.limit_chaser.strict_post_only
                             state.booster_bybit.attach_chaser(b_chaser)
-                        state.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"])
+                        state.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"], sync_engine_client=False)
                     a_creds = state.env_manager.get_account_credentials("autotrade")
                     if a_creds.get("isolated") and a_creds.get("api_key"):
                         state.bybit.ledger = state.autotrade_ledger
@@ -2109,7 +2151,7 @@ def create_wsgi_app(state: ControlCenterState):
                 elif "enabled" in data:
                     state.ml_calibrator.set_enabled(bool(data.get("enabled", True)), float(data.get("base_threshold_pct", state.core_min_prob_pct)))
                     state.add_log("🧠 Режим автокалибровки ML по Closed PnL: " + ("ВКЛ" if data.get("enabled") else "ВЫКЛ"))
-                cal_res = state.ml_calibrator.calibrate_from_closed_pnl(state.bybit.get_closed_pnl())
+                cal_res = state.ml_calibrator.calibrate_from_closed_pnl(state._get_all_closed_pnl())
                 state.core_min_prob_pct = float(cal_res.get("recommended_ml_threshold_pct", state.core_min_prob_pct))
                 state.save_persisted_state()
                 state.add_log("🧠 Выполнена перекалибровка весов стратегий по Closed PnL (порог ML: " + str(state.core_min_prob_pct) + "%).")
@@ -2211,33 +2253,43 @@ def create_wsgi_app(state: ControlCenterState):
                     if ret_msg:
                         resp["retMsg"] = ret_msg
             elif path == "/api/booster_config":
+                guard_err_active = bool((getattr(state, "guard_status", {}) or {}).get("last_error"))
                 if data.get("reset"):
                     state.booster.reset_challenge(float(data.get("start_equity", 1000.0)), float(data.get("target_equity", 10000.0)))
-                    state.bybit.reconcile_and_clear_unresolved()
-                    if state.autopilot_booster_enabled or state.autopilot_core_enabled:
+                    for ctrl in state._active_controllers():
+                        ctrl.reconcile_and_clear_unresolved()
+                    if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_err_active:
                         state.entry_paused.clear()
                         state.entry_pause_reason = ""
                         state._entry_pause_source = ""
+                    elif guard_err_active:
+                        resp["retMsg"] = "Сброс выполнен, но защитная пауза Smart Guard сохранена до устранения ошибки"
                     state.refresh_booster_snapshot()
                     state.add_log("🚀 ПОЛНЫЙ СБРОС РАЗГОНА: Баланс $1,000.00, дневной стоп-кран и все кулдауны монет полностью очищены!")
                 elif data.get("unlock_limits"):
                     state.booster.unlock_limits_only()
-                    state.bybit.reconcile_and_clear_unresolved()
-                    if state.autopilot_booster_enabled or state.autopilot_core_enabled:
+                    for ctrl in state._active_controllers():
+                        ctrl.reconcile_and_clear_unresolved()
+                    if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_err_active:
                         state.entry_paused.clear()
                         state.entry_pause_reason = ""
                         state._entry_pause_source = ""
+                    elif guard_err_active:
+                        resp["retMsg"] = "Лимиты сняты, но защитная пауза Smart Guard сохранена до устранения ошибки"
                     state.refresh_booster_snapshot()
                     state.add_log("🔓 Дневной стоп-кран (-3%), счётчик дневных входов и кулдауны монет сняты! Торговля продолжается с текущим балансом.")
                 elif "training_mode" in data:
                     t_on = not bool(state.booster.state.get("training_unlimited_mode", False))
                     state.booster.toggle_training_mode(t_on)
                     if t_on:
-                        state.bybit.reconcile_and_clear_unresolved()
-                        if state.autopilot_booster_enabled or state.autopilot_core_enabled:
+                        for ctrl in state._active_controllers():
+                            ctrl.reconcile_and_clear_unresolved()
+                        if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_err_active:
                             state.entry_paused.clear()
                             state.entry_pause_reason = ""
                             state._entry_pause_source = ""
+                        elif guard_err_active:
+                            resp["retMsg"] = "Режим обучения включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
                     state.refresh_booster_snapshot()
                     state.add_log("🧪 Режим обучения ИИ на Demo (без стоп-крана дня и кулдаунов): " + ("ВКЛЮЧЕН (24/7 без пауз)" if t_on else "ВЫКЛЮЧЕН (штатная защита -3%)"))
                 else:
