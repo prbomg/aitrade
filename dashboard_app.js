@@ -707,35 +707,51 @@ function renderState(st) {
         "<div style=\"color:var(--muted);font-size:10.5px\">" + escapeHtml(c.detail) + "</div></div>";
     }).join("");
   }
+  const hasSnapshot = Boolean(st.account) && (st.health ? st.health.snapshot_age_sec != null : true);
   const acct = st.account || {};
-  document.getElementById("kpi-usdt").textContent = "$" + Number(acct.usdt_balance || 0).toLocaleString("en-US", {minimumFractionDigits: 2});
-  document.getElementById("kpi-equity").textContent = "UTA Эквити: $" + Number(acct.total_equity || 0).toLocaleString("en-US", {minimumFractionDigits: 2});
-
   const posList = st.positions || [];
   const ordList = st.open_orders || [];
   const oc = st.order_counts || {positions: posList.length, entry: 0, protective: ordList.length};
-  document.getElementById("kpi-pos-orders").textContent = oc.positions + " поз. · " + oc.entry + " вход. · " + oc.protective + " защ.";
-
-  const upnl = Number(acct.unrealised_pnl || 0);
-  const uEl = document.getElementById("kpi-upnl");
-  uEl.textContent = (upnl >= 0 ? "+$" : "-$") + Math.abs(upnl).toFixed(2);
-  uEl.className = "kpi-mini-val " + (upnl >= 0 ? "pos-green" : "pos-red");
   const effLim = st.effective_limits || {};
-  const riskSub = document.getElementById("kpi-risk-sub");
-  if (riskSub && effLim.portfolio_risk_cap_usd != null) {
-    riskSub.textContent = "Риск: $" + Number(effLim.portfolio_risk_used_usd || 0).toFixed(0) + " / $" + Number(effLim.portfolio_risk_cap_usd || 0).toFixed(0) + " · своб. слотов: " + (effLim.portfolio_slots_left ?? "—");
-  }
-
   const ps = st.pnl_summary || null;
-  const newPnl = ps ? Number(ps.new_strategies_pnl_usd || 0) : Number(st.realized_pnl_recent || 0);
-  const rEl = document.getElementById("kpi-rpnl");
-  rEl.textContent = (newPnl >= 0 ? "+$" : "-$") + Math.abs(newPnl).toFixed(2);
-  rEl.className = "kpi-mini-val " + (newPnl >= 0 ? "pos-green" : "pos-red");
-  if (ps) {
-    const legP = Number(ps.legacy_pnl_usd || 0);
-    document.getElementById("kpi-winrate").textContent = "Новых: " + (ps.new_strategies_positions || 0) + " (WR " + (ps.new_strategies_win_rate_pct || 0) + "%) · Legacy: " + (legP >= 0 ? "+$" : "-$") + Math.abs(legP).toFixed(2);
+
+  if (!hasSnapshot) {
+    document.getElementById("kpi-usdt").textContent = "Загрузка…";
+    document.getElementById("kpi-equity").textContent = "UTA Эквити: —";
+    document.getElementById("kpi-pos-orders").textContent = "Загрузка…";
+    const uEl = document.getElementById("kpi-upnl");
+    uEl.textContent = "Загрузка…";
+    uEl.className = "kpi-mini-val";
+    const riskSub = document.getElementById("kpi-risk-sub");
+    if (riskSub) riskSub.textContent = "Риск портфеля: —";
+    const rEl = document.getElementById("kpi-rpnl");
+    rEl.textContent = "Загрузка…";
+    rEl.className = "kpi-mini-val";
+    document.getElementById("kpi-winrate").textContent = "Новых: — · Legacy: —";
   } else {
-    document.getElementById("kpi-winrate").textContent = "Win Rate: " + (st.live_win_rate_pct || 0) + "% (" + (st.closed_trades_count || 0) + " сд.)";
+    document.getElementById("kpi-usdt").textContent = "$" + Number(acct.usdt_balance || 0).toLocaleString("en-US", {minimumFractionDigits: 2});
+    document.getElementById("kpi-equity").textContent = "UTA Эквити: $" + Number(acct.total_equity || 0).toLocaleString("en-US", {minimumFractionDigits: 2});
+    document.getElementById("kpi-pos-orders").textContent = oc.positions + " поз. · " + oc.entry + " вход. · " + oc.protective + " защ.";
+
+    const upnl = Number(acct.unrealised_pnl || 0);
+    const uEl = document.getElementById("kpi-upnl");
+    uEl.textContent = (upnl >= 0 ? "+$" : "-$") + Math.abs(upnl).toFixed(2);
+    uEl.className = "kpi-mini-val " + (upnl >= 0 ? "pos-green" : "pos-red");
+    const riskSub = document.getElementById("kpi-risk-sub");
+    if (riskSub && effLim.portfolio_risk_cap_usd != null) {
+      riskSub.textContent = "Риск: $" + Number(effLim.portfolio_risk_used_usd || 0).toFixed(0) + " / $" + Number(effLim.portfolio_risk_cap_usd || 0).toFixed(0) + " · своб. слотов: " + (effLim.portfolio_slots_left ?? "—");
+    }
+
+    const newPnl = ps ? Number(ps.new_strategies_pnl_usd || 0) : Number(st.realized_pnl_recent || 0);
+    const rEl = document.getElementById("kpi-rpnl");
+    rEl.textContent = (newPnl >= 0 ? "+$" : "-$") + Math.abs(newPnl).toFixed(2);
+    rEl.className = "kpi-mini-val " + (newPnl >= 0 ? "pos-green" : "pos-red");
+    if (ps) {
+      const legP = Number(ps.legacy_pnl_usd || 0);
+      document.getElementById("kpi-winrate").textContent = "Новых: " + (ps.new_strategies_positions || 0) + " (WR " + (ps.new_strategies_win_rate_pct || 0) + "%) · Legacy: " + (legP >= 0 ? "+$" : "-$") + Math.abs(legP).toFixed(2);
+    } else {
+      document.getElementById("kpi-winrate").textContent = "Win Rate: " + (st.live_win_rate_pct || 0) + "% (" + (st.closed_trades_count || 0) + " сд.)";
+    }
   }
 
   // Обновляем карту цен для живого калькулятора и скринера
@@ -769,8 +785,16 @@ function renderState(st) {
   const subAcc = (envSt.subaccounts || {});
   const bAcct = st.booster_account || null;
   const isoLbl = (subAcc.booster && subAcc.booster.isolated) ? ("Изолирован" + (bAcct ? (" · $" + Number(bAcct.usdt_balance || 0).toFixed(0)) : "")) : "Общий Demo";
-  document.getElementById("kpi-booster-eq").textContent = "$" + bLive.toLocaleString("en-US", {minimumFractionDigits: 2}) + (bVault > 0 ? (" + $" + bVault.toFixed(0) + " сейф") : "");
-  document.getElementById("kpi-booster-floor").textContent = "Порог: $" + Number(b.floor_usd || 920).toFixed(2) + " · " + isoLbl;
+  const bEqEl = document.getElementById("kpi-booster-eq");
+  if (!hasSnapshot) {
+    bEqEl.textContent = "Загрузка…";
+    bEqEl.className = "kpi-mini-val";
+    document.getElementById("kpi-booster-floor").textContent = "Порог снижения риска: —";
+  } else {
+    bEqEl.textContent = "$" + bLive.toLocaleString("en-US", {minimumFractionDigits: 2}) + (bVault > 0 ? (" + $" + bVault.toFixed(0) + " сейф") : "");
+    bEqEl.className = "kpi-mini-val pos-green";
+    document.getElementById("kpi-booster-floor").textContent = "Порог: $" + Number(b.floor_usd || 920).toFixed(2) + " · " + isoLbl;
+  }
   document.getElementById("booster-phase-title").textContent = "🚀 " + (b.phase_name || "Фаза 1") + " — Live: $" + bLive.toFixed(2) + " | Сейф: $" + bVault.toFixed(2) + " → $10,000";
   document.getElementById("booster-progress-bar").style.width = Math.max(2, Number(b.progress_pct || 0)) + "%";
   document.getElementById("booster-progress-text").textContent = "Прогресс: $" + (bLive + bVault).toFixed(2) + " из $10,000 (" + (b.progress_pct || 0) + "% · " + (b.growth_multiple || 1) + "x · Сейф: $" + bVault.toFixed(2) + ", след. шаг: $" + Number(b.next_ratchet_equity || 1500).toFixed(0) + ")";
@@ -956,61 +980,82 @@ function renderState(st) {
   renderEquitySvg(b.equity_curve || [1000, bLive], b.floor_usd || 920, b.high_water_mark || 1000, bLive);
 
   // Пульт Стратегий
-  const ap = st.autopilot || {};
-  const bOn = Boolean(ap.booster_enabled);
-  const cOn = Boolean(ap.core_enabled);
-  document.getElementById("deck-b-eq").textContent = "$" + bLive.toFixed(2);
-  document.getElementById("deck-b-phase").textContent = "Фаза " + (b.phase_num || 1) + " (дно $" + Number(b.floor_usd || 920).toFixed(0) + ")";
-  document.getElementById("deck-b-risk").textContent = "$" + Number(b.effective_risk_usd ?? 0).toFixed(2) + " (" + (b.effective_risk_pct ?? 0) + "%)";
-  document.getElementById("deck-b-cycles").textContent = String(ap.booster_cycles_done || 0);
-  const bSlotsEl = document.getElementById("deck-b-slots");
-  if (bSlotsEl) bSlotsEl.textContent = (effLim.booster_open ?? 0) + " / " + (effLim.booster_effective_max ?? 12) + (effLim.demo_lab_enabled ? " (Lab)" : "");
-
-  document.getElementById("card-booster").className = bOn ? "strat-card active-booster" : "strat-card";
-  const badgeB = document.getElementById("badge-booster-state");
-  badgeB.className = bOn ? "badge badge-green" : "badge badge-amber";
-  badgeB.textContent = bOn ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН";
-  const btnB = document.getElementById("btn-toggle-booster");
-  btnB.className = bOn ? "btn-big-toggle btn-success" : "btn-big-toggle btn-purple";
-  btnB.textContent = bOn ? "🟢 АВТОПИЛОТ РАЗГОНА: АКТИВЕН" : "🚀 ВКЛЮЧИТЬ АВТОПИЛОТ РАЗГОНА";
-
+  const ap = st.autopilot || null;
+  const bOn = Boolean(ap && ap.booster_enabled);
+  const cOn = Boolean(ap && ap.core_enabled);
   const cfg = st.settings || {};
+  if (!hasSnapshot) {
+    document.getElementById("deck-b-eq").textContent = "—";
+    document.getElementById("deck-b-phase").textContent = "—";
+    document.getElementById("deck-b-risk").textContent = "—";
+    const bSlotsEl = document.getElementById("deck-b-slots");
+    if (bSlotsEl) bSlotsEl.textContent = "—";
+    const cSlotsEl = document.getElementById("deck-c-slots");
+    if (cSlotsEl) cSlotsEl.textContent = "—";
+  } else {
+    document.getElementById("deck-b-eq").textContent = "$" + bLive.toFixed(2);
+    document.getElementById("deck-b-phase").textContent = "Фаза " + (b.phase_num || 1) + " (дно $" + Number(b.floor_usd || 920).toFixed(0) + ")";
+    document.getElementById("deck-b-risk").textContent = "$" + Number(b.effective_risk_usd ?? 0).toFixed(2) + " (" + (b.effective_risk_pct ?? 0) + "%)";
+    const bSlotsEl = document.getElementById("deck-b-slots");
+    if (bSlotsEl) bSlotsEl.textContent = (effLim.booster_open ?? 0) + " / " + (effLim.booster_effective_max ?? 12) + (effLim.demo_lab_enabled ? " (Lab)" : "");
+    const cSlotsEl = document.getElementById("deck-c-slots");
+    if (cSlotsEl) cSlotsEl.textContent = (effLim.core_open ?? 0) + " / " + (effLim.core_effective_max ?? cfg.core_max_positions ?? 4) + (effLim.demo_lab_enabled ? " (Demo Lab)" : "");
+  }
+  document.getElementById("deck-b-cycles").textContent = ap ? String(ap.booster_cycles_done || 0) : "—";
   document.getElementById("deck-c-lev").textContent = (cfg.max_leverage || 3) + "x";
-  document.getElementById("deck-c-cycles").textContent = String(ap.core_cycles_done || 0);
-  const cSlotsEl = document.getElementById("deck-c-slots");
-  if (cSlotsEl) cSlotsEl.textContent = (effLim.core_open ?? 0) + " / " + (effLim.core_effective_max ?? cfg.core_max_positions ?? 4) + (effLim.demo_lab_enabled ? " (Demo Lab)" : "");
-  document.getElementById("card-core").className = cOn ? "strat-card active-core" : "strat-card";
-  const badgeC = document.getElementById("badge-core-state");
-  badgeC.className = cOn ? "badge badge-green" : "badge badge-amber";
-  badgeC.textContent = cOn ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН";
-  const btnC = document.getElementById("btn-toggle-core");
-  btnC.className = cOn ? "btn-big-toggle btn-success" : "btn-big-toggle btn-primary";
-  btnC.textContent = cOn ? "🟢 АВТОТРЕЙДИНГ CORE: АКТИВЕН" : "🎯 ВКЛЮЧИТЬ АВТОТРЕЙДИНГ CORE";
+  document.getElementById("deck-c-cycles").textContent = ap ? String(ap.core_cycles_done || 0) : "—";
 
+  const badgeB = document.getElementById("badge-booster-state");
+  const btnB = document.getElementById("btn-toggle-booster");
+  const badgeC = document.getElementById("badge-core-state");
+  const btnC = document.getElementById("btn-toggle-core");
   const masterBadge = document.getElementById("master-status-badge");
   const summaryEl = document.getElementById("deck-active-summary");
-  if (bOn && cOn) {
-    masterBadge.className = "badge badge-green";
-    masterBadge.textContent = "🤖 ОБА: Разгон + Core";
-    summaryEl.style.color = "#34d399";
-    summaryEl.textContent = "Работают ОБА: 🚀 Разгон + 🎯 Core";
-  } else if (bOn) {
-    masterBadge.className = "badge badge-purple";
-    masterBadge.textContent = "🚀 Активен Разгон";
-    summaryEl.style.color = "#c4b5fd";
-    summaryEl.textContent = "Работает только 🚀 Разгон";
-  } else if (cOn) {
+  if (!ap) {
+    badgeB.className = "badge badge-blue";
+    badgeB.textContent = "Загрузка…";
+    badgeC.className = "badge badge-blue";
+    badgeC.textContent = "Загрузка…";
     masterBadge.className = "badge badge-blue";
-    masterBadge.textContent = "🎯 Активен Core";
-    summaryEl.style.color = "#38bdf8";
-    summaryEl.textContent = "Работает только 🎯 Автотрейдинг Core";
+    masterBadge.textContent = "⏳ Загрузка…";
+    summaryEl.style.color = "#94a3b8";
+    summaryEl.textContent = "Загрузка состояния…";
   } else {
-    masterBadge.className = "badge badge-amber";
-    masterBadge.textContent = "⏸ Автопилоты: ПАУЗА";
-    summaryEl.style.color = "#fbbf24";
-    summaryEl.textContent = "Все автопилоты на паузе";
+    document.getElementById("card-booster").className = bOn ? "strat-card active-booster" : "strat-card";
+    badgeB.className = bOn ? "badge badge-green" : "badge badge-amber";
+    badgeB.textContent = bOn ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН";
+    btnB.className = bOn ? "btn-big-toggle btn-success" : "btn-big-toggle btn-purple";
+    btnB.textContent = bOn ? "🟢 АВТОПИЛОТ РАЗГОНА: АКТИВЕН" : "🚀 ВКЛЮЧИТЬ АВТОПИЛОТ РАЗГОНА";
+
+    document.getElementById("card-core").className = cOn ? "strat-card active-core" : "strat-card";
+    badgeC.className = cOn ? "badge badge-green" : "badge badge-amber";
+    badgeC.textContent = cOn ? "ВКЛЮЧЕН" : "ВЫКЛЮЧЕН";
+    btnC.className = cOn ? "btn-big-toggle btn-success" : "btn-big-toggle btn-primary";
+    btnC.textContent = cOn ? "🟢 АВТОТРЕЙДИНГ CORE: АКТИВЕН" : "🎯 ВКЛЮЧИТЬ АВТОТРЕЙДИНГ CORE";
+
+    if (bOn && cOn) {
+      masterBadge.className = "badge badge-green";
+      masterBadge.textContent = "🤖 ОБА: Разгон + Core";
+      summaryEl.style.color = "#34d399";
+      summaryEl.textContent = "Работают ОБА: 🚀 Разгон + 🎯 Core";
+    } else if (bOn) {
+      masterBadge.className = "badge badge-purple";
+      masterBadge.textContent = "🚀 Активен Разгон";
+      summaryEl.style.color = "#c4b5fd";
+      summaryEl.textContent = "Работает только 🚀 Разгон";
+    } else if (cOn) {
+      masterBadge.className = "badge badge-blue";
+      masterBadge.textContent = "🎯 Активен Core";
+      summaryEl.style.color = "#38bdf8";
+      summaryEl.textContent = "Работает только 🎯 Автотрейдинг Core";
+    } else {
+      masterBadge.className = "badge badge-amber";
+      masterBadge.textContent = "⏸ Автопилоты: ПАУЗА";
+      summaryEl.style.color = "#fbbf24";
+      summaryEl.textContent = "Все автопилоты на паузе";
+    }
   }
-  document.getElementById("deck-next-timer").textContent = (bOn || cOn) ? ((ap.next_in_sec || 0) + " сек") : "На паузе";
+  document.getElementById("deck-next-timer").textContent = !ap ? "—" : ((bOn || cOn) ? ((ap.next_in_sec || 0) + " сек") : "На паузе");
   const topStopBtn = document.getElementById("btn-stop-all-top");
   if (topStopBtn) {
     if (bOn || cOn) {
@@ -1020,20 +1065,22 @@ function renderState(st) {
     } else {
       topStopBtn.disabled = true;
       topStopBtn.className = "btn-ghost btn-sm";
-      topStopBtn.textContent = "⏸ На паузе";
+      topStopBtn.textContent = ap ? "⏸ На паузе" : "⏳ Загрузка…";
     }
   }
   const guardErr = ((st.health || {}).guard || {}).last_error || "";
-  const sgOn = Boolean((st.smart_guard || {}).enabled);
+  const sgObj = st.smart_guard || null;
+  const sgOn = Boolean(sgObj && sgObj.enabled);
   const gBadge = document.getElementById("badge-guard-state");
   if (gBadge) {
     if (guardErr) { gBadge.className = "badge badge-red"; gBadge.textContent = "⚠️ Smart Guard: ОШИБКА"; }
+    else if (!sgObj) { gBadge.className = "badge badge-blue"; gBadge.textContent = "⏳ Smart Guard: Загрузка…"; }
     else if (!sgOn) { gBadge.className = "badge badge-amber"; gBadge.textContent = "⏸ Smart Guard ВЫКЛ"; }
     else { gBadge.className = "badge badge-green"; gBadge.textContent = "🛡 Smart Guard АКТИВЕН"; }
   }
   const kpiGSub = document.getElementById("kpi-guard-sub");
   if (kpiGSub) {
-    kpiGSub.textContent = guardErr ? "⚠️ Ошибка Smart Guard" : (sgOn ? "Защита Pure SL/TP + Smart Guard" : "⏸ Smart Guard выключен");
+    kpiGSub.textContent = guardErr ? "⚠️ Ошибка Smart Guard" : (!sgObj ? "Загрузка статуса защиты…" : (sgOn ? "Защита Pure SL/TP + Smart Guard" : "⏸ Smart Guard выключен"));
   }
   const ivSel = document.getElementById("autopilot-interval");
   if (document.activeElement !== ivSel && ap.interval_sec) ivSel.value = String(ap.interval_sec);
@@ -1090,8 +1137,13 @@ function renderState(st) {
     }).join("");
   }
 
-  document.getElementById("kpi-ws").textContent = Number(ws.msg_count || 0).toLocaleString() + " тиков";
-  document.getElementById("kpi-ws-sub").textContent = "Активных пар L2: " + (ws.symbols_live || 0) + "/" + (ws.symbols_total || "—");
+  if (!hasSnapshot && !ws.msg_count) {
+    document.getElementById("kpi-ws").textContent = "Загрузка…";
+    document.getElementById("kpi-ws-sub").textContent = "Загрузка потока";
+  } else {
+    document.getElementById("kpi-ws").textContent = Number(ws.msg_count || 0).toLocaleString() + " тиков";
+    document.getElementById("kpi-ws-sub").textContent = "Активных пар L2: " + (ws.symbols_live || 0) + "/" + (ws.symbols_total || "—");
+  }
   const wsB = document.getElementById("ws-badge");
   wsB.className = ws.connected ? "badge badge-blue" : "badge badge-amber";
   wsB.textContent = ws.connected ? ("📡 WS: " + (ws.symbols_live || 0) + " пар") : "📡 WS: реконнект";

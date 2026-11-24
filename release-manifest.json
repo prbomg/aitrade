@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.24-intraday.44",
+  "version": "2026.11.24-intraday.45",
   "built_at": "2026-11-24T10:44:10.284416+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
@@ -16,7 +16,7 @@
     "aitrade/booster/x_news_radar.py": "57605b97dc63eba2eb2e69f0dbb49921bafad85dd5dac695ff63d822bf98af52",
     "aitrade/config.py": "babd1974cf673e654c59cdf0e04567f5b33b2ca88bd737edd9e9c1532e736417",
     "aitrade/dashboard/__init__.py": "37a1c4c9d956b0aaf3af30834eb697e360d6e72327b88054fa418d01a774611c",
-    "aitrade/dashboard/live_server.py": "2abee8f7f9953dfebeac9312067050b4288c4de1817867709789e9baee6561c2",
+    "aitrade/dashboard/live_server.py": "735f9767ba384490c0bf56bf23dd7ea36f765cec8e9ad728909ad51ecad997fe",
     "aitrade/dashboard/report_generator.py": "113f998d2c484ea9abd41da6af8f8020543a70309cf5ef50e0c94c0277806be7",
     "aitrade/engine.py": "83abcacc79661238d0e586786af682db4997a12378876cda349d804fd30eba2d",
     "aitrade/exchange/__init__.py": "619cd760e7300c5e3b50fd67f57d975ba98c5db68fa596a8847782614a3c9a6f",
@@ -67,8 +67,8 @@
     "aitrade/strategies/vwap_momentum_impulse.py": "e9af7acd2284f843b19a1bcd8469bbe125db3253df734042407422d14ebe02ce",
     "config/freqtrade_freqai_bybit.json": "369aa7f060824db84521d2fc744158610eddcac1034cc1cbccba2db6bfa89ca4",
     "config/settings.json": "8813abc2a84783a9f389dd2ff16a299c674a23256853831df6da8fbee4d3c11f",
-    "dashboard_app.js": "cc10dd725136ecfbc64341095077751675d8828e51f98dc8046245169a6cc446",
-    "dashboard_report.html": "bdeca0bac83bc6eea262acf6a0271318a5439b594cc943c7b13bbf52acced114",
+    "dashboard_app.js": "bf581bbd31f920c0d7b884271b7aa1fde6c1982a066d5281ffcd5ea5d674ca9f",
+    "dashboard_report.html": "711dc1a11994a68740d80c34dbe2763135e7a81c433108aeccdbc6cd6cdc199a",
     "gui_app.py": "3de4e46d5340a147a167292a4bd17d61c8d7c60b03a35b3ec7234f838c1d5f20",
     "kairos_logo.svg": "4438e397ec20852ce656517b538d0d3a546cd7696bc30dc7c085fbfdab5a373d",
     "login.html": "b24952f9a766372a2a11a7849baa59851d1f246ec908693fdfa6b7d2c48332ad",
@@ -116,7 +116,7 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "d2fcaedc01b1758a3b1dee2644a62d1abe6c2f9b79750118e71801ad70bac616",
+  "build_sha256": "674dd954d4d31eb80d7fa32a0f0a7a70f8fb4629c15bebad9b53329de7e2fd24",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation"

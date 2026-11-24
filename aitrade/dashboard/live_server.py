@@ -31,7 +31,44 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.24-intraday.44"
+DEFAULT_RELEASE_VERSION = "2026.11.24-intraday.45"
+
+
+def is_protective_order(order: Dict[str, Any]) -> bool:
+    stop_t = str(order.get("stopOrderType") or "").strip()
+    return bool(order.get("reduceOnly")) or (bool(stop_t) and stop_t.lower() != "unknown")
+
+
+def compute_portfolio_risk_usd(
+    positions: List[Dict[str, Any]],
+    open_orders: List[Dict[str, Any]],
+    strict: bool = False,
+) -> float:
+    """Единый расчёт совокупного риска портфеля (открытые позиции + активные входные заявки) для панели и исполнителя."""
+    total_risk = 0.0
+    for p in positions or []:
+        ep = float(p.get("avgPrice") or 0)
+        psl = float(p.get("stopLoss") or 0)
+        sz = float(p.get("size") or 0)
+        if psl <= 0:
+            if strict:
+                raise ValueError("Открытая позиция без SL")
+            continue
+        if ep > 0 and sz > 0:
+            total_risk += sz * (abs(ep - psl) + ep * 0.0054)
+    for o in open_orders or []:
+        if is_protective_order(o):
+            continue
+        ep = float(o.get("price") or 0)
+        osl = float(o.get("stopLoss") or 0)
+        qty = float(o.get("leavesQty") or o.get("qty") or 0)
+        if not ep or not osl:
+            if strict:
+                raise ValueError("Непроверенный риск активной заявки")
+            continue
+        if qty > 0:
+            total_risk += qty * (abs(ep - osl) + ep * 0.0054)
+    return total_risk
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
@@ -346,15 +383,7 @@ class BybitV5DirectController:
             available_notional=max(0.,portfolio_cap_usd*notional_mult-used_notional)
             qty=float(self.spm.fmt_step(min(float(qty),maxqty,available_notional/ref,spec['max_qty']),spec['qty_step'],True))
             if qty<spec['min_qty'] or qty*ref<max(spec['min_notional'],24):raise ValueError('Размер после ограничения риска ниже минимума')
-            totalrisk=qty*risk_per_coin
-            for p in positions:
-                ep=float(p['avgPrice']);psl=float(p.get('stopLoss') or 0)
-                if psl<=0:raise ValueError('Открытая позиция без SL')
-                totalrisk+=float(p['size'])*(abs(ep-psl)+ep*.0054)
-            for o in orders:
-                ep=float(o.get('price') or 0);osl=float(o.get('stopLoss') or 0)
-                if not ep or not osl:raise ValueError('Непроверенный риск активной заявки')
-                totalrisk+=float(o.get('leavesQty') or o['qty'])*(abs(ep-osl)+ep*.0054)
+            totalrisk = qty * risk_per_coin + compute_portfolio_risk_usd(positions, orders, strict=True)
             total_risk_cap=0.25 if demo_lab_on else (0.07 if is_isolated_booster else (0.06 if is_t1_core else 0.02))
             if totalrisk>portfolio_cap_usd*total_risk_cap:raise ValueError(f'Совокупный риск выше {int(total_risk_cap*100)}%')
             if owner and (strategy_id.startswith('BOOSTER') or strategy_id.startswith('CORE')) and owner.entry_paused.is_set():raise ValueError('Вход остановлен пользователем')
@@ -696,15 +725,15 @@ class ControlCenterState:
                 "entry_orders_cancelled": 0,
                 "close_submitted": 0,
                 "remaining_positions": 0,
+                "remaining_orders": 0,
+                "remaining_entry_orders": 0,
                 "unprotected_positions": [],
                 "errors": [],
             }
             try:
                 open_orders = ctrl.get_open_orders()
                 for o in open_orders:
-                    stop_t = str(o.get("stopOrderType") or "").strip()
-                    is_prot = bool(o.get("reduceOnly")) or (bool(stop_t) and stop_t.lower() != "unknown")
-                    if is_prot:
+                    if is_protective_order(o):
                         continue
                     c_res = ctrl.cancel_order(str(o.get("symbol", "")), str(o.get("orderId", "")))
                     if c_res.get("ok"):
@@ -746,16 +775,32 @@ class ControlCenterState:
                 rem_pos = ctrl.get_positions()
                 acc_rep["remaining_positions"] = len(rem_pos)
                 if not rem_pos:
-                    try:
-                        for ro in ctrl.get_open_orders():
-                            ctrl.cancel_order(str(ro.get("symbol", "")), str(ro.get("orderId", "")))
-                    except Exception:
-                        pass
+                    rem_orders = ctrl.get_open_orders()
+                    if rem_orders:
+                        for ro in rem_orders:
+                            try:
+                                fc_res = ctrl.cancel_order(str(ro.get("symbol", "")), str(ro.get("orderId", "")))
+                                if not fc_res.get("ok"):
+                                    acc_rep["errors"].append(
+                                        f"Финальная отмена {ro.get('symbol')}: {fc_res.get('retMsg', 'error')}"
+                                    )
+                            except Exception as fc_exc:
+                                acc_rep["errors"].append(
+                                    f"Финальная отмена {ro.get('symbol')}: {str(fc_exc)[:120]}"
+                                )
+                        verify_orders = ctrl.get_open_orders()
+                        acc_rep["remaining_orders"] = len(verify_orders)
+                        acc_rep["remaining_entry_orders"] = sum(1 for o in verify_orders if not is_protective_order(o))
+                        if verify_orders:
+                            any_partial = True
                 else:
                     any_partial = True
                     for rp in rem_pos:
                         if float(rp.get("stopLoss") or 0) <= 0:
                             acc_rep["unprotected_positions"].append(str(rp.get("symbol", "")))
+                    rem_orders = ctrl.get_open_orders()
+                    acc_rep["remaining_orders"] = len(rem_orders)
+                    acc_rep["remaining_entry_orders"] = sum(1 for o in rem_orders if not is_protective_order(o))
             except Exception as exc:
                 acc_rep["errors"].append(f"Ошибка сверки остатка: {str(exc)[:140]}")
 
@@ -841,6 +886,18 @@ class ControlCenterState:
     GUARD_TRANSIENT_PAUSE_THRESHOLD = 3
     GUARD_RECOVERY_OK_THRESHOLD = 3
 
+    def is_guard_pause_blocking(self) -> Tuple[bool, str]:
+        """Возвращает (True, причина), если защитная пауза Smart Guard ещё не готова к ручному снятию."""
+        guard_err = str((getattr(self, "guard_status", {}) or {}).get("last_error") or "").strip()
+        pause_src = str(getattr(self, "_entry_pause_source", "") or "")
+        ok_cycles = int(getattr(self, "_guard_consecutive_ok", 0) or 0)
+        req_ok = int(getattr(self, "GUARD_RECOVERY_OK_THRESHOLD", 3) or 3)
+        if guard_err:
+            return True, f"активна ошибка Smart Guard ({guard_err[:80]})"
+        if self.entry_paused.is_set() and pause_src in ("guard_transient", "guard_critical") and ok_cycles < req_ok:
+            return True, f"Smart Guard восстанавливается ({ok_cycles}/{req_ok} успешных циклов)"
+        return False, ""
+
     def _handle_guard_cycle_outcome(self, transient_errors: List[str], critical_errors: List[str]) -> None:
         if critical_errors:
             self._guard_consecutive_ok = 0
@@ -871,10 +928,14 @@ class ControlCenterState:
             return
         self._guard_consecutive_errors = 0
         self._guard_consecutive_ok = getattr(self, "_guard_consecutive_ok", 0) + 1
-        self.guard_status.update(last_success=time.time(), last_error="")
+        self.guard_status["last_success"] = time.time()
+        pause_src = str(getattr(self, "_entry_pause_source", "") or "")
+        guard_pause_active = self.entry_paused.is_set() and pause_src in ("guard_transient", "guard_critical")
+        if (not guard_pause_active) or self._guard_consecutive_ok >= self.GUARD_RECOVERY_OK_THRESHOLD:
+            self.guard_status["last_error"] = ""
         if (
             self.entry_paused.is_set()
-            and getattr(self, "_entry_pause_source", "") == "guard_transient"
+            and pause_src == "guard_transient"
             and (getattr(self, "autopilot_booster_enabled", False) or getattr(self, "autopilot_core_enabled", False))
             and self._guard_consecutive_ok >= self.GUARD_RECOVERY_OK_THRESHOLD
         ):
@@ -1630,13 +1691,7 @@ class ControlCenterState:
         shared_acc = b_ctrl is self.bybit
         port_cap_usd = min(float(demo_lab_cfg_st.get("portfolio_cap_usdt", 50000.0) or 50000.0), usdt_bal) if demo_lab_on else min(1000.0, usdt_bal)
         port_risk_cap_pct = 25 if demo_lab_on else 6
-        port_risk_used = 0.0
-        for p in positions:
-            ep = float(p.get("avgPrice", 0) or 0)
-            psl = float(p.get("stopLoss", 0) or 0)
-            sz = float(p.get("size", 0) or 0)
-            if ep > 0 and psl > 0 and sz > 0:
-                port_risk_used += sz * (abs(ep - psl) + ep * 0.0054)
+        port_risk_used = compute_portfolio_risk_usd(positions, open_orders, strict=False)
         core_open_cnt = sum(1 for p in positions if str(p.get("strategy_id", "")).startswith("CORE:"))
         booster_open_cnt = sum(1 for p in positions if str(p.get("strategy_id", "")).startswith("BOOSTER:"))
         core_eff_max = max(self.core_max_positions, 8) if demo_lab_on else self.core_max_positions
@@ -2179,22 +2234,26 @@ def create_wsgi_app(state: ControlCenterState):
                 if "core_min_prob_pct" in data:
                     state.core_min_prob_pct = float(data.get("core_min_prob_pct", 58.0) or 58.0)
 
-                guard_err_active = bool((getattr(state, "guard_status", {}) or {}).get("last_error"))
+                guard_blocked, guard_block_reason = (
+                    state.is_guard_pause_blocking()
+                    if hasattr(state, "is_guard_pause_blocking")
+                    else (bool((getattr(state, "guard_status", {}) or {}).get("last_error")), "активна ошибка Smart Guard")
+                )
                 emg_report = None
                 ret_msg = ""
                 if mode == "toggle_booster":
                     state.autopilot_booster_enabled = not state.autopilot_booster_enabled
                     if state.autopilot_booster_enabled:
                         state._last_auto_ts = 0.0
-                        if not guard_err_active:
+                        if not guard_blocked:
                             state.entry_paused.clear()
                             state.entry_pause_reason = ""
                             state._entry_pause_source = ""
                         else:
-                            ret_msg = "Автопилот включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                            ret_msg = f"Автопилот включён, но защитная пауза Smart Guard сохранена: {guard_block_reason}"
                     elif not state.autopilot_core_enabled:
                         state.entry_paused.set()
-                        if not guard_err_active:
+                        if not guard_blocked:
                             state.entry_pause_reason = "Автопилоты выключены пользователем"
                             state.entry_paused_at = time.time()
                             state._entry_pause_source = "user"
@@ -2203,15 +2262,15 @@ def create_wsgi_app(state: ControlCenterState):
                     state.autopilot_core_enabled = not state.autopilot_core_enabled
                     if state.autopilot_core_enabled:
                         state._last_auto_ts = 0.0
-                        if not guard_err_active:
+                        if not guard_blocked:
                             state.entry_paused.clear()
                             state.entry_pause_reason = ""
                             state._entry_pause_source = ""
                         else:
-                            ret_msg = "Автопилот включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                            ret_msg = f"Автопилот включён, но защитная пауза Smart Guard сохранена: {guard_block_reason}"
                     elif not state.autopilot_booster_enabled:
                         state.entry_paused.set()
-                        if not guard_err_active:
+                        if not guard_blocked:
                             state.entry_pause_reason = "Автопилоты выключены пользователем"
                             state.entry_paused_at = time.time()
                             state._entry_pause_source = "user"
@@ -2220,18 +2279,18 @@ def create_wsgi_app(state: ControlCenterState):
                     state.autopilot_booster_enabled = True
                     state.autopilot_core_enabled = True
                     state._last_auto_ts = 0.0
-                    if not guard_err_active:
+                    if not guard_blocked:
                         state.entry_paused.clear()
                         state.entry_pause_reason = ""
                         state._entry_pause_source = ""
                     else:
-                        ret_msg = "Автопилоты включены, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                        ret_msg = f"Автопилоты включены, но защитная пауза Smart Guard сохранена: {guard_block_reason}"
                     state.add_log("⚡ Включены ОБА автопилота: Разгон + Core!")
                 elif mode == "stop_all":
                     state.autopilot_booster_enabled = False
                     state.autopilot_core_enabled = False
                     state.entry_paused.set()
-                    if not guard_err_active:
+                    if not guard_blocked:
                         state.entry_pause_reason = "Остановлено пользователем"
                         state.entry_paused_at = time.time()
                         state._entry_pause_source = "user"
@@ -2253,29 +2312,33 @@ def create_wsgi_app(state: ControlCenterState):
                     if ret_msg:
                         resp["retMsg"] = ret_msg
             elif path == "/api/booster_config":
-                guard_err_active = bool((getattr(state, "guard_status", {}) or {}).get("last_error"))
+                guard_blocked, guard_block_reason = (
+                    state.is_guard_pause_blocking()
+                    if hasattr(state, "is_guard_pause_blocking")
+                    else (bool((getattr(state, "guard_status", {}) or {}).get("last_error")), "активна ошибка Smart Guard")
+                )
                 if data.get("reset"):
                     state.booster.reset_challenge(float(data.get("start_equity", 1000.0)), float(data.get("target_equity", 10000.0)))
                     for ctrl in state._active_controllers():
                         ctrl.reconcile_and_clear_unresolved()
-                    if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_err_active:
+                    if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_blocked:
                         state.entry_paused.clear()
                         state.entry_pause_reason = ""
                         state._entry_pause_source = ""
-                    elif guard_err_active:
-                        resp["retMsg"] = "Сброс выполнен, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                    elif guard_blocked:
+                        resp["retMsg"] = f"Сброс выполнен, но защитная пауза Smart Guard сохранена: {guard_block_reason}"
                     state.refresh_booster_snapshot()
                     state.add_log("🚀 ПОЛНЫЙ СБРОС РАЗГОНА: Баланс $1,000.00, дневной стоп-кран и все кулдауны монет полностью очищены!")
                 elif data.get("unlock_limits"):
                     state.booster.unlock_limits_only()
                     for ctrl in state._active_controllers():
                         ctrl.reconcile_and_clear_unresolved()
-                    if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_err_active:
+                    if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_blocked:
                         state.entry_paused.clear()
                         state.entry_pause_reason = ""
                         state._entry_pause_source = ""
-                    elif guard_err_active:
-                        resp["retMsg"] = "Лимиты сняты, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                    elif guard_blocked:
+                        resp["retMsg"] = f"Лимиты сняты, но защитная пауза Smart Guard сохранена: {guard_block_reason}"
                     state.refresh_booster_snapshot()
                     state.add_log("🔓 Дневной стоп-кран (-3%), счётчик дневных входов и кулдауны монет сняты! Торговля продолжается с текущим балансом.")
                 elif "training_mode" in data:
@@ -2284,12 +2347,12 @@ def create_wsgi_app(state: ControlCenterState):
                     if t_on:
                         for ctrl in state._active_controllers():
                             ctrl.reconcile_and_clear_unresolved()
-                        if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_err_active:
+                        if (state.autopilot_booster_enabled or state.autopilot_core_enabled) and not guard_blocked:
                             state.entry_paused.clear()
                             state.entry_pause_reason = ""
                             state._entry_pause_source = ""
-                        elif guard_err_active:
-                            resp["retMsg"] = "Режим обучения включён, но защитная пауза Smart Guard сохранена до устранения ошибки"
+                        elif guard_blocked:
+                            resp["retMsg"] = f"Режим обучения включён, но защитная пауза Smart Guard сохранена: {guard_block_reason}"
                     state.refresh_booster_snapshot()
                     state.add_log("🧪 Режим обучения ИИ на Demo (без стоп-крана дня и кулдаунов): " + ("ВКЛЮЧЕН (24/7 без пауз)" if t_on else "ВЫКЛЮЧЕН (штатная защита -3%)"))
                 else:

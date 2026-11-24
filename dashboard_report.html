@@ -154,7 +154,7 @@ tbody tr:hover td:first-child { background:#152136; }
       <span class="brand-wordmark">KAIROS</span>
     </a>
     <span class="badge badge-green" id="conn-badge">🧪 Bybit Demo</span>
-    <span class="badge badge-amber" id="master-status-badge">⏸ Автопилоты: ПАУЗА</span>
+    <span class="badge badge-blue" id="master-status-badge">⏳ Загрузка…</span>
     <span class="badge badge-blue" id="btc-regime-badge" title="Фильтр поводыря BTCUSDT (5м/15м импульс + CVD)">⚖️ BTC: NEUTRAL</span>
     <span class="badge badge-blue" id="x-news-badge" title="Живой сентимент X (Twitter) и новостных лент">🐦 X/News: NEUTRAL</span>
     <span class="badge badge-blue" id="ws-badge">📡 WS: ...</span>
@@ -175,12 +175,12 @@ tbody tr:hover td:first-child { background:#152136; }
 
 <!-- КОМПАКТНАЯ ЕДИНАЯ ПОЛОСА KPI -->
 <div class="kpi-strip">
-  <div class="kpi-mini" title="Доступный USDT-баланс на маржинальном счёте Bybit UTA; Эквити учитывает все монеты на демо-кошельке"><span class="kpi-mini-lbl">Баланс Маржи (USDT)</span><span class="kpi-mini-val" id="kpi-usdt">$0.00</span><span class="kpi-mini-sub" id="kpi-equity">UTA Эквити: $0.00</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">Капитал Разгона ($1k→$10k)</span><span class="kpi-mini-val pos-green" id="kpi-booster-eq">$1,000.00</span><span class="kpi-mini-sub" id="kpi-booster-floor">Порог снижения риска: $920.00</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Поз · Вход · Защита)</span><span class="kpi-mini-val" id="kpi-pos-orders">0 поз. · 0 вход. · 0 защ.</span><span class="kpi-mini-sub" id="kpi-guard-sub">Защита Pure SL/TP + Smart Guard</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">Нереализованный PnL</span><span class="kpi-mini-val" id="kpi-upnl">$0.00</span><span class="kpi-mini-sub" id="kpi-risk-sub">Риск портфеля: $0</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">PnL новых стратегий (Demo)</span><span class="kpi-mini-val" id="kpi-rpnl">$0.00</span><span class="kpi-mini-sub" id="kpi-winrate">Новых: 0 · Legacy: $0.00</span></div>
-  <div class="kpi-mini"><span class="kpi-mini-lbl">Поток WebSocket L2</span><span class="kpi-mini-val" id="kpi-ws">0 тиков</span><span class="kpi-mini-sub" id="kpi-ws-sub">Загрузка потока</span></div>
+  <div class="kpi-mini" title="Доступный USDT-баланс на маржинальном счёте Bybit UTA; Эквити учитывает все монеты на демо-кошельке"><span class="kpi-mini-lbl">Баланс Маржи (USDT)</span><span class="kpi-mini-val" id="kpi-usdt">Загрузка…</span><span class="kpi-mini-sub" id="kpi-equity">UTA Эквити: —</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Капитал Разгона ($1k→$10k)</span><span class="kpi-mini-val" id="kpi-booster-eq">Загрузка…</span><span class="kpi-mini-sub" id="kpi-booster-floor">Порог снижения риска: —</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">В рынке (Поз · Вход · Защита)</span><span class="kpi-mini-val" id="kpi-pos-orders">Загрузка…</span><span class="kpi-mini-sub" id="kpi-guard-sub">Загрузка статуса защиты…</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Нереализованный PnL</span><span class="kpi-mini-val" id="kpi-upnl">Загрузка…</span><span class="kpi-mini-sub" id="kpi-risk-sub">Риск портфеля: —</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">PnL новых стратегий (Demo)</span><span class="kpi-mini-val" id="kpi-rpnl">Загрузка…</span><span class="kpi-mini-sub" id="kpi-winrate">Новых: — · Legacy: —</span></div>
+  <div class="kpi-mini"><span class="kpi-mini-lbl">Поток WebSocket L2</span><span class="kpi-mini-val" id="kpi-ws">Загрузка…</span><span class="kpi-mini-sub" id="kpi-ws-sub">Загрузка потока</span></div>
 </div>
 
 <!-- ВЫДВИЖНЫЕ ПАНЕЛИ (ДОСТУПНЫ С ЛЮБОГО ЭКРАНА) -->
@@ -348,13 +348,13 @@ tbody tr:hover td:first-child { background:#152136; }
       <div>
         <div class="strat-header">
           <h3 class="strat-title" title="Расчётный капитал $1,000 на стратегию; на общем Demo-счёте без отдельных субаккаунтов">🚀 1. Автопилот Разгона (B1–B7 + S1 · расч. $1k)</h3>
-          <span class="badge badge-amber" id="badge-booster-state">ВЫКЛЮЧЕН</span>
+          <span class="badge badge-blue" id="badge-booster-state">Загрузка…</span>
         </div>
         <div class="strat-metrics">
-          <div>Капитал: <b class="pos-green" id="deck-b-eq">$1,000.00</b></div>
-          <div>Этап: <b id="deck-b-phase">Фаза 1 (дно $920)</b></div>
-          <div>Риск (Келли+HM): <b id="deck-b-risk">$15.00 (1.5%)</b></div>
-          <div>Слоты / циклы: <b id="deck-b-slots">0 / 12</b> · <span id="deck-b-cycles">0</span></div>
+          <div>Капитал: <b class="pos-green" id="deck-b-eq">—</b></div>
+          <div>Этап: <b id="deck-b-phase">—</b></div>
+          <div>Риск (Келли+HM): <b id="deck-b-risk">—</b></div>
+          <div>Слоты / циклы: <b id="deck-b-slots">—</b> · <span id="deck-b-cycles">—</span></div>
         </div>
       </div>
       <div class="strat-actions">
@@ -367,13 +367,13 @@ tbody tr:hover td:first-child { background:#152136; }
       <div>
         <div class="strat-header">
           <h3 class="strat-title" title="Расчётный капитал $1,000 на стратегию; на общем Demo-счёте без отдельных субаккаунтов">🎯 2. Автотрейдинг Core (T1–T3 + C2–C3 · расч. $1k)</h3>
-          <span class="badge badge-amber" id="badge-core-state">ВЫКЛЮЧЕН</span>
+          <span class="badge badge-blue" id="badge-core-state">Загрузка…</span>
         </div>
         <div class="strat-metrics">
           <div>Мин. оценка: <b><input type="number" id="core-min-prob" value="58" min="50" max="90" step="1" style="width:46px;padding:1px 4px">%</b></div>
           <div>Настр. лимит: <b><input type="number" id="core-max-pos" value="4" min="1" max="12" step="1" style="width:42px;padding:1px 4px"></b></div>
-          <div>Факт. слоты: <b id="deck-c-slots">0 / 8</b></div>
-          <div>Циклы / режим: <b id="deck-c-cycles">0</b> · <span id="deck-c-lev" style="color:var(--muted)">3x</span></div>
+          <div>Факт. слоты: <b id="deck-c-slots">—</b></div>
+          <div>Циклы / режим: <b id="deck-c-cycles">—</b> · <span id="deck-c-lev" style="color:var(--muted)">3x</span></div>
         </div>
       </div>
       <div class="strat-actions">
@@ -386,7 +386,7 @@ tbody tr:hover td:first-child { background:#152136; }
       <div>
         <div class="strat-header">
           <h3 class="strat-title">🛑 3. Главный пульт & Расписание</h3>
-          <span class="badge badge-green" id="badge-guard-state">🛡 Smart Guard АКТИВЕН</span>
+          <span class="badge badge-blue" id="badge-guard-state">⏳ Smart Guard: Загрузка…</span>
         </div>
         <div class="strat-metrics">
           <div>Интервал цикла:
@@ -398,7 +398,7 @@ tbody tr:hover td:first-child { background:#152136; }
             </select>
           </div>
           <div>След. скан через: <b id="deck-next-timer">—</b></div>
-          <div style="grid-column:span 2">Статус: <b id="deck-active-summary" style="color:#fbbf24">Все автопилоты выключены</b></div>
+          <div style="grid-column:span 2">Статус: <b id="deck-active-summary" style="color:#94a3b8">Загрузка состояния…</b></div>
         </div>
       </div>
       <div class="strat-actions">
