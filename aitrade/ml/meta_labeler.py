@@ -544,7 +544,14 @@ class WalkForwardMetaLabeler:
             from aitrade.storage import atomic_json
 
             path = BASE_DIR / "data" / "ml_samples_v2.json"
-            saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            saved: Dict[str, Any] = {}
+            if path.exists():
+                try:
+                    raw_saved = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(raw_saved, dict):
+                        saved = raw_saved
+                except Exception:
+                    saved = {}
             for sample in self._candidate_samples:
                 key = f"{signal.strategy_id}:{signal.side}:{signal.symbol}:{sample['bar_ms']}"
                 saved[key] = dict(sample, strategy=signal.strategy_id, side=signal.side, symbol=signal.symbol)

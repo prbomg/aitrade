@@ -225,7 +225,7 @@ def verify_orderbook_densities_and_spoofing(
         prev_ob = ob_history[-2]
         if prev_ob.bids and prev_ob.asks:
             prev_max_bid = max(prev_ob.bids[:25], key=lambda x: x.notional_usd)
-            if prev_max_bid.notional_usd > avg_bid * 4.0:
+            if prev_max_bid.notional_usd > avg_bid * 4.0 and prev_max_bid.price > 0:
                 still_there = any(
                     abs(b.price - prev_max_bid.price) / prev_max_bid.price < 0.0002
                     and b.notional_usd >= prev_max_bid.notional_usd * 0.5
@@ -242,7 +242,7 @@ def verify_orderbook_densities_and_spoofing(
 
     # Подтверждение поглощением (Absorption Bonus): если плотность стоит близко к цене и держит поток
     mid = current_ob.mid_price
-    if best_bid_wall.notional_usd >= avg_bid * 3.0 and abs(mid - best_bid_wall.price) / mid < 0.004:
+    if mid > 0 and best_bid_wall.notional_usd >= avg_bid * 3.0 and abs(mid - best_bid_wall.price) / mid < 0.004:
         lbi_score = min(1.0, lbi_score + 0.10)
 
     return (

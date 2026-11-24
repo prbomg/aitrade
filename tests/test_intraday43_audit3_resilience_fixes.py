@@ -191,6 +191,17 @@ class TestIntraday43Audit3ResilienceFixes(unittest.TestCase):
         self.assertEqual(len(auth._failed_attempts), 1)
         self.assertIn("192.168.1.10", auth._failed_attempts)
 
+    def test_microstructure_handles_zero_mid_and_zero_prev_bid_without_zerodivision(self) -> None:
+        from aitrade.exchange.bybit_v5 import OrderBookLevel, OrderBookSnapshot
+        from aitrade.features.microstructure import verify_orderbook_densities_and_spoofing
+
+        zero_ob = OrderBookSnapshot("BTCUSDT", 1, [OrderBookLevel(0.0, 10.0)], [OrderBookLevel(0.0, 10.0)])
+        prev_ob = OrderBookSnapshot("BTCUSDT", 0, [OrderBookLevel(0.0, 50.0)], [OrderBookLevel(0.0, 10.0)])
+        bw, aw, lbi, flags = verify_orderbook_densities_and_spoofing(zero_ob, [prev_ob, zero_ob], [])
+        self.assertEqual(bw, (0.0, 0.0))
+        self.assertEqual(aw, (0.0, 0.0))
+        self.assertGreaterEqual(lbi, 0.1)
+
 
 if __name__ == "__main__":
     unittest.main()
