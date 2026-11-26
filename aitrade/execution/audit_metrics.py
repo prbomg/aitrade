@@ -51,7 +51,7 @@ STRATEGY_HORIZON_LABELS = {
     "T1_DONCHIAN_TSMOM": "Многодневный (4h, до 10д · WFA PASSED)",
     "B1_SQUEEZE_BREAKOUT": "Разгон (15m/1h, до 18ч · WFA PASSED)",
     "B2_DONCHIAN_INTRADAY": "Demo Lab $1k (1h Donchian, до 18ч)",
-    "B3_VWAP_MOMENTUM_IMPULSE": "Demo Lab $1k (15m VWAP импульс, до 8ч)",
+    "B3_VWAP_MOMENTUM_IMPULSE": "Архив (отключена после провала живого теста)",
     "B4_ORB_SESSION_BREAKOUT": "Demo Lab $1k (15m Session ORB, до 8ч)",
     "B5_OI_TREND_EXPANSION": "Demo Lab $1k (15m OI-пробой, до 12ч)",
     "B6_EMA_PULLBACK_TREND": "Demo Lab $1k (15m откат к EMA21, до 12ч)",

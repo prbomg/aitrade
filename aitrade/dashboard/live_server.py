@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.50"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.51"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -1127,8 +1127,7 @@ class ControlCenterState:
             "B2_DONCHIAN_INTRADAY": 4,
             "T2_RS_BTC_BREAKOUT": 5,
             "T3_KELTNER_TREND_4H": 6,
-            "B3_VWAP_MOMENTUM_IMPULSE": 7,
-            "B4_ORB_SESSION_BREAKOUT": 8,
+            "B4_ORB_SESSION_BREAKOUT": 7,
             "B5_OI_TREND_EXPANSION": 9,
             "B6_EMA_PULLBACK_TREND": 10,
             "B7_FUNDING_SQUEEZE_MOMENTUM": 11,
@@ -1180,8 +1179,8 @@ class ControlCenterState:
         if hasattr(self, "shadow_engine"):
             try:
                 self.shadow_engine.update_open_positions(self._live_bbo_map())
-            except Exception:
-                pass
+            except Exception as sh_exc:
+                self.add_log("⚠️ [Shadow Guard] Ошибка обновления shadow-позиций: " + str(sh_exc)[:150])
         if not self.smart_guard_enabled:
             return
         try:
@@ -1372,13 +1371,16 @@ class ControlCenterState:
             scan_res = self.engine.scan_market(auto_execute_demo=False)
             if hasattr(self, "strategy_funnel"):
                 self.strategy_funnel.record_scan(scan_res.get("strategy_diagnostics") or {})
+            paused_for_shadow = set(getattr(self, "paused_strategies", []) or [])
             if hasattr(self, "shadow_engine"):
                 try:
                     bbo_now = self._live_bbo_map()
                     self.shadow_engine.update_open_positions(bbo_now)
-                    self.shadow_engine.record_signals(scan_res.get("shadow_candidates") or scan_res.get("approved_signals") or [], bbo_now)
-                except Exception:
-                    pass
+                    raw_sh_cands = scan_res.get("shadow_candidates") or scan_res.get("approved_signals") or []
+                    active_sh_cands = [c for c in raw_sh_cands if str(c.get("strategy_id") or "") not in paused_for_shadow]
+                    self.shadow_engine.record_signals(active_sh_cands, bbo_now)
+                except Exception as sh_exc:
+                    self.add_log("⚠️ [Shadow Scan] Ошибка записи shadow-сигналов: " + str(sh_exc)[:150])
             scan_res["oi_squeeze_signals"] = squeeze_list
             scan_res["btc_regime"] = btc_reg
 
@@ -1432,7 +1434,7 @@ class ControlCenterState:
 
             demo_lab_cfg_run = self.settings.get("demo_lab", {}) if isinstance(self.settings, dict) else {}
             demo_lab_active = bool(demo_lab_cfg_run.get("enabled", False) and self.bybit.base_url == "https://api-demo.bybit.com")
-            booster_strat_ids = {"B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B3_VWAP_MOMENTUM_IMPULSE", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM", "S1_TREND_RETEST"}
+            booster_strat_ids = {"B1_SQUEEZE_BREAKOUT", "B2_DONCHIAN_INTRADAY", "B4_ORB_SESSION_BREAKOUT", "B5_OI_TREND_EXPANSION", "B6_EMA_PULLBACK_TREND", "B7_FUNDING_SQUEEZE_MOMENTUM", "S1_TREND_RETEST"}
             exec_queue: List[Tuple[str, Dict[str, Any]]] = []
             booster_slots = 0
             core_slots = 0
@@ -1950,8 +1952,9 @@ class ControlCenterState:
                 reconciliation = build_shadow_demo_reconciliation(
                     getattr(self, "shadow_engine", None), active_ledgers, strategy_id=sid, limit=40
                 )
-        except Exception:
-            pass
+        except Exception as rec_exc:
+            if hasattr(self, "add_log"):
+                self.add_log("⚠️ [Reconciliation] Ошибка сверки Shadow/Demo: " + str(rec_exc)[:150])
         demo_lab_on = self._is_demo_lab_active()
         demo_lab_strats = list((self.settings.get("demo_lab") or {}).get("admit_experimental_strategies") or [])
         paused_set = set(getattr(self, "paused_strategies", []) or [])
@@ -2134,8 +2137,7 @@ def create_wsgi_app(state: ControlCenterState):
         headers = [
             ("X-Content-Type-Options", "nosniff"),
             ("X-Frame-Options", "DENY"),
-            ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
-            ("Access-Control-Allow-Headers", "Content-Type"),
+            ("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"),
             ("Cache-Control", "no-store"),
         ]
         if method == "GET" and path == "/healthz":

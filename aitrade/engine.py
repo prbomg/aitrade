@@ -28,6 +28,7 @@ from aitrade.execution.demo_trader import BybitDemoExecutor
 from aitrade.features.indicators import calc_session_vwap_bands, calc_volume_profile
 from aitrade.features.microstructure import analyze_microstructure
 from aitrade.ml.meta_labeler import WalkForwardMetaLabeler
+from aitrade.ml.regime_hmm import evaluate_coarse_regime_gate
 from aitrade.risk.risk_engine import RiskEngine
 from aitrade.screener.coins_in_play import CoinsInPlayScreener, ScreenerResult
 from aitrade.strategies.base import MarketContext, TradeSignal
@@ -182,6 +183,8 @@ class AITradeCombineEngine:
 
         in_liquid_hours = is_in_autotrade_liquid_window(last_ts_ms, self.settings)
         in_weekend_chop = is_weekend_chop_utc(last_ts_ms) if last_ts_ms else False
+        btc_ctx_for_gate = ctx_by_sym.get("BTCUSDT") or next(iter(ctx_by_sym.values()), None)
+        coarse_gate = evaluate_coarse_regime_gate(btc_ctx_for_gate.candles_1h if btc_ctx_for_gate is not None else [])
 
         diag: Dict[str, Dict[str, Any]] = {
             sid: {
@@ -221,6 +224,11 @@ class AITradeCombineEngine:
             raw_candidates.append(sig)
             sig = self.ml_labeler.evaluate_signal(sig, ctx)
             sig = self.risk_engine.size_and_validate_signal(sig, ctx.orderbook, equity_usd)
+            if coarse_gate.size_multiplier < 1.0 and sig.position_qty > 0:
+                sig.position_qty = round(sig.position_qty * coarse_gate.size_multiplier, 8)
+            sig.features = dict(sig.features or {})
+            sig.features["coarse_regime_mult"] = float(coarse_gate.size_multiplier)
+            sig.features["coarse_vol_regime"] = coarse_gate.vol_regime
             sig = self.debate_council.conduct_debate(sig, ctx)
             d_row = diag.get(sig.strategy_id)
             if d_row is not None:
@@ -562,8 +570,7 @@ class AITradeCombineEngine:
             "B2_DONCHIAN_INTRADAY": 4,
             "T2_RS_BTC_BREAKOUT": 5,
             "T3_KELTNER_TREND_4H": 6,
-            "B3_VWAP_MOMENTUM_IMPULSE": 7,
-            "B4_ORB_SESSION_BREAKOUT": 8,
+            "B4_ORB_SESSION_BREAKOUT": 7,
             "B5_OI_TREND_EXPANSION": 9,
             "B6_EMA_PULLBACK_TREND": 10,
             "B7_FUNDING_SQUEEZE_MOMENTUM": 11,
@@ -604,13 +611,22 @@ class AITradeCombineEngine:
                     tk = ticker_map.get(sym, {})
                     perp_px = float(tk.get("lastPrice", 0) or 0)
                     spot_px = float(tk.get("indexPrice", 0) or perp_px)
-                    opp = self.funding_carry.evaluate_pair(sym, f_hist, spot_px, perp_px)
+                    opp = self.funding_carry.evaluate_pair(
+                        sym,
+                        f_hist,
+                        spot_px,
+                        perp_px,
+                        adl_rank=0,
+                        collateral_matches_settlement=True,
+                        transfers_enabled=True,
+                    )
                     carry_opportunities.append(asdict(opp))
                 except Exception:
                     pass
 
         return {
             "context_errors": context_errors,
+            "coarse_regime_gate": asdict(coarse_gate),
             "carry_opportunities": carry_opportunities,
             "data_source": self.client.last_data_source,
             "autotrade_liquid_window_active": in_liquid_hours,

@@ -27,7 +27,6 @@ class AdaptiveMLCalibrator:
         "T1_DONCHIAN_TSMOM",
         "B1_SQUEEZE_BREAKOUT",
         "B2_DONCHIAN_INTRADAY",
-        "B3_VWAP_MOMENTUM_IMPULSE",
         "B4_ORB_SESSION_BREAKOUT",
         "B5_OI_TREND_EXPANSION",
         "B6_EMA_PULLBACK_TREND",

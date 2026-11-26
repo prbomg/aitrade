@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import json, subprocess, time, urllib.request
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class RegimeAndCorrelationGuard:
+    BYBIT_KLINE_HOSTS = (
+        "https://api-demo.bybit.com",
+        "https://api.bybit.com",
+        "https://api.bytick.com",
+    )
     SECTORS: Dict[str, str] = {
         "BTCUSDT": "MAJORS", "ETHUSDT": "MAJORS", "SOLUSDT": "MAJORS",
         "XRPUSDT": "MAJORS", "BNBUSDT": "MAJORS", "TRXUSDT": "MAJORS", "LTCUSDT": "MAJORS",
@@ -92,9 +97,17 @@ class RegimeAndCorrelationGuard:
             raise
 
     def _update_btc_regime_live(self, ws_summary: Dict[str, Any]) -> Dict[str, Any]:
-
-        k_url = "https://api.bybit.com/v5/market/kline?category=linear&symbol=BTCUSDT&interval=5&limit=4"
-        k_data = self._curl_json(k_url)
+        k_data: Optional[Dict[str, Any]] = None
+        last_exc: Optional[Exception] = None
+        for host in self.BYBIT_KLINE_HOSTS:
+            k_url = f"{host}/v5/market/kline?category=linear&symbol=BTCUSDT&interval=5&limit=4"
+            try:
+                k_data = self._curl_json(k_url)
+                break
+            except Exception as exc:
+                last_exc = exc
+        if k_data is None:
+            raise last_exc or RuntimeError("Нет подтверждённых данных рынка BTC")
         k_list = k_data.get("result", {}).get("list", [])
 
         if len(k_list) < 3: raise RuntimeError("Недостаточно свечей BTC")

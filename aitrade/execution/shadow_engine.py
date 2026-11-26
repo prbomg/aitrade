@@ -55,6 +55,9 @@ class LiveShadowEngine:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._closed_cache_ver: int = -1
+        self._closed_ver: int = 0
+        self._closed_cache: Optional[Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]] = None
         with self._connect() as conn:
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -260,22 +263,98 @@ class LiveShadowEngine:
                     (ts, exit_px, round(fees, 4), net_pnl, realized_r, reason, tid),
                 )
                 closed_count += 1
+            if closed_count > 0:
+                self._closed_ver += 1
         return closed_count
+
+    def prune_old_decisions(self, max_age_days: int = 30) -> int:
+        """Удаляет устаревшие записи из shadow_signal_decisions для контроля размера SQLite."""
+        cutoff = time.time() - max(1, int(max_age_days)) * 86400.0
+        with self._lock, self._connect() as conn:
+            cur = conn.execute("DELETE FROM shadow_signal_decisions WHERE ts < ?", (cutoff,))
+            return int(cur.rowcount or 0)
+
+    def _load_closed_agg_locked(self, conn: sqlite3.Connection) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
+        if self._closed_cache is not None and self._closed_cache_ver == self._closed_ver:
+            return self._closed_cache
+        rows = conn.execute(
+            "SELECT id, strategy_id, symbol, side, opened_ts, closed_ts, entry_px, exit_px, pnl_usd, realized_r, exit_reason, signal_id, signal_created_ms "
+            "FROM shadow_trades WHERE status='CLOSED' ORDER BY opened_ts ASC"
+        ).fetchall()
+        by_strat: Dict[str, Dict[str, Any]] = {}
+        closed_list: List[Dict[str, Any]] = []
+        for r in rows:
+            tid, s_id, sym, side, o_ts, c_ts, e_px, x_px, pnl, r_mult, reason, sig_id, sig_c_ms = r
+            st = by_strat.setdefault(
+                s_id,
+                {
+                    "strategy_id": s_id,
+                    "pod_capital_usd": self.POD_CAPITAL_USD,
+                    "closed_trades": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "gross_profit": 0.0,
+                    "gross_loss": 0.0,
+                    "net_pnl_usd": 0.0,
+                    "r_sum": 0.0,
+                    "hold_h_sum": 0.0,
+                    "eq_peak": 0.0,
+                    "eq_cur": 0.0,
+                    "max_dd_usd": 0.0,
+                },
+            )
+            st["closed_trades"] += 1
+            if pnl > 0:
+                st["wins"] += 1
+                st["gross_profit"] += pnl
+            elif pnl < 0:
+                st["losses"] += 1
+                st["gross_loss"] += abs(pnl)
+            st["net_pnl_usd"] += pnl
+            st["r_sum"] += r_mult
+            st["hold_h_sum"] += max(0.0, (c_ts - o_ts) / 3600.0)
+            st["eq_cur"] += pnl
+            if st["eq_cur"] > st["eq_peak"]:
+                st["eq_peak"] = st["eq_cur"]
+            dd = st["eq_peak"] - st["eq_cur"]
+            if dd > st["max_dd_usd"]:
+                st["max_dd_usd"] = dd
+            closed_list.append(
+                {
+                    "id": tid,
+                    "signal_id": sig_id or "",
+                    "signal_created_ms": int(sig_c_ms or 0),
+                    "strategy_id": s_id,
+                    "symbol": sym,
+                    "side": side,
+                    "entry_px": round(e_px, 6),
+                    "exit_px": round(x_px, 6),
+                    "pnl_usd": round(pnl, 2),
+                    "realized_r": round(r_mult, 2),
+                    "exit_reason": reason,
+                    "closed_at": datetime.datetime.fromtimestamp(c_ts, tz=datetime.timezone.utc).strftime("%m-%d %H:%M"),
+                }
+            )
+        self._closed_cache = (by_strat, closed_list)
+        self._closed_cache_ver = self._closed_ver
+        return self._closed_cache
 
     def get_summary(self, bbo_map: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, Any]:
         bbo = bbo_map or {}
         with self._lock, self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, strategy_id, symbol, side, status, opened_ts, closed_ts, entry_px, sl_px, tp_px, exit_px, qty, risk_usd, fees_usd, pnl_usd, realized_r, exit_reason, signal_id, signal_created_ms "
-                "FROM shadow_trades ORDER BY opened_ts ASC"
+            closed_by_strat, closed_list = self._load_closed_agg_locked(conn)
+            open_rows = conn.execute(
+                "SELECT id, strategy_id, symbol, side, opened_ts, entry_px, sl_px, tp_px, qty, signal_id, signal_created_ms "
+                "FROM shadow_trades WHERE status='OPEN' ORDER BY opened_ts ASC"
             ).fetchall()
 
-        by_strat: Dict[str, Dict[str, Any]] = {}
+        by_strat: Dict[str, Dict[str, Any]] = {
+            k: dict(v, open_trades=0, unrealized_pnl_usd=0.0) for k, v in closed_by_strat.items()
+        }
         open_list: List[Dict[str, Any]] = []
-        closed_list: List[Dict[str, Any]] = []
 
-        for r in rows:
-            tid, s_id, sym, side, status, o_ts, c_ts, e_px, sl_px, tp_px, x_px, qty, risk_usd, fees, pnl, r_mult, reason, sig_id, sig_c_ms = r
+        for r in open_rows:
+            tid, s_id, sym, side, o_ts, e_px, sl_px, tp_px, qty, sig_id, sig_c_ms = r
             st = by_strat.setdefault(
                 s_id,
                 {
@@ -296,61 +375,27 @@ class LiveShadowEngine:
                     "max_dd_usd": 0.0,
                 },
             )
-            if status == "OPEN":
-                st["open_trades"] += 1
-                bid, ask = bbo.get(sym, (0.0, 0.0))
-                mark = bid if (side == "Buy" and bid > 0) else (ask if (side == "Sell" and ask > 0) else e_px)
-                upnl = round(((mark - e_px) * qty if side == "Buy" else (e_px - mark) * qty), 2)
-                st["unrealized_pnl_usd"] = round(st["unrealized_pnl_usd"] + upnl, 2)
-                open_list.append(
-                    {
-                        "id": tid,
-                        "signal_id": sig_id or "",
-                        "signal_created_ms": int(sig_c_ms or 0),
-                        "strategy_id": s_id,
-                        "symbol": sym,
-                        "side": side,
-                        "entry_px": round(e_px, 6),
-                        "mark_px": round(mark, 6),
-                        "sl_px": round(sl_px, 6),
-                        "tp_px": round(tp_px, 6),
-                        "upnl_usd": upnl,
-                        "age_hours": round(max(0.0, (time.time() - o_ts) / 3600.0), 1),
-                    }
-                )
-            else:
-                st["closed_trades"] += 1
-                if pnl > 0:
-                    st["wins"] += 1
-                    st["gross_profit"] += pnl
-                elif pnl < 0:
-                    st["losses"] += 1
-                    st["gross_loss"] += abs(pnl)
-                st["net_pnl_usd"] += pnl
-                st["r_sum"] += r_mult
-                st["hold_h_sum"] += max(0.0, (c_ts - o_ts) / 3600.0)
-                st["eq_cur"] += pnl
-                if st["eq_cur"] > st["eq_peak"]:
-                    st["eq_peak"] = st["eq_cur"]
-                dd = st["eq_peak"] - st["eq_cur"]
-                if dd > st["max_dd_usd"]:
-                    st["max_dd_usd"] = dd
-                closed_list.append(
-                    {
-                        "id": tid,
-                        "signal_id": sig_id or "",
-                        "signal_created_ms": int(sig_c_ms or 0),
-                        "strategy_id": s_id,
-                        "symbol": sym,
-                        "side": side,
-                        "entry_px": round(e_px, 6),
-                        "exit_px": round(x_px, 6),
-                        "pnl_usd": round(pnl, 2),
-                        "realized_r": round(r_mult, 2),
-                        "exit_reason": reason,
-                        "closed_at": datetime.datetime.fromtimestamp(c_ts, tz=datetime.timezone.utc).strftime("%m-%d %H:%M"),
-                    }
-                )
+            st["open_trades"] += 1
+            bid, ask = bbo.get(sym, (0.0, 0.0))
+            mark = bid if (side == "Buy" and bid > 0) else (ask if (side == "Sell" and ask > 0) else e_px)
+            upnl = round(((mark - e_px) * qty if side == "Buy" else (e_px - mark) * qty), 2)
+            st["unrealized_pnl_usd"] = round(st["unrealized_pnl_usd"] + upnl, 2)
+            open_list.append(
+                {
+                    "id": tid,
+                    "signal_id": sig_id or "",
+                    "signal_created_ms": int(sig_c_ms or 0),
+                    "strategy_id": s_id,
+                    "symbol": sym,
+                    "side": side,
+                    "entry_px": round(e_px, 6),
+                    "mark_px": round(mark, 6),
+                    "sl_px": round(sl_px, 6),
+                    "tp_px": round(tp_px, 6),
+                    "upnl_usd": upnl,
+                    "age_hours": round(max(0.0, (time.time() - o_ts) / 3600.0), 1),
+                }
+            )
 
         leaderboard: List[Dict[str, Any]] = []
         for s_id, st in by_strat.items():

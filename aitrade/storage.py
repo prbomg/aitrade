@@ -27,7 +27,11 @@ class Ledger:
             c.executescript('''CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, payload TEXT);
             CREATE TABLE IF NOT EXISTS exchange_records(environment TEXT, kind TEXT, id TEXT, payload TEXT, PRIMARY KEY(environment,kind,id));
             CREATE TABLE IF NOT EXISTS intents(id TEXT PRIMARY KEY, environment TEXT, created REAL, symbol TEXT, strategy TEXT, risk REAL, status TEXT, payload TEXT);
-            CREATE TABLE IF NOT EXISTS orders(environment TEXT, link TEXT, intent_id TEXT, symbol TEXT, status TEXT, payload TEXT, PRIMARY KEY(environment,link));''')
+            CREATE TABLE IF NOT EXISTS orders(environment TEXT, link TEXT, intent_id TEXT, symbol TEXT, status TEXT, payload TEXT, PRIMARY KEY(environment,link));
+            CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind, ts DESC);
+            CREATE INDEX IF NOT EXISTS idx_intents_env_status ON intents(environment, status);
+            CREATE INDEX IF NOT EXISTS idx_intents_env_sym_created ON intents(environment, symbol, created DESC);
+            CREATE INDEX IF NOT EXISTS idx_orders_env_intent ON orders(environment, intent_id);''')
         os.chmod(self.path, 0o600)
     @contextmanager
     def connect(self):
@@ -193,8 +197,22 @@ class Ledger:
     def pending(self):
         with self.connect() as c:return [(r[0],r[1],json.loads(r[2])) for r in c.execute("SELECT id,symbol,payload FROM intents WHERE environment=? AND status='PENDING'",(self.environment,))]
 
+    def prune_old_events(self, max_log_age_days: int = 14, max_decision_age_days: int = 30) -> int:
+        """Удаляет устаревшие LOG и SIGNAL_DECISION события, сохраняя EXIT_SUBMITTED и свежую историю."""
+        now = time.time()
+        log_cutoff = now - max(1, int(max_log_age_days)) * 86400.0
+        dec_cutoff = now - max(1, int(max_decision_age_days)) * 86400.0
+        with self.connect() as c:
+            cur1 = c.execute("DELETE FROM events WHERE kind='LOG' AND ts < ?", (log_cutoff,))
+            cur2 = c.execute("DELETE FROM events WHERE kind='SIGNAL_DECISION' AND ts < ?", (dec_cutoff,))
+            return int((cur1.rowcount or 0) + (cur2.rowcount or 0))
+
     def backup_to(self, backup_dir, keep=7):
         import datetime
+        try:
+            self.prune_old_events()
+        except Exception:
+            pass
         bdir = Path(backup_dir); bdir.mkdir(parents=True, exist_ok=True)
         day = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
         dest = bdir / f"{self.path.stem}-{day}{self.path.suffix}"
