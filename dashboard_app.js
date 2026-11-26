@@ -171,7 +171,7 @@ document.getElementById("btn-save-env-keys").addEventListener("click", async fun
  showToast(r.ok ? (okMsg + (r.masked_key ? (" (" + r.masked_key + ")") : "")) : r.retMsg,!r.ok);
  refreshState(true);
 });
-document.getElementById("btn-run-checklist").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"run_checklist",target_mode:document.getElementById("env-key-target").value});showToast(r.retMsg || "Проверка завершена",!r.ok);refreshState();});
+document.getElementById("btn-run-checklist").addEventListener("click", async function(){const accEl=document.getElementById("env-key-account");const r=await apiPost("/api/env_control",{action:"run_checklist",target_mode:document.getElementById("env-key-target").value,account:accEl?accEl.value:"shared"});showToast(r.retMsg || "Проверка завершена",!r.ok);refreshState(true);});
 document.getElementById("btn-switch-demo").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"switch_mode",target_mode:"demo"});showToast(r.retMsg || "Demo",!r.ok);refreshState();});
 
 const btnToggleManual = document.getElementById("btn-toggle-manual");

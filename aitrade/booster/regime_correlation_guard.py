@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import json, subprocess, time, urllib.request
+import json, subprocess, threading, time, urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -26,6 +26,7 @@ class RegimeAndCorrelationGuard:
     }
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self.enabled: bool = True
         self.max_same_sector: int = 1
         self.max_same_direction_total: int = 2
@@ -64,37 +65,40 @@ class RegimeAndCorrelationGuard:
         return self.SECTORS.get(symbol, "OTHER")
 
     def update_btc_regime(self, ws_summary: Dict[str, Any]) -> Dict[str, Any]:
-        now = time.time()
-        if now - self._last_fetch_ts < 8.0 and self.last_regime.get("btc_price", 0) > 0:
-            return self.last_regime
-        self._last_fetch_ts = now
+        with self._lock:
+            now = time.time()
+            if now - self._last_fetch_ts < 8.0 and self.last_regime.get("btc_price", 0) > 0:
+                return dict(self.last_regime)
+            self._last_fetch_ts = now
         try:
             res = self._update_btc_regime_live(ws_summary)
-            self._last_ok_ts = now
-            return res
+            with self._lock:
+                self._last_ok_ts = now
+                return dict(res)
         except Exception:
-            if self.last_regime.get("btc_price", 0) > 0 and (now - self._last_ok_ts) < 120.0:
-                return self.last_regime
-            ws_map = {m.get("symbol"): m for m in (ws_summary or {}).get("metrics", [])}
-            btc_ws = ws_map.get("BTCUSDT", {})
-            ws_px = float(btc_ws.get("mid_price", 0) or 0)
-            if ws_px > 0:
-                obi_pct = float(btc_ws.get("obi_top5_pct", 0.0) or 0.0)
-                cvd_usd = float(btc_ws.get("cvd_usd", 0.0) or 0.0)
-                self.last_regime = {
-                    "state": "NEUTRAL",
-                    "label": "⚖️ BTC: WS fallback",
-                    "btc_price": round(ws_px, 2),
-                    "btc_chg_5m_pct": 0.0,
-                    "btc_chg_15m_pct": 0.0,
-                    "btc_obi_pct": round(obi_pct, 1),
-                    "btc_cvd_usd": round(cvd_usd, 0),
-                    "allow_long": True,
-                    "allow_short": True,
-                    "reason": "REST недоступен — используется WS-поток BTCUSDT",
-                }
-                return self.last_regime
-            raise
+            with self._lock:
+                if self.last_regime.get("btc_price", 0) > 0 and (now - self._last_ok_ts) < 120.0:
+                    return dict(self.last_regime)
+                ws_map = {m.get("symbol"): m for m in (ws_summary or {}).get("metrics", [])}
+                btc_ws = ws_map.get("BTCUSDT", {})
+                ws_px = float(btc_ws.get("mid_price", 0) or 0)
+                if ws_px > 0:
+                    obi_pct = float(btc_ws.get("obi_top5_pct", 0.0) or 0.0)
+                    cvd_usd = float(btc_ws.get("cvd_usd", 0.0) or 0.0)
+                    self.last_regime = {
+                        "state": "NEUTRAL",
+                        "label": "⚖️ BTC: WS fallback",
+                        "btc_price": round(ws_px, 2),
+                        "btc_chg_5m_pct": 0.0,
+                        "btc_chg_15m_pct": 0.0,
+                        "btc_obi_pct": round(obi_pct, 1),
+                        "btc_cvd_usd": round(cvd_usd, 0),
+                        "allow_long": True,
+                        "allow_short": True,
+                        "reason": "REST недоступен — используется WS-поток BTCUSDT",
+                    }
+                    return dict(self.last_regime)
+                raise
 
     def _update_btc_regime_live(self, ws_summary: Dict[str, Any]) -> Dict[str, Any]:
         k_data: Optional[Dict[str, Any]] = None

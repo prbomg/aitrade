@@ -18,6 +18,9 @@ def atomic_json(path, value):
 class Ledger:
     def __init__(self, path, environment='demo'):
         self.path = Path(path); self.path.parent.mkdir(parents=True, exist_ok=True); self.environment=environment
+        self._cache_lock = threading.RLock()
+        self._cache_version = 0
+        self._lifecycle_cache = None
         with self.connect() as c:
             try:
                 c.execute('PRAGMA journal_mode=WAL')
@@ -44,18 +47,25 @@ class Ledger:
             c.close()
     def event(self, kind, payload):
         with self.connect() as c:c.execute('INSERT INTO events(ts,kind,payload) VALUES(?,?,?)',(time.time(),kind,json.dumps(payload,ensure_ascii=False)))
+    def _invalidate_cache(self):
+        with self._cache_lock:
+            self._cache_version += 1
+            self._lifecycle_cache = None
     def put_records(self, kind, rows, key):
         with self.connect() as c:
             c.executemany('INSERT OR REPLACE INTO exchange_records VALUES(?,?,?,?)',[(self.environment,kind,str(r[key]),json.dumps(r,ensure_ascii=False)) for r in rows])
+        self._invalidate_cache()
     def records(self, kind):
         with self.connect() as c:return [json.loads(r[0]) for r in c.execute('SELECT payload FROM exchange_records WHERE environment=? AND kind=?',(self.environment,kind))]
     def intent(self, id, symbol, strategy, risk, payload):
         with self.connect() as c:c.execute('INSERT INTO intents VALUES(?,?,?,?,?,?,?,?)',(id,self.environment,time.time(),symbol,strategy,risk,'SUBMITTING',json.dumps(payload)))
+        self._invalidate_cache()
     def finish(self, id, status, result):
         with self.connect() as c:
             row=c.execute('SELECT payload FROM intents WHERE id=?',(id,)).fetchone()
             payload=json.loads(row[0]) if row else {};payload.update(result)
             c.execute('UPDATE intents SET status=?,payload=? WHERE id=?',(status,json.dumps(payload),id))
+        self._invalidate_cache()
     def unresolved(self, symbol=None):
         with self.connect() as c:
             if symbol:
@@ -63,6 +73,7 @@ class Ledger:
             return c.execute("SELECT id FROM intents WHERE environment=? AND status IN ('SUBMITTING','UNCERTAIN','PENDING')",(self.environment,)).fetchall()
     def clear_unresolved(self):
         with self.connect() as c:c.execute("UPDATE intents SET status='RESET_CLEARED' WHERE environment=? AND status IN ('SUBMITTING','UNCERTAIN','PENDING')",(self.environment,))
+        self._invalidate_cache()
     def today_count(self, since_ts=None):
         import datetime
         midnight=datetime.datetime.now(datetime.timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
@@ -77,6 +88,7 @@ class Ledger:
                 intent_id=row[0] if row else ''
             c.execute('INSERT OR IGNORE INTO orders VALUES(?,?,?,?,?,?)',
                       (self.environment,link,intent_id,payload['symbol'],'SUBMITTING',json.dumps(payload)))
+        self._invalidate_cache()
     def order_result(self, link, status, result):
         with self.connect() as c:
             row=c.execute('SELECT payload FROM orders WHERE environment=? AND link=?',(self.environment,link)).fetchone()
@@ -84,6 +96,7 @@ class Ledger:
                 p=json.loads(row[0]);p.update(result)
                 c.execute('UPDATE orders SET status=?,payload=? WHERE environment=? AND link=?',
                           (status,json.dumps(p),self.environment,link))
+        self._invalidate_cache()
     def orders_for(self, intent_id):
         with self.connect() as c:
             return [dict(json.loads(r[2]),journal_status=r[1],orderLinkId=r[0]) for r in c.execute(
@@ -105,6 +118,10 @@ class Ledger:
         """Replay confirmed fills, including external fills, in exchange time order.
         Quantity conservation replaces symbol/time heuristics. Mixed ownership stays explicit.
         """
+        with self._cache_lock:
+            ver = self._cache_version
+            if self._lifecycle_cache is not None and self._lifecycle_cache[0] == (self.environment, ver):
+                return self._lifecycle_cache[1]
         with self.connect() as c:
             intents={r[0]:dict(json.loads(r[4]),strategy_id=r[2],symbol=r[3],created=r[1],intent_id=r[0]) for r in c.execute(
                 'SELECT id,created,strategy,symbol,payload FROM intents WHERE environment=?',(self.environment,))}
@@ -141,7 +158,11 @@ class Ledger:
                     for p in bucket:p['intent_id']=''
                     iid=''
                 bucket.append({'intent_id':iid,'remaining':opened,'opened_ms':int(e.get('execTime') or 0)})
-        return intents,lots,closes
+        result = (intents, lots, closes)
+        with self._cache_lock:
+            if self._cache_version == ver:
+                self._lifecycle_cache = ((self.environment, ver), result)
+        return result
     def attribute(self, rows):
         intents,_,closes=self._execution_lifecycles();result=[]
         for row in rows:

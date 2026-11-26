@@ -15,17 +15,21 @@ class SmartLimitChaser:
         self.max_attempts = 2
         self.step_wait_sec = 1.5
         self.max_chase_drift_pct = 0.60
-        self.stats = (
-            json.loads(self.stats_path.read_text(encoding="utf-8"))
-            if self.stats_path.exists()
-            else {
-                "total_orders": 0,
-                "maker_filled": 0,
-                "fallback_taker_filled": 0,
-                "fee_saved_usd": 0.0,
-                "total_notional_usd": 0.0,
-            }
-        )
+        default_stats = {
+            "total_orders": 0,
+            "maker_filled": 0,
+            "fallback_taker_filled": 0,
+            "fee_saved_usd": 0.0,
+            "total_notional_usd": 0.0,
+        }
+        self.stats = dict(default_stats)
+        if self.stats_path.exists():
+            try:
+                loaded = json.loads(self.stats_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self.stats.update(loaded)
+            except Exception:
+                self.stats = dict(default_stats)
 
     def _get_live_bbo(self, symbol, fallback_px):
         try:

@@ -204,8 +204,16 @@ class BybitEnvManager:
         except Exception as exc:
             return {"retCode": -1, "retMsg": str(exc)}
 
-    def run_preflight_checklist(self, target_mode: str = "mainnet") -> Dict[str, Any]:
-        block = self.state.get(target_mode, {})
+    def run_preflight_checklist(self, target_mode: str = "mainnet", account: str = "shared") -> Dict[str, Any]:
+        acc = str(account or "shared").strip().lower()
+        with self._lock:
+            if acc in self.ACCOUNTS:
+                block = dict(((self.state.get("subaccounts") or {}).get(acc) or {}).get(target_mode) or {})
+                scope_label = f"{acc.upper()}/{target_mode.upper()}"
+            else:
+                acc = "shared"
+                block = dict(self.state.get(target_mode, {}) or {})
+                scope_label = target_mode.upper()
         api_key = str(block.get("api_key", "") or "").strip()
         api_secret = str(block.get("api_secret", "") or "").strip()
         base_url = self.URLS.get(target_mode, self.URLS["mainnet"])
@@ -216,17 +224,18 @@ class BybitEnvManager:
         has_keys = bool(api_key and api_secret)
         checks.append({
             "id": "keys_present",
-            "title": "1. Наличие API-ключей в защищенном хранилище",
+            "title": "1. Наличие API-ключей в защищенном хранилище (" + scope_label + ")",
             "ok": has_keys,
-            "detail": ("Ключ " + self.mask_key(api_key) + " загружен") if has_keys else "Ключи для выбранного контура не введены",
+            "detail": ("Ключ " + self.mask_key(api_key) + " загружен") if has_keys else "Ключи для выбранного контура/субаккаунта не введены",
         })
         if not has_keys:
             res = {
                 "mode": target_mode,
+                "account": acc,
                 "passed": False,
                 "checked_at": datetime.now().strftime("%H:%M:%S"),
                 "checks": checks,
-                "summary": "❌ Проверка не пройдена: сначала введите и сохраните API Key и Secret для " + target_mode.upper(),
+                "summary": "❌ Проверка не пройдена: сначала введите и сохраните API Key и Secret для " + scope_label,
             }
             self.state["last_checklist"] = res
             self._save(self.state)

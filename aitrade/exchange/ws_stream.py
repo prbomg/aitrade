@@ -303,6 +303,10 @@ class BybitV5WebSocketHub:
         return True
 
     def get_symbol_metrics(self, symbol: str) -> Dict[str, Any]:
+        with self._lock:
+            return self._get_symbol_metrics_locked(symbol)
+
+    def _get_symbol_metrics_locked(self, symbol: str) -> Dict[str, Any]:
         ob = self.orderbooks.get(symbol, {"bids": {}, "asks": {}})
         bids = sorted(ob["bids"].items(), key=lambda x: x[0], reverse=True)[:10]
         asks = sorted(ob["asks"].items(), key=lambda x: x[0])[:10]

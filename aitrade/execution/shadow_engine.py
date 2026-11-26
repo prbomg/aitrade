@@ -13,7 +13,7 @@ Live Shadow Paper Engine — безконфликтный полигон для 
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import datetime
 import sqlite3
 import threading
@@ -273,6 +273,20 @@ class LiveShadowEngine:
         with self._lock, self._connect() as conn:
             cur = conn.execute("DELETE FROM shadow_signal_decisions WHERE ts < ?", (cutoff,))
             return int(cur.rowcount or 0)
+
+    def backup_to(self, backup_dir: Path, keep: int = 7) -> Path:
+        """Создаёт консистентную резервную копию shadow_lab.sqlite3 и хранит последние keep дней."""
+        bdir = Path(backup_dir)
+        bdir.mkdir(parents=True, exist_ok=True)
+        day = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        dest = bdir / f"{self.db_path.stem}-{day}{self.db_path.suffix}"
+        with self._lock, self._connect() as src, closing(sqlite3.connect(dest)) as dst:
+            with dst:
+                src.backup(dst)
+        files = sorted(bdir.glob(f"{self.db_path.stem}-*{self.db_path.suffix}"))
+        for old in (files[:-keep] if len(files) > keep else []):
+            old.unlink(missing_ok=True)
+        return dest
 
     def _load_closed_agg_locked(self, conn: sqlite3.Connection) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
         if self._closed_cache is not None and self._closed_cache_ver == self._closed_ver:

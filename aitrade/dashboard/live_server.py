@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.53"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.54"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -687,9 +687,17 @@ class ControlCenterState:
             if today != last_backup_day:
                 try:
                     bdir = BASE_DIR / "data" / "backups"
-                    self.bybit.ledger.backup_to(bdir, keep=7)
-                    if hasattr(self, "shadow_engine") and hasattr(self.shadow_engine, "prune_old_decisions"):
-                        self.shadow_engine.prune_old_decisions(max_age_days=30)
+                    seen_ledgers = set()
+                    for ctrl in self._active_controllers():
+                        ld = getattr(ctrl, "ledger", None)
+                        if ld is not None and id(ld) not in seen_ledgers:
+                            seen_ledgers.add(id(ld))
+                            ld.backup_to(bdir, keep=7)
+                    if hasattr(self, "shadow_engine"):
+                        if hasattr(self.shadow_engine, "prune_old_decisions"):
+                            self.shadow_engine.prune_old_decisions(max_age_days=30)
+                        if hasattr(self.shadow_engine, "backup_to"):
+                            self.shadow_engine.backup_to(bdir, keep=7)
                     if STATE_FILE.exists():
                         atomic_json(bdir / f"ui_state-{today}.json", json.loads(STATE_FILE.read_text(encoding="utf-8")))
                     last_backup_day = today
@@ -1582,7 +1590,8 @@ class ControlCenterState:
                         continue
                     sizing = self.booster.calculate_order_qty(float(sig["entry_price"]), float(sig["stop_loss"]), b_sizing_metrics)
                     w_mult = float(sig.get("cal_weight", 1.0) or 1.0)
-                    adj_qty = round(sizing["qty_coins"] * w_mult, 6)
+                    coarse_mult = max(0.25, min(1.0, float(((sig.get("features") or {}).get("coarse_regime_mult", 1.0)) or 1.0)))
+                    adj_qty = round(sizing["qty_coins"] * w_mult * coarse_mult, 6)
                     b_otype = sig.get("order_type") if sig.get("order_type") in ("Market", "Limit") else "Limit"
                     r = b_ctrl.place_order(
                         sig["symbol"], side, b_otype, adj_qty,
@@ -1758,15 +1767,20 @@ class ControlCenterState:
             p["sector"] = self.regime_guard.get_sector(sym)
             p["age_min"] = self.get_position_age_minutes(p)
 
-        realized_sum = sum(float(c.get("closedPnl", 0) or 0) for c in closed_pnl)
-        wins = sum(1 for c in closed_pnl if float(c.get("closedPnl", 0) or 0) > 0)
-        win_rate = round((wins / len(closed_pnl)) * 100.0, 1) if closed_pnl else 0.0
+        if b_ctrl is not self.bybit:
+            all_closed = [dict(c, account="autotrade") for c in closed_pnl] + [dict(c, account="booster") for c in b_closed]
+            all_closed.sort(key=lambda r: int(r.get("updatedTime") or 0), reverse=True)
+        else:
+            all_closed = closed_pnl
+        realized_sum = sum(float(c.get("closedPnl", 0) or 0) for c in all_closed)
+        wins = sum(1 for c in all_closed if float(c.get("closedPnl", 0) or 0) > 0)
+        win_rate = round((wins / len(all_closed)) * 100.0, 1) if all_closed else 0.0
 
         # Агрегируем закрытия новых стратегий по entry_intent_id (частичные TP1 + финал = 1 позиция)
         new_pos_pnl: Dict[str, float] = {}
         legacy_pnl = 0.0
         legacy_cnt = 0
-        for c in closed_pnl:
+        for c in all_closed:
             sid_c = str(c.get("strategy_id") or "UNATTRIBUTED")
             pnl_c = float(c.get("closedPnl", 0) or 0)
             if sid_c in ("", "UNATTRIBUTED", "MANUAL", "LEGACY"):
@@ -1849,8 +1863,8 @@ class ControlCenterState:
         }
         pnl_summary = {
             "total_realized_usd": round(realized_sum, 2),
-            "total_records_count": len(closed_pnl),
-            "displayed_records_count": min(100, len(closed_pnl)),
+            "total_records_count": len(all_closed),
+            "displayed_records_count": min(100, len(all_closed)),
             "new_strategies_pnl_usd": new_strat_pnl,
             "new_strategies_positions": len(new_pos_pnl),
             "new_strategies_win_rate_pct": new_strat_wr,
@@ -1865,14 +1879,14 @@ class ControlCenterState:
             "booster_account": b_acct,
             "env_status": self.env_manager.get_public_status(),
             "realized_pnl_recent": round(realized_sum, 2),
-            "closed_trades_count": len(closed_pnl),
+            "closed_trades_count": len(all_closed),
             "live_win_rate_pct": win_rate,
             "pnl_summary": pnl_summary,
             "order_counts": order_counts,
             "effective_limits": effective_limits,
             "positions": positions,
             "open_orders": open_orders,
-            "closed_pnl": closed_pnl[:100],
+            "closed_pnl": all_closed[:100],
             "ws": ws_sum,
             "btc_regime": btc_reg,
             "x_news": self.x_radar.get_summary() if hasattr(self.x_radar, "get_summary") else {},
@@ -1951,6 +1965,19 @@ class ControlCenterState:
         live_map = (snap.get("live_strategy_metrics") or {}).get("strategies") or {}
         all_traces = (snap.get("live_strategy_metrics") or {}).get("execution_traces") or []
         demo_traces = [t for t in all_traces if str(t.get("strategy_id") or "") == sid]
+        if hasattr(self, "bybit") and hasattr(self.bybit, "ledger"):
+            try:
+                detail_ledgers = [("autotrade", self.bybit.ledger)]
+                b_ctrl_det = getattr(self, "booster_bybit", self.bybit)
+                if b_ctrl_det is not self.bybit and hasattr(b_ctrl_det, "ledger"):
+                    detail_ledgers.append(("booster", b_ctrl_det.ledger))
+                full_live = compute_live_strategy_metrics(detail_ledgers, target_strategies=(sid,), trace_limit=None)
+                if sid in (full_live.get("strategies") or {}):
+                    live_map = dict(live_map)
+                    live_map[sid] = full_live["strategies"][sid]
+                demo_traces = list(full_live.get("execution_traces") or [])
+            except Exception:
+                pass
         demo_closed_chron = [t for t in reversed(demo_traces) if t.get("closed_pnl_usd") is not None]
         demo_curve = [1000.0]
         for t in demo_closed_chron:
@@ -2355,8 +2382,10 @@ def create_wsgi_app(state: ControlCenterState):
                     state.add_log("🔐 Ключи субаккаунта [" + acc.upper() + "/" + t_mode.upper() + "] сохранены (" + str(resp.get("masked_key")) + ").")
                 elif act == "run_checklist":
                     t_mode = data.get("target_mode", "mainnet")
-                    chk = state.env_manager.run_preflight_checklist(t_mode)
-                    state.add_log("📋 Предторговый чек-лист [" + t_mode.upper() + "]: " + str(chk.get("summary")))
+                    acc = str(data.get("account", "shared") or "shared").strip().lower()
+                    chk = state.env_manager.run_preflight_checklist(t_mode, account=acc)
+                    scope_lbl = (acc.upper() + "/" + t_mode.upper()) if acc in ("booster", "autotrade") else t_mode.upper()
+                    state.add_log("📋 Предторговый чек-лист [" + scope_lbl + "]: " + str(chk.get("summary")))
                     resp = {"ok": chk.get("passed", False), "checklist": chk, "retMsg": chk.get("summary")}
                 elif act == "switch_mode":
                     t_mode = data.get("target_mode", "demo")
