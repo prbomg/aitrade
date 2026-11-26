@@ -19,6 +19,13 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from aitrade.backtest.validation_gates import (
+    compute_btc_beta_and_jensen_alpha,
+    compute_pbo_cpcv,
+    compute_psr_and_min_btl,
+    compute_regime_stress_breakdown,
+    detect_overfitting_red_flags,
+)
 from aitrade.config import BASE_DIR, load_settings
 from aitrade.exchange.bybit_v5 import BybitV5Client, Candle
 from aitrade.features.indicators import calc_atr_series
@@ -548,6 +555,7 @@ class WalkForwardBacktester:
         max_leverage: float = 3.0,
         max_positions: int = 3,
         allow_compounding: bool = False,
+        btc_daily_returns_by_day: Optional[Dict[int, float]] = None,
     ) -> Dict[str, Any]:
         if min_ts is None or max_ts is None or max_ts <= min_ts:
             return {
@@ -622,9 +630,26 @@ class WalkForwardBacktester:
         wfe = round(mean_ann_oos / mean_ann_is, 3) if (mean_ann_is > 1e-6) else None
 
         oos_summary = self._summarize("Rolling WFA OOS (1x)", oos_trades_1x, n_trials=n_trials, **p_kw)
+        oos_daily_rets = self._compute_daily_returns(1000.0)
+        oos_daily_days = sorted(self._daily_pnl.keys()) if getattr(self, "_daily_pnl", None) else []
         oos_pnls, _, _, _ = self._portfolio(oos_trades_1x, **p_kw)
         oos_stress_2x = self._summarize("Rolling WFA OOS (2x Stress)", oos_trades_2x, n_trials=n_trials, **p_kw)
         mc = run_monte_carlo_permutation(oos_pnls, initial_equity=1000.0, iterations=mc_iterations)
+        psr_info = compute_psr_and_min_btl(oos_daily_rets, benchmark_sr_daily=0.0, confidence=0.95)
+        pbo_val = compute_pbo_cpcv(oos_daily_rets, n_blocks=8)
+        btc_alpha_info: Dict[str, Optional[float]] = {"btc_beta": None, "btc_corr": None, "jensen_alpha_ann_pct": None}
+        regime_breakdown: Dict[str, Dict[str, Any]] = {}
+        if btc_daily_returns_by_day:
+            if oos_daily_days and len(oos_daily_days) >= 2:
+                first_d, last_d = oos_daily_days[0], oos_daily_days[-1]
+                aligned_s: List[float] = []
+                aligned_b: List[float] = []
+                for idx_d, d in enumerate(range(first_d, last_d + 1)):
+                    if idx_d < len(oos_daily_rets) and d in btc_daily_returns_by_day:
+                        aligned_s.append(oos_daily_rets[idx_d])
+                        aligned_b.append(btc_daily_returns_by_day[d])
+                btc_alpha_info = compute_btc_beta_and_jensen_alpha(aligned_s, aligned_b)
+            regime_breakdown = compute_regime_stress_breakdown(oos_trades_1x, btc_daily_returns_by_day)
         wfe_ok = bool(
             wfe is not None
             and wfe >= 0.50
@@ -632,19 +657,27 @@ class WalkForwardBacktester:
             and oos_summary.avg_r_multiple > 0.0
             and oos_stress_2x.avg_r_multiple > 0.0
         )
-
-        return {
+        out_wfa = {
             "status": "ok",
             "n_cycles": n_cycles,
             "is_ratio": is_ratio,
             "n_trials": n_trials,
             "wfe": wfe,
             "wfe_passed": wfe_ok,
+            "psr": psr_info.get("psr"),
+            "min_btl_days": psr_info.get("min_btl_days"),
+            "pbo": pbo_val,
+            "btc_beta": btc_alpha_info.get("btc_beta"),
+            "btc_corr": btc_alpha_info.get("btc_corr"),
+            "jensen_alpha_ann_pct": btc_alpha_info.get("jensen_alpha_ann_pct"),
+            "regime_breakdown": regime_breakdown,
             "cycles": cycles_out,
             "oos_summary": asdict(oos_summary),
             "oos_stress_2x": asdict(oos_stress_2x),
             "monte_carlo": mc,
         }
+        out_wfa["red_flags"] = detect_overfitting_red_flags(out_wfa["oos_summary"], out_wfa)
+        return out_wfa
 
     def run_rolling_wfa(
         self,
@@ -669,6 +702,19 @@ class WalkForwardBacktester:
         min_ts: Optional[int] = None
         max_ts: Optional[int] = None
 
+        btc_daily_map: Dict[int, float] = {}
+        btc_bars = candles_by_symbol.get("BTCUSDT") or []
+        if len(btc_bars) >= 20:
+            by_day_close: Dict[int, float] = {}
+            for b in btc_bars:
+                by_day_close[int(int(b.timestamp) // 86_400_000)] = float(b.close)
+            d_keys = sorted(by_day_close.keys())
+            for idx_k in range(1, len(d_keys)):
+                prev_c = by_day_close[d_keys[idx_k - 1]]
+                cur_c = by_day_close[d_keys[idx_k]]
+                if prev_c > 0:
+                    btc_daily_map[d_keys[idx_k]] = (cur_c - prev_c) / prev_c
+
         for sym, bars in candles_by_symbol.items():
             if len(bars) < 260:
                 continue
@@ -692,6 +738,7 @@ class WalkForwardBacktester:
             max_leverage=max_leverage,
             max_positions=max_positions,
             allow_compounding=allow_compounding,
+            btc_daily_returns_by_day=btc_daily_map or None,
         )
 
     def run_momentum_funding_wfa(

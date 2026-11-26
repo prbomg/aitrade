@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.48"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.49"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:

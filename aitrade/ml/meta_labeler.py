@@ -117,19 +117,29 @@ class _PurePythonCalibratedLogReg:
         return [(x[d] - self.means[d]) / self.stds[d] for d in range(len(self.means))]
 
     @staticmethod
+    def _recency_weights(n: int, alpha: float = 0.5) -> List[float]:
+        if n <= 1:
+            return [1.0] * n
+        denom = max(1e-6, alpha * n)
+        raw = [math.exp(-(n - 1 - i) / denom) for i in range(n)]
+        s = sum(raw) or 1.0
+        return [w * n / s for w in raw]
+
+    @staticmethod
     def _fit_raw_logreg(
-        Xs: List[List[float]], y: List[float], l2: float, lr: float, epochs: int
+        Xs: List[List[float]], y: List[float], l2: float, lr: float, epochs: int, recency_alpha: float = 0.5
     ) -> Tuple[List[float], float]:
         dim = len(Xs[0])
         n = len(Xs)
+        sw = _PurePythonCalibratedLogReg._recency_weights(n, alpha=recency_alpha)
         w = [0.0] * dim
         b = 0.0
         for _ in range(epochs):
             gw = [0.0] * dim
             gb = 0.0
-            for row, label in zip(Xs, y):
+            for row, label, wi_s in zip(Xs, y, sw):
                 p = _sigmoid(sum(wi * xi for wi, xi in zip(w, row)) + b)
-                err = p - label
+                err = (p - label) * wi_s
                 gb += err
                 for d in range(dim):
                     gw[d] += err * row[d]
@@ -581,6 +591,13 @@ class WalkForwardMetaLabeler:
         x_new = self._feature_vector(ctx.candles_15m)
         signal.features["ml_feature_version"] = 3
         signal.features["ml_training_samples"] = len(X_train)
+        if len(X_train) >= 30:
+            from aitrade.backtest.validation_gates import compute_feature_drift
+            mid_i = len(X_train) // 2
+            drift = compute_feature_drift(X_train[:mid_i], X_train[mid_i:])
+            signal.features["ml_feature_psi"] = drift["max_psi"]
+            signal.features["ml_feature_ks"] = drift["max_ks"]
+            signal.features["ml_drift_status"] = drift["status"]
 
         di_value = self._compute_dissimilarity_index(X_train, x_new)
         is_post_only = bool(signal.features.get("post_only", 0.0)) or signal.order_type == "Limit"

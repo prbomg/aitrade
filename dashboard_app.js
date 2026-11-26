@@ -1659,10 +1659,21 @@ function renderStrategyDetail(d) {
 
   const wfaBox = document.getElementById("sd-wfa-box");
   if (wfa && wfa.oos_trades != null) {
+    const extraParts = [];
+    if (wfa.psr != null) extraParts.push("PSR: <b>" + Number(wfa.psr).toFixed(2) + "</b>");
+    if (wfa.pbo != null) extraParts.push("PBO: <b>" + Number(wfa.pbo).toFixed(2) + "</b>");
+    if (wfa.btc_beta != null) extraParts.push("BTC β: <b>" + Number(wfa.btc_beta).toFixed(2) + "</b>");
+    if (wfa.jensen_alpha_ann_pct != null) extraParts.push("α Йенсена: <b>" + (Number(wfa.jensen_alpha_ann_pct) >= 0 ? "+" : "") + Number(wfa.jensen_alpha_ann_pct).toFixed(1) + "%/г</b>");
+    const extraLine = extraParts.length ? ("<div style=margin-top:3px>" + extraParts.join(" · ") + "</div>") : "";
+    const rf = wfa.red_flags || [];
+    const rfLine = rf.length
+      ? ("<div style=margin-top:5px;color:#fbbf24;font-size:11.5px>🚩 Красные флаги: " + rf.map(escapeHtml).join(" · ") + "</div>")
+      : "";
     wfaBox.innerHTML =
       "<div>Статус WFA: <b>" + (wfa.wfe_passed ? "✅ PASSED" : "⛔ FAILED") + "</b> · OOS сделок: <b>" + wfa.oos_trades + "</b></div>" +
       "<div>Profit Factor: <b>" + (wfa.oos_pf == null ? "—" : Number(wfa.oos_pf).toFixed(2)) + "</b> · WFE: <b>" + (wfa.wfe == null ? "—" : Number(wfa.wfe).toFixed(2)) + "</b></div>" +
-      "<div>1x E[R]: <b>" + Number(wfa.oos_avg_r || 0).toFixed(3) + "R</b> · 2x Stress E[R]: <b>" + Number(wfa.oos_2x_avg_r || 0).toFixed(3) + "R</b></div>";
+      "<div>1x E[R]: <b>" + Number(wfa.oos_avg_r || 0).toFixed(3) + "R</b> · 2x Stress E[R]: <b>" + Number(wfa.oos_2x_avg_r || 0).toFixed(3) + "R</b></div>" +
+      extraLine + rfLine;
   } else {
     wfaBox.innerHTML = "<div style=color:var(--muted)>180-дневный Rolling WFA ещё не запускался для этой стратегии (идёт живой тест в Demo Lab / Shadow Lab).</div>";
   }
