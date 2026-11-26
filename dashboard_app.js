@@ -720,7 +720,10 @@ function renderState(st) {
     const subAEl = document.getElementById("env-sub-autotrade-masked");
     if (subAEl) subAEl.textContent = fmtSub(subMap.autotrade);
     const chk = envSt.last_checklist || {};
-    document.getElementById("env-chk-time").textContent = "Проверка: " + (chk.checked_at || "—") + " [" + (chk.mode || "mainnet").toUpperCase() + "]";
+    const chkScope = (chk.account && chk.account !== "shared")
+      ? (String(chk.account).toUpperCase() + "/" + String(chk.mode || "mainnet").toUpperCase())
+      : String(chk.mode || "mainnet").toUpperCase();
+    document.getElementById("env-chk-time").textContent = "Проверка: " + (chk.checked_at || "—") + " [" + chkScope + "]";
     const sumEl = document.getElementById("env-chk-summary");
     sumEl.textContent = chk.summary || "Чек-лист ещё не запускался";
     sumEl.style.color = chk.passed ? "#34d399" : "#fbbf24";

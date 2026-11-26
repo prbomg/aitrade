@@ -37,7 +37,7 @@ class TestIntraday43Audit3ResilienceFixes(unittest.TestCase):
             # Через 49 часов стратегия выходит в COOLING (0.50x)
             now_after = now0 + 49 * 3600
             cal.calibrate_from_closed_pnl(rows, force=True, now_ts=now_after)
-            mod2 = cal.get_strategy_modifier("B2_DONCHIAN_INTRADAY")
+            mod2 = cal.get_strategy_modifier("B2_DONCHIAN_INTRADAY", session_utc="EUROPE")
             self.assertEqual(mod2["status"], "COOLING")
             self.assertEqual(mod2["weight"], 0.50)
 

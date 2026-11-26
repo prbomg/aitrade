@@ -24,6 +24,7 @@ import os
 import random
 import ssl
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -111,7 +112,9 @@ class BybitV5Client:
             self.api_secret = ex_cfg.get("demo_api_secret", "")
             self.trade_base_url = self.demo_url
 
+        self._lock = threading.RLock()
         self._orderbook_history: Dict[str, List[OrderBookSnapshot]] = {}
+        self._inst_cache: Dict[str, Tuple[float, float, float]] = {}
         self.last_data_source: str = "bybit_v5_live"
         self.last_network_error: str = ""
         self._ssl_ctx = ssl.create_default_context()
@@ -154,9 +157,11 @@ class BybitV5Client:
 
     def _public_get(self, path: str, params: Dict[str, Any], timeout: float = 4.5) -> Dict[str, Any]:
         query_str = urllib.parse.urlencode(params)
-        ordered_urls = [self._active_public_url] + [
-            u for u in self.public_endpoints if u != self._active_public_url
-        ]
+        with self._lock:
+            active_url = self._active_public_url
+            ordered_urls = [active_url] + [
+                u for u in self.public_endpoints if u != active_url
+            ]
         errors: List[str] = []
 
         for base_url in ordered_urls:
@@ -167,16 +172,19 @@ class BybitV5Client:
                     raise RuntimeError(
                         f"Bybit API error {data.get('retCode')}: {data.get('retMsg')}"
                     )
-                self._active_public_url = base_url
                 host_tag = base_url.replace("https://", "")
-                self.last_data_source = f"bybit_v5_live ({host_tag})"
-                self.last_network_error = ""
+                with self._lock:
+                    self._active_public_url = base_url
+                    self.last_data_source = f"bybit_v5_live ({host_tag})"
+                    self.last_network_error = ""
                 return data.get("result", {})
             except Exception as exc:
                 errors.append(f"{base_url.replace('https://', '')}: {exc}")
 
-        self.last_network_error = " | ".join(errors)
-        raise RuntimeError(self.last_network_error)
+        err_msg = " | ".join(errors)
+        with self._lock:
+            self.last_network_error = err_msg
+        raise RuntimeError(err_msg)
 
     def _private_request(
         self,
@@ -370,14 +378,16 @@ class BybitV5Client:
             self.last_data_source = "deterministic_market_replay"
             snap = self._synthetic_orderbook(symbol, limit)
 
-        hist = self._orderbook_history.setdefault(symbol, [])
-        hist.append(snap)
-        if len(hist) > 40:
-            hist.pop(0)
+        with self._lock:
+            hist = self._orderbook_history.setdefault(symbol, [])
+            hist.append(snap)
+            if len(hist) > 40:
+                hist.pop(0)
         return snap
 
     def get_orderbook_history(self, symbol: str) -> List[OrderBookSnapshot]:
-        return self._orderbook_history.get(symbol, [])
+        with self._lock:
+            return list(self._orderbook_history.get(symbol, []))
 
     def get_open_interest_history(
         self, symbol: str, interval_time: str = "15min", limit: int = 50
@@ -538,9 +548,9 @@ class BybitV5Client:
         Запрашивает точную спецификацию контракта через /v5/market/instruments-info
         (qtyStep, minOrderQty, tickSize) согласно стандарту Bybit OpenAPI V5.
         """
-        cache = getattr(self, "_inst_cache", {})
-        if symbol in cache:
-            return cache[symbol]
+        with self._lock:
+            if symbol in self._inst_cache:
+                return self._inst_cache[symbol]
         try:
             res = self._public_get("/v5/market/instruments-info", {"category": self.category, "symbol": symbol})
             items = res.get("list", [])
@@ -551,8 +561,8 @@ class BybitV5Client:
                 qty_step = float(lot_f.get("qtyStep", 0.01) or 0.01)
                 min_qty = float(lot_f.get("minOrderQty", qty_step) or qty_step)
                 tick_size = float(px_f.get("tickSize", 0.0001) or 0.0001)
-                cache[symbol] = (qty_step, min_qty, tick_size)
-                self._inst_cache = cache
+                with self._lock:
+                    self._inst_cache[symbol] = (qty_step, min_qty, tick_size)
                 return qty_step, min_qty, tick_size
         except Exception:
             pass

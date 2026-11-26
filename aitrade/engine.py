@@ -130,6 +130,7 @@ class AITradeCombineEngine:
         symbols: Optional[List[str]] = None,
         auto_execute_demo: bool = False,
         max_signals: int = 8,
+        fetch_live_account_state: bool = True,
     ) -> Dict[str, Any]:
         uni = self.settings.get("universe", {})
         core_pairs = symbols or uni.get("core_pairs", [])
@@ -593,7 +594,7 @@ class AITradeCombineEngine:
 
         live_orders = []
         live_positions = []
-        if self.client.api_key and self.client.api_secret:
+        if fetch_live_account_state and self.client.api_key and self.client.api_secret:
             try:
                 live_orders = self.client.get_open_orders()
                 raw_pos = self.client.get_open_positions()

@@ -214,6 +214,7 @@ class Ledger:
                 "UPDATE intents SET status='RESET_CLEARED' WHERE environment=? AND id=? AND status IN ('SUBMITTING','UNCERTAIN')",
                 (self.environment, intent_id),
             )
+        self._invalidate_cache()
 
     def pending(self):
         with self.connect() as c:return [(r[0],r[1],json.loads(r[2])) for r in c.execute("SELECT id,symbol,payload FROM intents WHERE environment=? AND status='PENDING'",(self.environment,))]

@@ -237,8 +237,9 @@ class BybitEnvManager:
                 "checks": checks,
                 "summary": "❌ Проверка не пройдена: сначала введите и сохраните API Key и Secret для " + scope_label,
             }
-            self.state["last_checklist"] = res
-            self._save(self.state)
+            with self._lock:
+                self.state["last_checklist"] = res
+                self._save(self.state)
             return res
 
         key_info_resp = self._signed_get(base_url, api_key, api_secret, "/v5/user/query-api", {})
@@ -296,20 +297,22 @@ class BybitEnvManager:
             all_passed = False
 
         summary_txt = (
-            "✅ ВСЕ 5 ПРОВЕРОК ПРОЙДЕНЫ! Контур " + target_mode.upper() + " полностью готов к работе ($" + "{:,.2f}".format(total_eq) + ")."
+            "✅ ВСЕ 5 ПРОВЕРОК ПРОЙДЕНЫ! Контур " + scope_label + " полностью готов к работе ($" + "{:,.2f}".format(total_eq) + ")."
             if all_passed
-            else "🛑 Предторговый чек-лист не пройден. Исправьте отмеченные пункты перед включением боевого режима."
+            else "🛑 Предторговый чек-лист (" + scope_label + ") не пройден. Исправьте отмеченные пункты перед включением боевого режима."
         )
         res = {
             "mode": target_mode,
+            "account": acc,
             "passed": all_passed,
             "checked_at": datetime.now().strftime("%H:%M:%S"),
             "equity_usd": round(total_eq, 2),
             "checks": checks,
             "summary": summary_txt,
         }
-        self.state["last_checklist"] = res
-        self._save(self.state)
+        with self._lock:
+            self.state["last_checklist"] = res
+            self._save(self.state)
         return res
 
     def switch_environment(self, target_mode: str, force_demo: bool = False) -> Dict[str, Any]:

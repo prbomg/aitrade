@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.54"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.55"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -1406,7 +1406,7 @@ class ControlCenterState:
             btc_reg = self.regime_guard.update_btc_regime(ws_sum)
             news_sum = self.x_radar.get_summary() if hasattr(self.x_radar, "get_summary") else {}
 
-            scan_res = self.engine.scan_market(auto_execute_demo=False)
+            scan_res = self.engine.scan_market(auto_execute_demo=False, fetch_live_account_state=False)
             if hasattr(self, "strategy_funnel"):
                 self.strategy_funnel.record_scan(scan_res.get("strategy_diagnostics") or {})
             paused_for_shadow = set(getattr(self, "paused_strategies", []) or [])
