@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import random
 import threading
 import time
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ class AdaptiveMLCalibrator:
     - Активация снижения весов только при trades >= 20 (COOLING 0.50x при PF < 0.90 или streak <= -5).
     - QUARANTINE (0.0x, блок входов) только при trades >= 25 и PF < 0.75.
     - Автовыход из QUARANTINE в COOLING (0.50x) через 48ч ИЛИ при PF >= 1.10 на последних 10 теневых сделках.
+    - Байесовское распределение весов через Thompson Sampling (Beta-Binomial posterior) для активных стратегий.
     - Запись на диск только при фактическом появлении новых закрытых сделок (без паразитных fsync каждые 5с).
     """
 
@@ -38,6 +40,8 @@ class AdaptiveMLCalibrator:
     ]
     SESSIONS = ("ASIA", "EUROPE", "US_OVERLAP")
     QUARANTINE_TTL_SEC = 48 * 3600
+    THOMPSON_PRIOR_ALPHA = 2.0
+    THOMPSON_PRIOR_BETA = 2.0
 
     def __init__(self, data_dir: Path) -> None:
         self._lock = threading.RLock()
@@ -275,6 +279,12 @@ class AdaptiveMLCalibrator:
             payoff = m["payoff_ratio"]
             net_s = m["net_pnl_usd"]
 
+            # Байесовский Beta-Binomial posterior для Thompson Sampling
+            ts_alpha = round(self.THOMPSON_PRIOR_ALPHA + float(wins), 3)
+            ts_beta = round(self.THOMPSON_PRIOR_BETA + float(losses), 3)
+            ts_mean = round(ts_alpha / max(1e-9, ts_alpha + ts_beta), 4)
+            ts_ev = round(ts_mean * float(payoff) - (1.0 - ts_mean), 4)
+
             streak = 0
             for p in reversed(recent_pnls):
                 if p > 0:
@@ -324,18 +334,24 @@ class AdaptiveMLCalibrator:
                     q_timers[s_name] = 0.0
                     q_released.pop(s_name, None)
                 elif cnt >= 20 and pf >= 1.50 and wr >= 55.0 and payoff >= 0.85:
-                    weight = 1.30
+                    # Плавная байесовская корректировка в коридоре BOOST [1.20, 1.35]
+                    weight = round(max(1.20, min(1.35, 1.15 + 0.35 * max(0.0, ts_mean - 0.50) * min(1.5, payoff))), 2)
                     status = "BOOST"
-                    badge = "🚀 БУСТ ЛИДЕРА (1.30x)"
+                    badge = f"🚀 БУСТ ЛИДЕРА ({weight:.2f}x)"
                     prob_bonus_pct = 3.5
                     q_timers[s_name] = 0.0
                     q_released.pop(s_name, None)
                 elif cnt >= 20 and (pf >= 1.20 or (streak >= 2 and pf >= 1.05)) and payoff >= 0.85:
-                    weight = 1.15
+                    weight = round(max(1.05, min(1.25, 1.05 + 0.30 * max(0.0, ts_mean - 0.45))), 2)
                     status = "BOOST"
-                    badge = "🟢 ПОВЫШЕН (1.15x)"
+                    badge = f"🟢 ПОВЫШЕН ({weight:.2f}x)"
                     prob_bonus_pct = 2.0
                     q_timers[s_name] = 0.0
+                    q_released.pop(s_name, None)
+                elif cnt >= 20:
+                    # Плавный байесовский сдвиг внутри NORMAL [0.85, 1.10] вместо ступеньки
+                    weight = round(max(0.85, min(1.10, 1.0 + 0.40 * (ts_mean - 0.50))), 2)
+                    badge = f"⚖️ НОРМА ({weight:.2f}x)"
                     q_released.pop(s_name, None)
                 else:
                     q_released.pop(s_name, None)
@@ -368,6 +384,10 @@ class AdaptiveMLCalibrator:
                 "status": status,
                 "badge": badge,
                 "quarantine_until_ts": q_timers.get(s_name, 0.0),
+                "thompson_alpha": ts_alpha,
+                "thompson_beta": ts_beta,
+                "thompson_mean": ts_mean,
+                "thompson_ev": ts_ev,
                 "sessions": sess_map,
             }
 
@@ -375,6 +395,51 @@ class AdaptiveMLCalibrator:
         self.state["last_calibrated_at"] = datetime.now().strftime("%H:%M:%S")
         self._save(self.state)
         return self.get_summary()
+
+    def sample_thompson_weights(
+        self,
+        seed: Optional[int] = None,
+        min_weight: float = 0.40,
+        max_weight: float = 1.40,
+    ) -> Dict[str, float]:
+        """
+        Выполняет байесовскую выборку Thompson Sampling (Beta(alpha, beta)) для плавного
+        перераспределения риска между активными стратегиями.
+        Стратегии в QUARANTINE всегда получают 0.0, в COOLING — не выше 0.50.
+        """
+        with self._lock:
+            strats = dict(self.state.get("strategies", {}))
+        if not strats:
+            return {}
+        rng = random.Random(seed)
+        raw_draws: Dict[str, float] = {}
+        active_draws: List[float] = []
+        for name, info in strats.items():
+            st = str(info.get("status", "NORMAL"))
+            if st == "QUARANTINE":
+                raw_draws[name] = 0.0
+                continue
+            alpha = max(1.0, float(info.get("thompson_alpha", self.THOMPSON_PRIOR_ALPHA) or self.THOMPSON_PRIOR_ALPHA))
+            beta = max(1.0, float(info.get("thompson_beta", self.THOMPSON_PRIOR_BETA) or self.THOMPSON_PRIOR_BETA))
+            payoff = max(0.5, min(2.5, float(info.get("payoff_ratio", 1.0) or 1.0)))
+            draw = rng.betavariate(alpha, beta) * (0.7 + 0.3 * payoff)
+            raw_draws[name] = draw
+            if st != "COOLING":
+                active_draws.append(draw)
+
+        mean_active = (sum(active_draws) / len(active_draws)) if active_draws else 0.5
+        out: Dict[str, float] = {}
+        for name, info in strats.items():
+            st = str(info.get("status", "NORMAL"))
+            if st == "QUARANTINE":
+                out[name] = 0.0
+            elif st == "COOLING":
+                scaled = (raw_draws[name] / max(1e-6, mean_active)) * 0.50
+                out[name] = round(max(0.25, min(0.50, scaled)), 3)
+            else:
+                scaled = raw_draws[name] / max(1e-6, mean_active)
+                out[name] = round(max(min_weight, min(max_weight, scaled)), 3)
+        return out
 
     def get_strategy_modifier(self, strategy_name: str, session_utc: Optional[str] = None) -> Dict[str, Any]:
         with self._lock:
