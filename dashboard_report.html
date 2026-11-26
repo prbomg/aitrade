@@ -215,11 +215,23 @@ tbody tr:hover td:first-child { background:#152136; }
     <div class="booster-top-grid" style="margin-bottom:4px">
       <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:10px 12px">
         <div style="font-weight:700;margin-bottom:8px;color:#fff">1. Защищённое хранилище API-ключей (env_vault.json, chmod 600)</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">
+          Общий Demo: <b style="color:#34d399" id="env-demo-masked">—</b> &nbsp;|&nbsp;
+          Общий Mainnet: <b style="color:#c4b5fd" id="env-main-masked">Не задан</b>
+        </div>
         <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">
-          Ключ Demo: <b style="color:#34d399" id="env-demo-masked">—</b> &nbsp;|&nbsp;
-          Ключ Mainnet: <b style="color:#c4b5fd" id="env-main-masked">Не задан</b>
+          Субаккаунт Booster: <b style="color:#a78bfa" id="env-sub-booster-masked">—</b> &nbsp;|&nbsp;
+          Субаккаунт Autotrade: <b style="color:#38bdf8" id="env-sub-autotrade-masked">—</b>
         </div>
         <div class="form-row">
+          <div class="form-group">
+            <label>Аккаунт / Субаккаунт</label>
+            <select id="env-key-account">
+              <option value="shared" selected>🌐 Общий (fallback)</option>
+              <option value="booster">🚀 Субаккаунт Booster</option>
+              <option value="autotrade">🎯 Субаккаунт Autotrade</option>
+            </select>
+          </div>
           <div class="form-group">
             <label>Контур для записи ключей</label>
             <select id="env-key-target">
@@ -229,11 +241,11 @@ tbody tr:hover td:first-child { background:#152136; }
           </div>
           <div class="form-group">
             <label>API Key</label>
-            <input type="text" id="env-api-key" placeholder="Вставьте API Key..." style="width:185px">
+            <input type="text" id="env-api-key" placeholder="Вставьте API Key..." style="width:170px">
           </div>
           <div class="form-group">
             <label>API Secret</label>
-            <input type="password" id="env-api-secret" placeholder="Вставьте API Secret..." style="width:185px">
+            <input type="password" id="env-api-secret" placeholder="Вставьте API Secret..." style="width:170px">
           </div>
           <div class="form-group" style="padding-top:15px">
             <button type="button" id="btn-save-env-keys" class="btn-primary">💾 Сохранить ключи</button>

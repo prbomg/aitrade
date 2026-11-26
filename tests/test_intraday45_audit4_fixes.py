@@ -86,7 +86,7 @@ class TestIntraday45Audit4Fixes(unittest.TestCase):
             [{"symbol": "BTCUSDT", "orderId": "ord-stuck", "reduceOnly": False, "stopOrderType": ""}],
             [{"symbol": "BTCUSDT", "orderId": "ord-stuck", "reduceOnly": False, "stopOrderType": ""}],
         ]
-        st.bybit.get_positions.side_effect = [[], []]
+        st.bybit.get_positions.side_effect = [[], [], []]
         st.bybit.cancel_order.return_value = {"ok": False, "retMsg": "exchange timeout"}
 
         res = st.execute_emergency_stop()
@@ -105,7 +105,7 @@ class TestIntraday45Audit4Fixes(unittest.TestCase):
             [{"symbol": "ETHUSDT", "orderId": "ord-1", "reduceOnly": False, "stopOrderType": ""}],
             [{"symbol": "ETHUSDT", "orderId": "ord-1", "reduceOnly": False, "stopOrderType": ""}],
         ]
-        st.bybit.get_positions.side_effect = [[], []]
+        st.bybit.get_positions.side_effect = [[], [], []]
         st.bybit.cancel_order.return_value = {"ok": True, "retMsg": "OK"}
 
         res = st.execute_emergency_stop()

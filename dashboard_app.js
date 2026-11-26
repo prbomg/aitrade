@@ -155,8 +155,21 @@ document.getElementById("btn-close-env").addEventListener("click", function(){ d
 document.getElementById("btn-switch-mainnet").disabled = true;
 document.getElementById("btn-switch-mainnet").textContent = "Mainnet отключён до валидации";
 document.getElementById("btn-save-env-keys").addEventListener("click", async function(){
- const r = await apiPost("/api/env_control",{action:"save_keys",target_mode:document.getElementById("env-key-target").value,api_key:document.getElementById("env-api-key").value,api_secret:document.getElementById("env-api-secret").value});
- document.getElementById("env-api-secret").value="";document.getElementById("env-api-key").value="";showToast(r.ok ? "Ключи сохранены" : r.retMsg,!r.ok);refreshState();
+ const accEl = document.getElementById("env-key-account");
+ const accVal = accEl ? accEl.value : "shared";
+ const targetMode = document.getElementById("env-key-target").value;
+ const apiKey = document.getElementById("env-api-key").value.trim();
+ const apiSecret = document.getElementById("env-api-secret").value.trim();
+ if (!apiKey && !apiSecret) { showToast("Введите API Key или API Secret", true); return; }
+ const isSub = accVal === "booster" || accVal === "autotrade";
+ const payload = isSub
+  ? {action:"save_subaccount_keys",account:accVal,target_mode:targetMode,api_key:apiKey,api_secret:apiSecret}
+  : {action:"save_keys",target_mode:targetMode,api_key:apiKey,api_secret:apiSecret};
+ const r = await apiPost("/api/env_control", payload);
+ document.getElementById("env-api-secret").value="";document.getElementById("env-api-key").value="";
+ const okMsg = isSub ? ("Ключи субаккаунта " + accVal.toUpperCase() + " сохранены") : "Ключи сохранены";
+ showToast(r.ok ? (okMsg + (r.masked_key ? (" (" + r.masked_key + ")") : "")) : r.retMsg,!r.ok);
+ refreshState(true);
 });
 document.getElementById("btn-run-checklist").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"run_checklist",target_mode:document.getElementById("env-key-target").value});showToast(r.retMsg || "Проверка завершена",!r.ok);refreshState();});
 document.getElementById("btn-switch-demo").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"switch_mode",target_mode:"demo"});showToast(r.retMsg || "Demo",!r.ok);refreshState();});
@@ -697,6 +710,15 @@ function renderState(st) {
   if (document.getElementById("env-demo-masked")) {
     document.getElementById("env-demo-masked").textContent = envSt.demo_key_masked || "—";
     document.getElementById("env-main-masked").textContent = envSt.mainnet_key_masked || "Не задан";
+    const subMap = envSt.subaccounts || {};
+    const fmtSub = function(info) {
+      if (!info) return "—";
+      return info.isolated ? ("Изолирован (" + (info.key_masked || "—") + ")") : ("Общий (" + (info.key_masked || "Не задан") + ")");
+    };
+    const subBEl = document.getElementById("env-sub-booster-masked");
+    if (subBEl) subBEl.textContent = fmtSub(subMap.booster);
+    const subAEl = document.getElementById("env-sub-autotrade-masked");
+    if (subAEl) subAEl.textContent = fmtSub(subMap.autotrade);
     const chk = envSt.last_checklist || {};
     document.getElementById("env-chk-time").textContent = "Проверка: " + (chk.checked_at || "—") + " [" + (chk.mode || "mainnet").toUpperCase() + "]";
     const sumEl = document.getElementById("env-chk-summary");
@@ -743,7 +765,10 @@ function renderState(st) {
     uEl.className = "kpi-mini-val " + (upnl >= 0 ? "pos-green" : "pos-red");
     const riskSub = document.getElementById("kpi-risk-sub");
     if (riskSub && effLim.portfolio_risk_cap_usd != null) {
-      riskSub.textContent = "Риск: $" + Number(effLim.portfolio_risk_used_usd || 0).toFixed(0) + " / $" + Number(effLim.portfolio_risk_cap_usd || 0).toFixed(0) + " · своб. слотов: " + (effLim.portfolio_slots_left ?? "—");
+      const inc = Boolean(effLim.portfolio_risk_incomplete);
+      const exCnt = Number(effLim.portfolio_risk_excluded_count || 0);
+      riskSub.style.color = inc ? "#fbbf24" : "";
+      riskSub.textContent = (inc ? "Учт. риск: $" : "Риск: $") + Number(effLim.portfolio_risk_used_usd || 0).toFixed(0) + " / $" + Number(effLim.portfolio_risk_cap_usd || 0).toFixed(0) + (inc ? (" (неполн., без SL/цены: " + exCnt + ")") : (" · своб. слотов: " + (effLim.portfolio_slots_left ?? "—")));
     }
 
     const newPnl = ps ? Number(ps.new_strategies_pnl_usd || 0) : Number(st.realized_pnl_recent || 0);
@@ -1695,17 +1720,24 @@ function renderStrategyDetail(d) {
   // Триангуляция Shadow vs Real Demo по signal_id
   const rec = d.reconciliation || {};
   const rSum = rec.summary || {};
+  const recDegraded = Boolean(rec.degraded || rec.ok === false);
+  const recSrc = rec.sources || {};
   const recSumEl = document.getElementById("sd-reconcile-summary");
   if (recSumEl) {
-    recSumEl.textContent = "Всего: " + (rSum.total_signals || 0) + " · Совпали: " + (rSum.matched_both || 0) + " (закр. " + (rSum.matched_closed || 0) + ") · Только Shadow: " + (rSum.shadow_only || 0) + " · Только Demo: " + (rSum.demo_only || 0) + " · Пропущено: " + (rSum.skipped_both || 0);
+    const degParts = [];
+    if (recSrc.shadow && recSrc.shadow.ok === false) degParts.push("Shadow недоступен");
+    if (recSrc.demo && recSrc.demo.ok === false) degParts.push("Demo недоступен");
+    const degPrefix = recDegraded ? ("⚠️ Данные неполны" + (degParts.length ? (" (" + degParts.join(", ") + ")") : "") + " · ") : "";
+    recSumEl.style.color = recDegraded ? "#f87171" : "#38bdf8";
+    recSumEl.textContent = degPrefix + "Всего: " + (rSum.total_signals || 0) + " · Совпали: " + (rSum.matched_both || 0) + " (закр. " + (rSum.matched_closed || 0) + ") · Только Shadow: " + (rSum.shadow_only || 0) + " · Только Demo: " + (rSum.demo_only || 0) + " · Пропущено: " + (rSum.skipped_both || 0) + ((rSum.unverified || 0) > 0 ? (" · Не проверено: " + rSum.unverified) : "");
   }
   const recTbody = document.getElementById("sd-reconcile-tbody");
   if (recTbody) {
     const rSigs = rec.signals || [];
     recTbody.innerHTML = rSigs.length === 0
-      ? "<tr><td colspan=8 style=color:var(--muted)>Пока нет сигналов с общим signal_id (появятся после первого скана на v46+)</td></tr>"
+      ? (recDegraded ? "<tr><td colspan=8 style=color:#f87171>⚠️ Данные сверки недоступны из-за ошибки чтения источника</td></tr>" : "<tr><td colspan=8 style=color:var(--muted)>Пока нет сигналов с общим signal_id (появятся после первого скана на v46+)</td></tr>")
       : rSigs.map(function(s) {
-          const pCls = s.pair_status === "MATCHED_BOTH" ? "badge-green" : (s.pair_status === "SHADOW_ONLY" ? "badge-purple" : (s.pair_status === "DEMO_ONLY" ? "badge-blue" : "badge-amber"));
+          const pCls = s.pair_status === "MATCHED_BOTH" ? "badge-green" : (s.pair_status === "SHADOW_ONLY" ? "badge-purple" : (s.pair_status === "DEMO_ONLY" ? "badge-blue" : ((String(s.pair_status || "").indexOf("UNVERIFIED") === 0 || s.pair_status === "SOURCE_UNAVAILABLE") ? "badge-red" : "badge-amber")));
           const shInfo = s.shadow || {};
           const dmInfo = s.demo || {};
           const shExit = (shInfo.trade && shInfo.trade.exit_reason) ? (" / " + shInfo.trade.exit_reason) : "";

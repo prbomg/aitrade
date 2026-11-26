@@ -247,6 +247,7 @@ def compute_live_strategy_metrics(
     ledgers: Iterable[Tuple[str, Ledger]],
     target_strategies: Tuple[str, ...] = LIVE_ACTIVE_STRATEGIES,
     now_ts: Optional[float] = None,
+    trace_limit: Optional[int] = 50,
 ) -> Dict[str, Any]:
     """
     Строит раздельный учёт боевых стратегий (T1_DONCHIAN_TSMOM, B1_SQUEEZE_BREAKOUT)
@@ -265,6 +266,7 @@ def compute_live_strategy_metrics(
 
     seen_closed = set()
     seen_intents = set()
+    ledger_errors: List[str] = []
 
     for acc_name, ledger in ledgers:
         try:
@@ -282,7 +284,8 @@ def compute_live_strategy_metrics(
                             exit_reason_by_oid[e_oid] = e_rsn
                     except Exception:
                         continue
-        except Exception:
+        except Exception as exc:
+            ledger_errors.append(f"{acc_name}: {str(exc)[:140]}")
             continue
 
         # Индексируем фактические исполнения (execPrice, execQty, execFee, execTime) по orderLinkId / orderId
@@ -507,8 +510,9 @@ def compute_live_strategy_metrics(
 
     return {
         "strategies": by_strategy,
-        "execution_traces": traces[:50],
+        "execution_traces": traces if trace_limit is None else traces[: max(0, int(trace_limit))],
         "filled_24h_by_strategy": filled_24h_by_strat,
+        "ledger_errors": ledger_errors,
         "legacy_isolated": {
             "trades": legacy_trades,
             "net_pnl_usd": round(legacy_net_usd, 2),
@@ -521,20 +525,56 @@ def build_shadow_demo_reconciliation(
     ledgers: Iterable[Tuple[str, Ledger]],
     strategy_id: Optional[str] = None,
     limit: int = 200,
+    since_ms: Optional[int] = None,
+    until_ms: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Сквозная сверка Shadow vs Bybit Demo по общему signal_id: входы, пропуски, задержки и правила выхода."""
+    """
+    Сквозная сверка Shadow vs Bybit Demo по общему signal_id:
+    - Фильтрация по стратегии и периоду выполняется ДО постраничного лимита (итоги и причины не зависят от limit).
+    - Исполнения Demo берутся по полному журналу (trace_limit=None), без обрезки до 50 трасс.
+    - Ошибки чтения любого источника отражаются явно (degraded=True, ok=False, SOURCE_UNAVAILABLE).
+    """
     target_strat = normalize_strategy_id(strategy_id) if strategy_id else ""
+    page_limit = max(1, int(limit))
+    since_val = int(since_ms) if since_ms is not None and int(since_ms) > 0 else None
+    until_val = int(until_ms) if until_ms is not None and int(until_ms) > 0 else None
+
+    def _in_period(ts_ms: int) -> bool:
+        if since_val is not None and ts_ms < since_val:
+            return False
+        if until_val is not None and ts_ms > until_val:
+            return False
+        return True
+
     shadow_trades_by_sig: Dict[str, Dict[str, Any]] = {}
     shadow_decisions_by_sig: Dict[str, Dict[str, Any]] = {}
-    if shadow_engine is not None and hasattr(shadow_engine, "_connect"):
+    shadow_source: Dict[str, Any] = {
+        "ok": True,
+        "available": bool(shadow_engine is not None and hasattr(shadow_engine, "_connect")),
+        "complete": True,
+        "error": "",
+    }
+    if not shadow_source["available"]:
+        shadow_source["ok"] = False
+        shadow_source["complete"] = False
+        shadow_source["error"] = "Источник Shadow не подключён"
+    else:
         try:
             with shadow_engine._lock, shadow_engine._connect() as conn:
-                t_rows = conn.execute(
-                    "SELECT id, signal_id, signal_created_ms, strategy_id, symbol, side, status, opened_ts, closed_ts, "
-                    "entry_px, exit_px, sl_px, tp_px, fees_usd, pnl_usd, realized_r, exit_reason "
-                    "FROM shadow_trades WHERE signal_id != '' ORDER BY opened_ts DESC LIMIT ?",
-                    (max(50, int(limit) * 3),),
-                ).fetchall()
+                if target_strat:
+                    t_rows = conn.execute(
+                        "SELECT id, signal_id, signal_created_ms, strategy_id, symbol, side, status, opened_ts, closed_ts, "
+                        "entry_px, exit_px, sl_px, tp_px, fees_usd, pnl_usd, realized_r, exit_reason "
+                        "FROM shadow_trades WHERE signal_id != '' AND (strategy_id = ? OR strategy_id LIKE ?) "
+                        "ORDER BY opened_ts DESC",
+                        (target_strat, f"%:{target_strat}"),
+                    ).fetchall()
+                else:
+                    t_rows = conn.execute(
+                        "SELECT id, signal_id, signal_created_ms, strategy_id, symbol, side, status, opened_ts, closed_ts, "
+                        "entry_px, exit_px, sl_px, tp_px, fees_usd, pnl_usd, realized_r, exit_reason "
+                        "FROM shadow_trades WHERE signal_id != '' ORDER BY opened_ts DESC"
+                    ).fetchall()
                 for r in t_rows:
                     sid_norm = normalize_strategy_id(r[3])
                     if target_strat and sid_norm != target_strat:
@@ -560,11 +600,18 @@ def build_shadow_demo_reconciliation(
                             "realized_r": round(float(r[15] or 0.0), 3) if r[6] == "CLOSED" else None,
                             "exit_reason": r[16] or "",
                         }
-                d_rows = conn.execute(
-                    "SELECT ts, signal_id, strategy_id, symbol, side, decision, reason, shadow_trade_id "
-                    "FROM shadow_signal_decisions WHERE signal_id != '' ORDER BY ts DESC LIMIT ?",
-                    (max(100, int(limit) * 4),),
-                ).fetchall()
+                if target_strat:
+                    d_rows = conn.execute(
+                        "SELECT ts, signal_id, strategy_id, symbol, side, decision, reason, shadow_trade_id "
+                        "FROM shadow_signal_decisions WHERE signal_id != '' AND (strategy_id = ? OR strategy_id LIKE ?) "
+                        "ORDER BY ts DESC",
+                        (target_strat, f"%:{target_strat}"),
+                    ).fetchall()
+                else:
+                    d_rows = conn.execute(
+                        "SELECT ts, signal_id, strategy_id, symbol, side, decision, reason, shadow_trade_id "
+                        "FROM shadow_signal_decisions WHERE signal_id != '' ORDER BY ts DESC"
+                    ).fetchall()
                 for r in d_rows:
                     sid_norm = normalize_strategy_id(r[2])
                     if target_strat and sid_norm != target_strat:
@@ -581,11 +628,30 @@ def build_shadow_demo_reconciliation(
                             "reason": r[6] or "",
                             "trade_id": r[7] or "",
                         }
-        except Exception:
-            pass
+        except Exception as exc:
+            shadow_source["ok"] = False
+            shadow_source["complete"] = False
+            shadow_source["error"] = str(exc)[:200]
 
     ledger_list = list(ledgers)
-    live_metrics = compute_live_strategy_metrics(ledger_list)
+    demo_source: Dict[str, Any] = {
+        "ok": True,
+        "available": len(ledger_list) > 0,
+        "complete": True,
+        "error": "",
+        "ledgers_checked": len(ledger_list),
+        "ledgers_failed": 0,
+    }
+    demo_errors: List[str] = []
+    if not ledger_list:
+        demo_source["ok"] = False
+        demo_source["complete"] = False
+        demo_source["error"] = "Журналы Demo не подключены"
+
+    live_metrics = compute_live_strategy_metrics(ledger_list, trace_limit=None)
+    if live_metrics.get("ledger_errors"):
+        demo_errors.extend(live_metrics["ledger_errors"])
+
     demo_traces_by_sig: Dict[str, Dict[str, Any]] = {}
     for tr in live_metrics.get("execution_traces") or []:
         sig_id = str(tr.get("signal_id") or "").strip()
@@ -601,8 +667,7 @@ def build_shadow_demo_reconciliation(
         try:
             with ledger.connect() as conn:
                 ev_rows = conn.execute(
-                    "SELECT ts, payload FROM events WHERE kind='SIGNAL_DECISION' ORDER BY ts DESC LIMIT ?",
-                    (max(100, int(limit) * 4),),
+                    "SELECT ts, payload FROM events WHERE kind='SIGNAL_DECISION' ORDER BY ts DESC"
                 ).fetchall()
             for ts_v, raw_p in ev_rows:
                 try:
@@ -628,9 +693,16 @@ def build_shadow_demo_reconciliation(
                         "reason": str(p.get("reason") or ""),
                         "intent_id": str(p.get("intent_id") or ""),
                     }
-        except Exception:
-            continue
+        except Exception as exc:
+            demo_source["ledgers_failed"] += 1
+            demo_errors.append(f"{acc_name}: {str(exc)[:140]}")
 
+    if demo_errors:
+        demo_source["ok"] = False
+        demo_source["complete"] = False
+        demo_source["error"] = "; ".join(dict.fromkeys(demo_errors))[:220]
+
+    degraded = (not shadow_source["ok"]) or (not demo_source["ok"])
     all_sig_ids = set(shadow_trades_by_sig) | set(shadow_decisions_by_sig) | set(demo_traces_by_sig) | set(demo_decisions_by_sig)
     records: List[Dict[str, Any]] = []
     matched_both = 0
@@ -638,6 +710,7 @@ def build_shadow_demo_reconciliation(
     shadow_only = 0
     demo_only = 0
     skipped_both = 0
+    unverified = 0
 
     for sig_id in all_sig_ids:
         sh_t = shadow_trades_by_sig.get(sig_id)
@@ -654,22 +727,67 @@ def build_shadow_demo_reconciliation(
             or (dm_t or {}).get("opened_ms")
             or int(float((dm_d or sh_d or {}).get("ts") or 0.0) * 1000)
         )
+        if not _in_period(created_ms):
+            continue
+
         sh_entered = sh_t is not None
         dm_entered = dm_t is not None and dm_t.get("status") in ("OPEN", "CLOSED", "FILLED")
+
         if sh_entered and dm_entered:
             pair_status = "MATCHED_BOTH"
             matched_both += 1
             if sh_t.get("status") == "CLOSED" and dm_t.get("status") == "CLOSED":
                 matched_closed += 1
         elif sh_entered:
-            pair_status = "SHADOW_ONLY"
-            shadow_only += 1
+            if not demo_source["ok"]:
+                pair_status = "UNVERIFIED_DEMO_ERROR"
+                unverified += 1
+            else:
+                pair_status = "SHADOW_ONLY"
+                shadow_only += 1
         elif dm_entered:
-            pair_status = "DEMO_ONLY"
-            demo_only += 1
+            if not shadow_source["ok"]:
+                pair_status = "UNVERIFIED_SHADOW_ERROR"
+                unverified += 1
+            else:
+                pair_status = "DEMO_ONLY"
+                demo_only += 1
         else:
-            pair_status = "SKIPPED_BOTH"
-            skipped_both += 1
+            if degraded and ((not shadow_source["ok"] and sh_d is None) or (not demo_source["ok"] and dm_d is None)):
+                pair_status = "SOURCE_UNAVAILABLE"
+                unverified += 1
+            else:
+                pair_status = "SKIPPED_BOTH"
+                skipped_both += 1
+
+        if sh_entered:
+            sh_dec = "ENTERED"
+            sh_skip = ""
+        elif sh_d is not None:
+            sh_dec = sh_d.get("decision") or "SKIPPED"
+            sh_skip = sh_d.get("reason", "")
+        elif not shadow_source["ok"]:
+            sh_dec = "SOURCE_UNAVAILABLE"
+            sh_skip = "Данные Shadow недоступны"
+        else:
+            sh_dec = "NO_RECORD"
+            sh_skip = ""
+
+        if dm_entered:
+            dm_dec = dm_d.get("decision") if dm_d else "SUBMITTED"
+            dm_skip = ""
+        elif dm_d is not None:
+            dm_dec = dm_d.get("decision") or "SKIPPED"
+            dm_skip = dm_d.get("reason", "")
+        elif dm_t is not None:
+            dm_dec = "SUBMITTED"
+            dm_skip = ""
+        elif not demo_source["ok"]:
+            dm_dec = "SOURCE_UNAVAILABLE"
+            dm_skip = "Данные Demo недоступны"
+        else:
+            dm_dec = "NO_RECORD"
+            dm_skip = ""
 
         records.append(
             {
@@ -681,13 +799,13 @@ def build_shadow_demo_reconciliation(
                 "side": meta.get("side", ""),
                 "pair_status": pair_status,
                 "shadow": {
-                    "decision": "ENTERED" if sh_entered else (sh_d.get("decision") if sh_d else "NO_RECORD"),
-                    "skip_reason": "" if sh_entered else (sh_d.get("reason", "") if sh_d else ""),
+                    "decision": sh_dec,
+                    "skip_reason": sh_skip,
                     "trade": sh_t,
                 },
                 "demo": {
-                    "decision": (dm_d.get("decision") if dm_d else ("SUBMITTED" if dm_t else "NO_RECORD")),
-                    "skip_reason": "" if dm_entered else (dm_d.get("reason", "") if dm_d else ""),
+                    "decision": dm_dec,
+                    "skip_reason": dm_skip,
                     "fill_latency_ms": dm_t.get("fill_latency_ms") if dm_t else None,
                     "exit_reason": dm_t.get("exit_reason", "") if dm_t else "",
                     "trace": dm_t,
@@ -696,16 +814,33 @@ def build_shadow_demo_reconciliation(
         )
 
     records.sort(key=lambda x: int(x.get("signal_created_ms") or 0), reverse=True)
+    min_ms = min((int(r["signal_created_ms"]) for r in records if r.get("signal_created_ms")), default=None)
+    max_ms = max((int(r["signal_created_ms"]) for r in records if r.get("signal_created_ms")), default=None)
+    page = records[:page_limit]
     return {
-        "ok": True,
+        "ok": not degraded,
+        "degraded": degraded,
         "strategy_filter": target_strat or None,
+        "period": {
+            "since_ms": since_val,
+            "until_ms": until_val,
+            "observed_min_ms": min_ms,
+            "observed_max_ms": max_ms,
+        },
+        "sources": {
+            "shadow": shadow_source,
+            "demo": demo_source,
+        },
         "summary": {
             "total_signals": len(records),
+            "returned_signals": len(page),
+            "page_limit": page_limit,
             "matched_both": matched_both,
             "matched_closed": matched_closed,
             "shadow_only": shadow_only,
             "demo_only": demo_only,
             "skipped_both": skipped_both,
+            "unverified": unverified,
         },
-        "signals": records[: max(1, int(limit))],
+        "signals": page,
     }

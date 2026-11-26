@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.52"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.53"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -39,23 +39,26 @@ def is_protective_order(order: Dict[str, Any]) -> bool:
     return bool(order.get("reduceOnly")) or (bool(stop_t) and stop_t.lower() != "unknown")
 
 
-def compute_portfolio_risk_usd(
+def compute_portfolio_risk_details(
     positions: List[Dict[str, Any]],
     open_orders: List[Dict[str, Any]],
     strict: bool = False,
-) -> float:
-    """Единый расчёт совокупного риска портфеля (открытые позиции + активные входные заявки) для панели и исполнителя."""
+) -> Dict[str, Any]:
+    """Единый расчёт совокупного риска портфеля с признаком неполноты и числом исключённых записей."""
     total_risk = 0.0
+    excluded_positions = 0
+    excluded_orders = 0
     for p in positions or []:
         ep = float(p.get("avgPrice") or 0)
         psl = float(p.get("stopLoss") or 0)
         sz = float(p.get("size") or 0)
-        if psl <= 0:
-            if strict:
+        if psl <= 0 or ep <= 0 or sz <= 0:
+            if psl <= 0 and strict:
                 raise ValueError("Открытая позиция без SL")
+            if sz > 0:
+                excluded_positions += 1
             continue
-        if ep > 0 and sz > 0:
-            total_risk += sz * (abs(ep - psl) + ep * 0.0054)
+        total_risk += sz * (abs(ep - psl) + ep * 0.0054)
     for o in open_orders or []:
         if is_protective_order(o):
             continue
@@ -65,10 +68,28 @@ def compute_portfolio_risk_usd(
         if not ep or not osl:
             if strict:
                 raise ValueError("Непроверенный риск активной заявки")
+            if qty > 0:
+                excluded_orders += 1
             continue
         if qty > 0:
             total_risk += qty * (abs(ep - osl) + ep * 0.0054)
-    return total_risk
+    excluded_total = excluded_positions + excluded_orders
+    return {
+        "risk_usd": total_risk,
+        "incomplete": excluded_total > 0,
+        "excluded_positions": excluded_positions,
+        "excluded_orders": excluded_orders,
+        "excluded_count": excluded_total,
+    }
+
+
+def compute_portfolio_risk_usd(
+    positions: List[Dict[str, Any]],
+    open_orders: List[Dict[str, Any]],
+    strict: bool = False,
+) -> float:
+    """Единый расчёт совокупного риска портфеля (открытые позиции + активные входные заявки) для панели и исполнителя."""
+    return float(compute_portfolio_risk_details(positions, open_orders, strict=strict)["risk_usd"])
 
 
 class QuietWSGIHandler(WSGIRequestHandler):
@@ -810,9 +831,16 @@ class ControlCenterState:
                                 acc_rep["errors"].append(
                                     f"Финальная отмена {ro.get('symbol')}: {str(fc_exc)[:120]}"
                                 )
+                        verify_pos = ctrl.get_positions()
                         verify_orders = ctrl.get_open_orders()
+                        acc_rep["remaining_positions"] = len(verify_pos)
                         acc_rep["remaining_orders"] = len(verify_orders)
                         acc_rep["remaining_entry_orders"] = sum(1 for o in verify_orders if not is_protective_order(o))
+                        if verify_pos:
+                            any_partial = True
+                            for rp in verify_pos:
+                                if float(rp.get("stopLoss") or 0) <= 0:
+                                    acc_rep["unprotected_positions"].append(str(rp.get("symbol", "")))
                         if verify_orders:
                             any_partial = True
                 else:
@@ -1784,7 +1812,8 @@ class ControlCenterState:
         shared_acc = b_ctrl is self.bybit
         port_cap_usd = min(float(demo_lab_cfg_st.get("portfolio_cap_usdt", 50000.0) or 50000.0), usdt_bal) if demo_lab_on else min(1000.0, usdt_bal)
         port_risk_cap_pct = 25 if demo_lab_on else 6
-        port_risk_used = compute_portfolio_risk_usd(positions, open_orders, strict=False)
+        port_risk_info = compute_portfolio_risk_details(positions, open_orders, strict=False)
+        port_risk_used = float(port_risk_info["risk_usd"])
         core_open_cnt = sum(1 for p in positions if str(p.get("strategy_id", "")).startswith("CORE:"))
         booster_open_cnt = sum(1 for p in positions if str(p.get("strategy_id", "")).startswith("BOOSTER:"))
         core_eff_max = max(self.core_max_positions, 8) if demo_lab_on else self.core_max_positions
@@ -1804,6 +1833,10 @@ class ControlCenterState:
             "portfolio_slots_left": max(0, max_conc_cfg - len(positions)),
             "portfolio_cap_usd": round(port_cap_usd, 2),
             "portfolio_risk_used_usd": round(port_risk_used, 2),
+            "portfolio_risk_incomplete": bool(port_risk_info["incomplete"]),
+            "portfolio_risk_excluded_positions": int(port_risk_info["excluded_positions"]),
+            "portfolio_risk_excluded_orders": int(port_risk_info["excluded_orders"]),
+            "portfolio_risk_excluded_count": int(port_risk_info["excluded_count"]),
             "portfolio_risk_cap_pct": port_risk_cap_pct,
             "portfolio_risk_cap_usd": round(port_cap_usd * (port_risk_cap_pct / 100.0), 2),
             "capital_note": "Расчётный капитал $1,000/страт. (общий Demo-счёт)" if (demo_lab_on and shared_acc) else "Изолированный расчёт капитала",
@@ -2213,12 +2246,29 @@ def create_wsgi_app(state: ControlCenterState):
                 lim = max(1, min(500, int((qs.get("limit") or ["200"])[0] or 200)))
             except ValueError:
                 lim = 200
+            since_ms_q = None
+            until_ms_q = None
+            try:
+                if qs.get("since_ms") and qs["since_ms"][0]:
+                    since_ms_q = int(qs["since_ms"][0])
+            except ValueError:
+                since_ms_q = None
+            try:
+                if qs.get("until_ms") and qs["until_ms"][0]:
+                    until_ms_q = int(qs["until_ms"][0])
+            except ValueError:
+                until_ms_q = None
             active_ledgers = [("autotrade", state.bybit.ledger)]
             b_ctrl_r = getattr(state, "booster_bybit", state.bybit)
             if b_ctrl_r is not state.bybit:
                 active_ledgers.append(("booster", b_ctrl_r.ledger))
             rec_data = build_shadow_demo_reconciliation(
-                getattr(state, "shadow_engine", None), active_ledgers, strategy_id=sid, limit=lim
+                getattr(state, "shadow_engine", None),
+                active_ledgers,
+                strategy_id=sid,
+                limit=lim,
+                since_ms=since_ms_q,
+                until_ms=until_ms_q,
             )
             payload = json.dumps(rec_data, ensure_ascii=False).encode("utf-8")
             start_response("200 OK", headers + [("Content-Type", "application/json; charset=utf-8")])
