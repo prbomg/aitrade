@@ -403,6 +403,7 @@ class LiveShadowEngine:
         open_list: List[Dict[str, Any]] = []
         closed_list: List[Dict[str, Any]] = []
         curve: List[float] = [self.POD_CAPITAL_USD]
+        exit_counts: Dict[str, int] = {"TP": 0, "SL": 0, "TIME_STOP": 0, "OTHER": 0}
         wins = losses = 0
         gp = gl = net_pnl = upnl_sum = r_sum = hold_h_sum = fees_sum = 0.0
         eq_cur = eq_peak = max_dd = 0.0
@@ -447,6 +448,11 @@ class LiveShadowEngine:
                 hold_h_sum += hold_h
                 eq_cur += pnl
                 curve.append(round(self.POD_CAPITAL_USD + eq_cur, 2))
+                r_key = str(reason or "").upper()
+                if r_key in ("TP", "SL", "TIME_STOP"):
+                    exit_counts[r_key] += 1
+                else:
+                    exit_counts["OTHER"] += 1
                 if eq_cur > eq_peak:
                     eq_peak = eq_cur
                 dd = eq_peak - eq_cur
@@ -494,6 +500,7 @@ class LiveShadowEngine:
             "avg_r": round(r_sum / n, 3) if n > 0 else None,
             "avg_hold_hours": round(hold_h_sum / n, 1) if n > 0 else None,
             "max_dd_usd": round(max_dd, 2),
+            "exit_breakdown": exit_counts,
             "equity_curve": curve[-120:],
             "open_positions": open_list[::-1],
             "closed_trades_list": closed_list[-60:][::-1],

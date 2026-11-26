@@ -135,7 +135,7 @@ async function apiPost(path, data) {
 
 // Аккордеон для выдвижных панелей (открытие одной закрывает остальные + скролл к панели)
 function toggleDrawer(targetId) {
-  const ids = ["drawer-env", "drawer-settings", "drawer-logs"];
+  const ids = ["drawer-env", "drawer-manual", "drawer-settings", "drawer-logs"];
   const target = document.getElementById(targetId);
   if (!target) return;
   const willOpen = !target.classList.contains("open");
@@ -145,7 +145,7 @@ function toggleDrawer(targetId) {
   });
   if (willOpen) {
     target.classList.add("open");
-    if (targetId === "drawer-settings") updateManualCalculator();
+    if (targetId === "drawer-manual") updateManualCalculator();
     if (window.scrollY > 140) target.scrollIntoView({behavior: "smooth", block: "nearest"});
   }
 }
@@ -161,6 +161,10 @@ document.getElementById("btn-save-env-keys").addEventListener("click", async fun
 document.getElementById("btn-run-checklist").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"run_checklist",target_mode:document.getElementById("env-key-target").value});showToast(r.retMsg || "Проверка завершена",!r.ok);refreshState();});
 document.getElementById("btn-switch-demo").addEventListener("click", async function(){const r=await apiPost("/api/env_control",{action:"switch_mode",target_mode:"demo"});showToast(r.retMsg || "Demo",!r.ok);refreshState();});
 
+const btnToggleManual = document.getElementById("btn-toggle-manual");
+if (btnToggleManual) btnToggleManual.addEventListener("click", function() { toggleDrawer("drawer-manual"); });
+const btnCloseManual = document.getElementById("btn-close-manual");
+if (btnCloseManual) btnCloseManual.addEventListener("click", function() { document.getElementById("drawer-manual").classList.remove("open"); });
 document.getElementById("btn-toggle-drawer").addEventListener("click", function() { toggleDrawer("drawer-settings"); });
 document.getElementById("btn-close-drawer").addEventListener("click", function() { document.getElementById("drawer-settings").classList.remove("open"); });
 document.getElementById("btn-toggle-logs").addEventListener("click", function() { toggleDrawer("drawer-logs"); });
@@ -873,11 +877,21 @@ function renderState(st) {
   }
 
   const shLab = st.shadow_lab || {};
+  const shList = shLab.leaderboard || [];
+  const pausedList = stCfg.paused_strategies || [];
+  const pausedSet = new Set(pausedList);
+  const stratMapWfa = wfaVal.strategies || {};
+  const activeCount = new Set([].concat(demoLabOn ? demoLabList : [], Object.keys(stratMapWfa).filter(function(k) { return Boolean((stratMapWfa[k] || {}).wfe_passed); }))).size;
+  const dynBadge = document.getElementById("dyn-demo-lab-badge");
+  if (dynBadge) dynBadge.textContent = "🧪 Demo Lab: " + activeCount + " страт. × $1k + Shadow" + (pausedList.length ? (" · ⏸ " + pausedList.length) : "");
+  const dynShTitle = document.getElementById("dyn-shadow-title");
+  if (dynShTitle) dynShTitle.textContent = "🧪 Live Shadow (" + (shList.length || activeCount) + " страт. · $1k)";
+  const dynSigTitle = document.getElementById("dyn-signals-title");
+  if (dynSigTitle) dynSigTitle.textContent = "🎯 Актуальные сигналы (" + activeCount + " активных страт. · " + ((stCfg.core_pairs || []).length || 20) + " пар)";
   const shBody = document.getElementById("shadow-lab-tbody");
   if (shBody) {
     const shLbl = document.getElementById("shadow-lab-summary-lbl");
-    if (shLbl) shLbl.textContent = "Открыто: " + (shLab.total_open ?? 0) + " · Закрыто: " + (shLab.total_closed ?? 0) + " · Риск: $" + (shLab.risk_per_trade_usd ?? 15) + "/сд.";
-    const shList = shLab.leaderboard || [];
+    if (shLbl) shLbl.textContent = "Shadow: " + (shLab.total_open ?? 0) + " откр. / " + (shLab.total_closed ?? 0) + " закр.";
     shBody.innerHTML = shList.length === 0
       ? "<tr><td colspan=9 style=color:var(--muted)>Ожидание первых сигналов в Live Shadow...</td></tr>"
       : shList.map(function(r) {
@@ -887,6 +901,41 @@ function renderState(st) {
           return "<tr><td>" + stratLinkHtml(r.strategy_id) + "</td><td class=" + (eq >= 1000 ? "pos-green" : "pos-red") + "><b>$" + eq.toFixed(2) + "</b></td><td>" + (r.open_trades ?? 0) + " / " + (r.closed_trades ?? 0) + "</td><td>" + Number(r.win_rate_pct || 0).toFixed(1) + "%</td><td><b>" + (r.profit_factor == null ? "—" : Number(r.profit_factor).toFixed(2)) + "</b></td><td class=" + (np >= 0 ? "pos-green" : "pos-red") + ">" + (np >= 0 ? "+" : "") + np.toFixed(2) + "$</td><td class=" + (up >= 0 ? "pos-green" : "pos-red") + ">" + (up >= 0 ? "+" : "") + up.toFixed(2) + "$</td><td>" + (r.avg_r == null ? "—" : (Number(r.avg_r) >= 0 ? "+" : "") + Number(r.avg_r).toFixed(2) + "R") + "</td><td>" + Number(r.max_dd_usd || 0).toFixed(2) + "$</td></tr>";
         }).join("");
   }
+
+  // Единый рейтинг Shadow vs Real Demo
+  const shById = {};
+  shList.forEach(function(r) { shById[r.strategy_id] = r; });
+  const allUnifiedIds = Array.from(new Set([].concat(Object.keys(smMap), Object.keys(shById), demoLabList, Object.keys(stratMapWfa).filter(function(k) { return Boolean((stratMapWfa[k] || {}).wfe_passed); }))));
+  window._lastUnifiedRows = allUnifiedIds.map(function(sid) {
+    const shR = shById[sid] || {};
+    const dmR = smMap[sid] || {};
+    const wfaOk = Boolean((stratMapWfa[sid] || {}).wfe_passed);
+    const inLab = demoLabOn && demoLabList.indexOf(sid) !== -1;
+    const isPaused = pausedSet.has(sid);
+    const isActive = (wfaOk || inLab) && !isPaused;
+    const shPnl = Number(shR.net_pnl_usd || 0);
+    const dmPnl = Number(dmR.net_pnl_usd || 0);
+    return {
+      strategy_id: sid,
+      wfa_ok: wfaOk,
+      in_lab: inLab,
+      is_paused: isPaused,
+      is_active: isActive,
+      sh_eq: Number(shR.pod_equity_usd || 1000),
+      sh_pnl: shPnl,
+      sh_open: Number(shR.open_trades || 0),
+      sh_closed: Number(shR.closed_trades || 0),
+      sh_wr: Number(shR.win_rate_pct || 0),
+      sh_pf: shR.profit_factor,
+      sh_r: shR.avg_r,
+      dm_pnl: dmPnl,
+      dm_trades: Number(dmR.trades || 0),
+      dm_open: Number(dmR.open_trades || 0),
+      dm_slip: dmR.avg_slippage_bps,
+      delta: Number((dmPnl - shPnl).toFixed(2))
+    };
+  });
+  renderUnifiedLeaderboard();
 
   // Живая сводка «📍 Что происходит сейчас»
   const hNow = st.health || {};
@@ -1360,23 +1409,146 @@ function renderState(st) {
     }).join("");
   }
 
-  // История Closed PnL: Bybit отдаёт side ЗАКРЫВАЮЩЕГО ордера (Buy закрывает SHORT, Sell закрывает LONG)
-  document.getElementById("closed-pnl-tbody").innerHTML = cList.map(function(c) {
-    const p = Number(c.closedPnl || 0);
-    const rawS = String(c.strategy_id || "");
-    const cleanS = rawS.indexOf(":") !== -1 ? rawS.split(":")[1] : (rawS || "LEGACY");
-    const sCls = rawS.indexOf("BOOSTER:") === 0 ? "badge-purple" : (rawS.indexOf("CORE:") === 0 ? "badge-blue" : "badge-amber");
-    const posDir = c.side === "Sell" ? "LONG" : (c.side === "Buy" ? "SHORT" : (c.side || "—"));
-    const dirCls = posDir === "LONG" ? "pos-green" : (posDir === "SHORT" ? "pos-red" : "");
-    const dtStr = c.updatedTime
-      ? new Date(Number(c.updatedTime)).toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit"})
-      : "—";
-    return "<tr><td><b>" + c.symbol + "</b></td><td><span class=\"badge " + sCls + "\">" + stratLinkHtml(cleanS) + "</span></td><td class=" + dirCls + "><b>" + posDir + "</b></td><td>" + c.qty + "</td><td>" + fmtPrice(c.avgEntryPrice) + "</td><td>" + fmtPrice(c.avgExitPrice) + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + (c.leverage || "3") + "x</td><td>" + dtStr + "</td></tr>";
+  window._lastClosedPnl = cList;
+  syncHistoryStratFilter(cList);
+  renderClosedPnlHistory();
+}
+
+// Единый рейтинг Shadow vs Real Demo (сортировка + фильтры + быстрая пауза)
+window._uSortKey = "sh_pnl";
+window._uSortDir = "desc";
+window._uFilter = "ALL";
+window._lastUnifiedRows = [];
+
+function renderUnifiedLeaderboard() {
+  const tbody = document.getElementById("unified-strat-tbody");
+  if (!tbody) return;
+  const rows = (window._lastUnifiedRows || []).filter(function(r) {
+    if (window._uFilter === "ACTIVE") return r.is_active;
+    if (window._uFilter === "OPEN") return (r.sh_open > 0 || r.dm_open > 0);
+    if (window._uFilter === "PAUSED") return r.is_paused;
+    return true;
+  });
+  const k = window._uSortKey || "sh_pnl";
+  const mul = window._uSortDir === "asc" ? 1 : -1;
+  rows.sort(function(a, b) {
+    if (k === "strategy_id") return mul * String(a.strategy_id).localeCompare(String(b.strategy_id));
+    const av = Number(a[k] == null ? -1e9 : a[k]);
+    const bv = Number(b[k] == null ? -1e9 : b[k]);
+    return mul * (av - bv);
+  });
+  if (rows.length === 0) {
+    tbody.innerHTML = "<tr><td colspan=8 style=color:var(--muted)>Нет стратегий по выбранному фильтру.</td></tr>";
+    return;
+  }
+  tbody.innerHTML = rows.map(function(r) {
+    let stBadge = "<span class=\"badge badge-red\">⛔ Архив</span>";
+    if (r.is_paused) stBadge = "<span class=\"badge badge-amber\">⏸ Пауза</span>";
+    else if (r.wfa_ok) stBadge = "<span class=\"badge badge-green\">✅ WFA</span>";
+    else if (r.in_lab) stBadge = "<span class=\"badge badge-purple\">🧪 Demo Lab</span>";
+    const shCls = r.sh_pnl >= 0 ? "pos-green" : "pos-red";
+    const dmCls = r.dm_pnl >= 0 ? "pos-green" : "pos-red";
+    const dCls = r.delta >= 0 ? "pos-green" : "pos-red";
+    const pfStr = r.sh_pf == null ? "—" : Number(r.sh_pf).toFixed(2);
+    const rStr = r.sh_r == null ? "—" : ((Number(r.sh_r) >= 0 ? "+" : "") + Number(r.sh_r).toFixed(2) + "R");
+    const slipStr = r.dm_slip == null ? "—" : (Number(r.dm_slip).toFixed(1) + " bps");
+    const togCls = r.is_paused ? "btn-success btn-xs" : "btn-ghost btn-xs";
+    const togLbl = r.is_paused ? "▶️ Вкл." : "⏸ Пауза";
+    return "<tr><td>" + stratLinkHtml(r.strategy_id) + "</td>" +
+      "<td>" + stBadge + "</td>" +
+      "<td class=" + shCls + "><b>" + (r.sh_pnl >= 0 ? "+" : "") + r.sh_pnl.toFixed(2) + "$</b> <span style=color:var(--muted);font-size:10.5px>($" + r.sh_eq.toFixed(0) + " · " + r.sh_open + "/" + r.sh_closed + ")</span></td>" +
+      "<td>" + r.sh_wr.toFixed(1) + "% · PF <b>" + pfStr + "</b> · " + rStr + "</td>" +
+      "<td class=" + dmCls + "><b>" + (r.dm_pnl >= 0 ? "+" : "") + r.dm_pnl.toFixed(2) + "$</b></td>" +
+      "<td>" + r.dm_trades + " (" + r.dm_open + " откр.) · " + slipStr + "</td>" +
+      "<td class=" + dCls + ">" + (r.delta >= 0 ? "+" : "") + r.delta.toFixed(2) + "$</td>" +
+      "<td><button type=\"button\" class=\"" + togCls + "\" data-toggle-strategy=\"" + escapeHtml(r.strategy_id) + "\" data-want-pause=\"" + (r.is_paused ? "0" : "1") + "\">" + togLbl + "</button></td></tr>";
   }).join("");
 }
 
+const uFilterBar = document.getElementById("unified-filter-bar");
+if (uFilterBar) {
+  uFilterBar.addEventListener("click", function(e) {
+    const chip = e.target.closest(".filter-chip");
+    if (!chip) return;
+    uFilterBar.querySelectorAll(".filter-chip").forEach(function(c) { c.classList.remove("active"); });
+    chip.classList.add("active");
+    window._uFilter = chip.getAttribute("data-ufilter") || "ALL";
+    renderUnifiedLeaderboard();
+  });
+}
+const uTable = document.getElementById("unified-strat-table");
+if (uTable) {
+  uTable.addEventListener("click", function(e) {
+    const th = e.target.closest("th[data-usort]");
+    if (!th) return;
+    const key = th.getAttribute("data-usort");
+    if (window._uSortKey === key) window._uSortDir = window._uSortDir === "desc" ? "asc" : "desc";
+    else { window._uSortKey = key; window._uSortDir = key === "strategy_id" ? "asc" : "desc"; }
+    uTable.querySelectorAll("th.sortable").forEach(function(h) { h.classList.remove("sort-asc", "sort-desc"); });
+    th.classList.add(window._uSortDir === "asc" ? "sort-asc" : "sort-desc");
+    renderUnifiedLeaderboard();
+  });
+}
+
+// Фильтры истории Closed PnL
+window._lastClosedPnl = [];
+function syncHistoryStratFilter(cList) {
+  const sel = document.getElementById("hist-filter-strat");
+  if (!sel || document.activeElement === sel) return;
+  const set = new Set();
+  (cList || []).forEach(function(c) {
+    const rawS = String(c.strategy_id || "");
+    const cleanS = rawS.indexOf(":") !== -1 ? rawS.split(":")[1] : (rawS || "LEGACY");
+    if (cleanS) set.add(cleanS);
+  });
+  const arr = Array.from(set).sort();
+  if (sel.options.length - 1 !== arr.length) {
+    const cur = sel.value;
+    sel.innerHTML = "<option value=\"\">Все стратегии</option>" + arr.map(function(s) { return "<option value=\"" + escapeHtml(s) + "\">" + escapeHtml(s) + "</option>"; }).join("");
+    if (cur) sel.value = cur;
+  }
+}
+function renderClosedPnlHistory() {
+  const tbody = document.getElementById("closed-pnl-tbody");
+  if (!tbody) return;
+  const stratF = (document.getElementById("hist-filter-strat") || {}).value || "";
+  const symF = String((document.getElementById("hist-filter-sym") || {}).value || "").trim().toUpperCase();
+  const hideLeg = Boolean((document.getElementById("hist-hide-legacy") || {}).checked);
+  const filtered = (window._lastClosedPnl || []).filter(function(c) {
+    const rawS = String(c.strategy_id || "");
+    const cleanS = rawS.indexOf(":") !== -1 ? rawS.split(":")[1] : (rawS || "LEGACY");
+    if (hideLeg && (cleanS === "LEGACY" || cleanS === "UNATTRIBUTED" || cleanS === "MANUAL")) return false;
+    if (stratF && cleanS !== stratF) return false;
+    if (symF && String(c.symbol || "").toUpperCase().indexOf(symF) === -1) return false;
+    return true;
+  });
+  // История Closed PnL: Bybit отдаёт side ЗАКРЫВАЮЩЕГО ордера (Buy закрывает SHORT, Sell закрывает LONG)
+  tbody.innerHTML = filtered.length === 0
+    ? "<tr><td colspan=9 style=text-align:center;color:var(--muted);padding:14px>Нет сделок по выбранному фильтру.</td></tr>"
+    : filtered.map(function(c) {
+        const p = Number(c.closedPnl || 0);
+        const rawS = String(c.strategy_id || "");
+        const cleanS = rawS.indexOf(":") !== -1 ? rawS.split(":")[1] : (rawS || "LEGACY");
+        const sCls = rawS.indexOf("BOOSTER:") === 0 ? "badge-purple" : (rawS.indexOf("CORE:") === 0 ? "badge-blue" : "badge-amber");
+        const posDir = c.side === "Sell" ? "LONG" : (c.side === "Buy" ? "SHORT" : (c.side || "—"));
+        const dirCls = posDir === "LONG" ? "pos-green" : (posDir === "SHORT" ? "pos-red" : "");
+        const dtStr = c.updatedTime
+          ? new Date(Number(c.updatedTime)).toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit"})
+          : "—";
+        return "<tr><td><b>" + escapeHtml(c.symbol) + "</b></td><td><span class=\"badge " + sCls + "\">" + stratLinkHtml(cleanS) + "</span></td><td class=" + dirCls + "><b>" + posDir + "</b></td><td>" + escapeHtml(c.qty) + "</td><td>" + fmtPrice(c.avgEntryPrice) + "</td><td>" + fmtPrice(c.avgExitPrice) + "</td><td class=" + (p >= 0 ? "pos-green" : "pos-red") + ">" + (p >= 0 ? "+" : "") + p.toFixed(2) + " USDT</td><td>" + escapeHtml(c.leverage || "3") + "x</td><td>" + dtStr + "</td></tr>";
+      }).join("");
+}
+["hist-filter-strat", "hist-filter-sym", "hist-hide-legacy"].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener("input", renderClosedPnlHistory);
+    el.addEventListener("change", renderClosedPnlHistory);
+  }
+});
+
 // Детальная страница стратегии
 window._activeStrategyDetail = null;
+window._activeStrategyPaused = false;
 
 function renderSimpleEquitySvg(svgId, lblId, points, lineColor) {
   const svg = document.getElementById(svgId);
@@ -1389,14 +1561,37 @@ function renderSimpleEquitySvg(svgId, lblId, points, lineColor) {
   const W = 460, H = 115;
   const toY = function(v) { return Math.round(H - 14 - ((v - minV) / span) * (H - 28)); };
   const stepX = (W - 20) / Math.max(1, pts.length - 1);
-  const poly = pts.map(function(v, i) { return Math.round(10 + i * stepX) + "," + toY(v); }).join(" ");
+  const coords = pts.map(function(v, i) { return [Math.round(10 + i * stepX), toY(v), Number(v)]; });
+  const poly = coords.map(function(c) { return c[0] + "," + c[1]; }).join(" ");
   const baseY = toY(1000);
-  if (lbl) lbl.textContent = "Старт: $1,000 → Текущий: $" + Number(pts[pts.length - 1]).toFixed(2) + " (точек: " + pts.length + ")";
+  const lastVal = Number(pts[pts.length - 1]);
+  const fillClr = lastVal >= 1000 ? "rgba(16,185,129,0.14)" : "rgba(239,68,68,0.16)";
+  const areaPts = "10," + baseY + " " + poly + " " + coords[coords.length - 1][0] + "," + baseY;
+  const dotStep = Math.max(1, Math.floor(coords.length / 20));
+  const dots = coords.filter(function(_, i) { return i === coords.length - 1 || i % dotStep === 0; }).map(function(c, idx) {
+    return "<circle cx=" + c[0] + " cy=" + c[1] + " r=2.6 fill=" + (lineColor || "#38bdf8") + " opacity=0.85><title>#" + (idx + 1) + ": $" + c[2].toFixed(2) + "</title></circle>";
+  }).join("");
+  if (lbl) lbl.textContent = "Старт: $1,000 → Текущий: $" + lastVal.toFixed(2) + " (точек: " + pts.length + ")";
   svg.innerHTML =
+    "<polygon fill=\"" + fillClr + "\" points=\"" + areaPts + "\" />" +
     "<line x1=10 y1=" + baseY + " x2=450 y2=" + baseY + " stroke=#475569 stroke-dasharray=4,4 stroke-width=1 vector-effect=non-scaling-stroke />" +
     "<polyline fill=none stroke=" + (lineColor || "#38bdf8") + " stroke-width=2.2 vector-effect=non-scaling-stroke points=\"" + poly + "\" />" +
+    dots +
     "<text x=12 y=13 fill=#94a3b8 font-size=10>$" + maxV.toFixed(0) + "</text>" +
     "<text x=12 y=" + (H - 4) + " fill=#94a3b8 font-size=10>$" + minV.toFixed(0) + "</text>";
+}
+
+function formatExitBarHtml(label, counts) {
+  const c = counts || {};
+  const tp = Number(c.TP || 0), ts = Number(c.TIME_STOP || 0), sl = Number(c.SL || 0), oth = Number(c.OTHER || 0);
+  const tot = tp + ts + sl + oth;
+  if (tot <= 0) return "<span style=color:var(--muted)>" + escapeHtml(label) + ": нет закрытий</span>";
+  const pTp = (tp / tot * 100), pTs = (ts / tot * 100), pSl = (sl / tot * 100), pOth = (oth / tot * 100);
+  return "<div style=min-width:220px;flex:1>" +
+    "<div style=display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap>" +
+    "<span><b>" + escapeHtml(label) + "</b> (" + tot + " закр.):</span>" +
+    "<span><span class=pos-green>TP " + pTp.toFixed(0) + "% (" + tp + ")</span> · <span style=color:#fbbf24>TIME " + pTs.toFixed(0) + "% (" + ts + ")</span> · <span class=pos-red>SL " + pSl.toFixed(0) + "% (" + sl + ")</span>" + (oth > 0 ? (" · Проч. " + oth) : "") + "</span></div>" +
+    "<div class=\"exit-bar-track\"><div class=\"exit-bar-tp\" style=\"width:" + pTp.toFixed(1) + "%\"></div><div class=\"exit-bar-ts\" style=\"width:" + pTs.toFixed(1) + "%\"></div><div class=\"exit-bar-sl\" style=\"width:" + pSl.toFixed(1) + "%\"></div><div class=\"exit-bar-other\" style=\"width:" + pOth.toFixed(1) + "%\"></div></div></div>";
 }
 
 function renderStrategyDetail(d) {
@@ -1407,18 +1602,34 @@ function renderStrategyDetail(d) {
   const wfa = d.wfa || {};
   const mlc = d.ml_cal || {};
 
+  window._activeStrategyPaused = Boolean(meta.is_paused);
   document.getElementById("sd-title").textContent = d.strategy_id || "Стратегия";
   syncStrategyDropdown([d.strategy_id]);
   document.getElementById("sd-updated").textContent = "Обновлено: " + (d.updated_at || "—");
   document.getElementById("sd-desc").textContent = meta.desc || "—";
   document.getElementById("sd-params").textContent = "Таймфрейм: " + (meta.timeframe || "—") + " · Горизонт: " + (meta.max_hold || "—") + " · Ордер: " + (meta.order_type || "—") + " · Риск: " + (meta.risk_per_trade || "—");
 
+  const sdPauseBtn = document.getElementById("btn-sd-toggle-pause");
+  if (sdPauseBtn) {
+    sdPauseBtn.className = window._activeStrategyPaused ? "btn-success btn-sm" : "btn-warning btn-sm";
+    sdPauseBtn.textContent = window._activeStrategyPaused ? "▶️ Вернуть в Demo" : "⏸ Пауза в Demo";
+  }
+
   const admB = document.getElementById("sd-admission-badge");
-  if (meta.admission_status === "WFA_PASSED") { admB.className = "badge badge-green"; admB.textContent = "✅ WFA PASSED (В БОЮ)"; }
+  if (window._activeStrategyPaused) { admB.className = "badge badge-amber"; admB.textContent = "⏸ НА ПАУЗЕ (UI)"; }
+  else if (meta.admission_status === "WFA_PASSED") { admB.className = "badge badge-green"; admB.textContent = "✅ WFA PASSED (В БОЮ)"; }
   else if (meta.admission_status === "DEMO_LAB") { admB.className = "badge badge-purple"; admB.textContent = "🧪 DEMO LAB (В БОЮ)"; }
   else { admB.className = "badge badge-red"; admB.textContent = "⛔ BLOCKED"; }
   document.getElementById("sd-contour-badge").textContent = meta.contour || "—";
   document.getElementById("sd-tier-badge").textContent = meta.tier || "—";
+
+  const ebBox = document.getElementById("sd-exit-breakdown-box");
+  if (ebBox) {
+    ebBox.innerHTML = "<div style=display:flex;gap:16px;flex-wrap:wrap>" +
+      formatExitBarHtml("🧪 Shadow исходы", sh.exit_breakdown) +
+      formatExitBarHtml("💰 Real Demo исходы", d.demo_exit_breakdown) +
+      "</div>";
+  }
 
   const shEq = Number(sh.pod_equity_usd || 1000);
   const shEqEl = document.getElementById("sd-kpi-sh-eq");
@@ -1470,6 +1681,30 @@ function renderStrategyDetail(d) {
     mlBox.innerHTML = "<div style=color:var(--muted)>Пока нет закрытых реальных сделок в калибраторе (вес 1.0x).</div>";
   }
 
+  // Триангуляция Shadow vs Real Demo по signal_id
+  const rec = d.reconciliation || {};
+  const rSum = rec.summary || {};
+  const recSumEl = document.getElementById("sd-reconcile-summary");
+  if (recSumEl) {
+    recSumEl.textContent = "Всего: " + (rSum.total_signals || 0) + " · Совпали: " + (rSum.matched_both || 0) + " (закр. " + (rSum.matched_closed || 0) + ") · Только Shadow: " + (rSum.shadow_only || 0) + " · Только Demo: " + (rSum.demo_only || 0) + " · Пропущено: " + (rSum.skipped_both || 0);
+  }
+  const recTbody = document.getElementById("sd-reconcile-tbody");
+  if (recTbody) {
+    const rSigs = rec.signals || [];
+    recTbody.innerHTML = rSigs.length === 0
+      ? "<tr><td colspan=8 style=color:var(--muted)>Пока нет сигналов с общим signal_id (появятся после первого скана на v46+)</td></tr>"
+      : rSigs.map(function(s) {
+          const pCls = s.pair_status === "MATCHED_BOTH" ? "badge-green" : (s.pair_status === "SHADOW_ONLY" ? "badge-purple" : (s.pair_status === "DEMO_ONLY" ? "badge-blue" : "badge-amber"));
+          const shInfo = s.shadow || {};
+          const dmInfo = s.demo || {};
+          const shExit = (shInfo.trade && shInfo.trade.exit_reason) ? (" / " + shInfo.trade.exit_reason) : "";
+          const dmExit = dmInfo.exit_reason ? (" / " + dmInfo.exit_reason) : "";
+          const latStr = dmInfo.fill_latency_ms == null ? "—" : (dmInfo.fill_latency_ms >= 1000 ? (Number(dmInfo.fill_latency_ms / 1000).toFixed(1) + " с") : (dmInfo.fill_latency_ms + " мс"));
+          const skipReason = dmInfo.skip_reason || shInfo.skip_reason || "—";
+          return "<tr><td>" + escapeHtml(s.signal_created_utc || "—") + "</td><td><b>" + escapeHtml(s.symbol) + "</b></td><td class=" + (s.side === "Buy" ? "pos-green" : "pos-red") + ">" + (s.side === "Buy" ? "LONG" : "SHORT") + "</td><td><span class=\"badge " + pCls + "\">" + escapeHtml(s.pair_status) + "</span></td><td>" + escapeHtml((shInfo.decision || "—") + shExit) + "</td><td>" + escapeHtml((dmInfo.decision || "—") + dmExit) + "</td><td>" + escapeHtml(latStr) + "</td><td class=\"wrap-cell\" style=color:var(--muted)>" + escapeHtml(skipReason) + "</td></tr>";
+        }).join("");
+  }
+
   const openRows = [];
   (d.demo_open_positions || []).forEach(function(p) {
     const u = Number(p.unrealisedPnl || 0);
@@ -1492,11 +1727,14 @@ function renderStrategyDetail(d) {
 
   const traces = d.demo_traces || [];
   document.getElementById("sd-demo-traces-tbody").innerHTML = traces.length === 0
-    ? "<tr><td colspan=11 style=color:var(--muted)>Пока нет реальных Demo-ордеров по этой стратегии</td></tr>"
+    ? "<tr><td colspan=13 style=color:var(--muted)>Пока нет реальных Demo-ордеров по этой стратегии</td></tr>"
     : traces.map(function(t) {
         const p = t.closed_pnl_usd;
         const r = t.realized_r;
-        return "<tr><td><b>" + escapeHtml(t.symbol) + "</b></td><td class=" + (t.side === "Buy" ? "pos-green" : "pos-red") + ">" + (t.side === "Buy" ? "LONG" : "SHORT") + "</td><td><span class=\"badge " + (t.status === "OPEN" ? "badge-blue" : (t.status === "CLOSED" ? "badge-green" : "badge-amber")) + "\">" + escapeHtml(t.status) + "</span></td><td>" + (t.signal_entry_px == null ? "—" : fmtPrice(t.signal_entry_px)) + "</td><td>" + (t.actual_fill_px == null ? "—" : fmtPrice(t.actual_fill_px)) + "</td><td>" + (t.slippage_bps == null ? "—" : Number(t.slippage_bps).toFixed(1) + " bps") + "</td><td>$" + Number(t.fees_usd || 0).toFixed(3) + "</td><td class=" + (p == null ? "" : (Number(p) >= 0 ? "pos-green" : "pos-red")) + ">" + (p == null ? "—" : ((Number(p) >= 0 ? "+" : "") + Number(p).toFixed(2) + "$")) + "</td><td class=" + (r == null ? "" : (Number(r) >= 0 ? "pos-green" : "pos-red")) + ">" + (r == null ? "—" : ((Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "R")) + "</td><td>" + (t.hold_hours == null ? "—" : Number(t.hold_hours).toFixed(1) + "ч") + "</td><td>" + escapeHtml(t.opened_at_utc || "—") + "</td></tr>";
+        const er = String(t.exit_reason || "").trim();
+        const erBadge = !er ? "—" : ("<span class=\"badge " + (er === "TP" ? "badge-green" : (er === "SL" ? "badge-red" : "badge-amber")) + "\">" + escapeHtml(er) + "</span>");
+        const lat = t.fill_latency_ms == null ? "—" : (t.fill_latency_ms >= 1000 ? (Number(t.fill_latency_ms / 1000).toFixed(1) + "с") : (t.fill_latency_ms + "мс"));
+        return "<tr><td><b>" + escapeHtml(t.symbol) + "</b></td><td class=" + (t.side === "Buy" ? "pos-green" : "pos-red") + ">" + (t.side === "Buy" ? "LONG" : "SHORT") + "</td><td><span class=\"badge " + (t.status === "OPEN" ? "badge-blue" : (t.status === "CLOSED" ? "badge-green" : "badge-amber")) + "\">" + escapeHtml(t.status) + "</span></td><td>" + erBadge + "</td><td>" + escapeHtml(lat) + "</td><td>" + (t.signal_entry_px == null ? "—" : fmtPrice(t.signal_entry_px)) + "</td><td>" + (t.actual_fill_px == null ? "—" : fmtPrice(t.actual_fill_px)) + "</td><td>" + (t.slippage_bps == null ? "—" : Number(t.slippage_bps).toFixed(1) + " bps") + "</td><td>$" + Number(t.fees_usd || 0).toFixed(3) + "</td><td class=" + (p == null ? "" : (Number(p) >= 0 ? "pos-green" : "pos-red")) + ">" + (p == null ? "—" : ((Number(p) >= 0 ? "+" : "") + Number(p).toFixed(2) + "$")) + "</td><td class=" + (r == null ? "" : (Number(r) >= 0 ? "pos-green" : "pos-red")) + ">" + (r == null ? "—" : ((Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "R")) + "</td><td>" + (t.hold_hours == null ? "—" : Number(t.hold_hours).toFixed(1) + "ч") + "</td><td>" + escapeHtml(t.opened_at_utc || "—") + "</td></tr>";
       }).join("");
 }
 
@@ -1541,12 +1779,32 @@ function closeStrategyDetail(fromPopState, skipScroll) {
   if (!skipScroll) window.scrollTo(0, window._mainScrollY || 0);
 }
 
+async function toggleStrategyPause(sid, wantPause) {
+  const res = await apiPost("/api/strategy_toggle", {strategy_id: sid, paused: wantPause});
+  showToast(res.paused ? ("⏸ Стратегия " + sid + " поставлена на паузу в Demo") : ("▶️ Стратегия " + sid + " возвращена в Demo"));
+  await refreshState(true);
+  if (window._activeStrategyDetail === sid) await fetchStrategyDetail(sid);
+}
+
 document.body.addEventListener("click", function(e) {
+  const tog = e.target.closest("[data-toggle-strategy]");
+  if (tog) {
+    const sidT = tog.getAttribute("data-toggle-strategy");
+    const wantP = tog.getAttribute("data-want-pause") === "1";
+    if (sidT) toggleStrategyPause(sidT, wantP);
+    return;
+  }
   const link = e.target.closest("[data-strategy-detail]");
   if (!link) return;
   const sid = link.getAttribute("data-strategy-detail");
   if (sid) openStrategyDetail(sid);
 });
+const btnSdTogglePause = document.getElementById("btn-sd-toggle-pause");
+if (btnSdTogglePause) {
+  btnSdTogglePause.addEventListener("click", function() {
+    if (window._activeStrategyDetail) toggleStrategyPause(window._activeStrategyDetail, !window._activeStrategyPaused);
+  });
+}
 const btnSdBack = document.getElementById("btn-sd-back");
 if (btnSdBack) btnSdBack.addEventListener("click", function() { closeStrategyDetail(false); });
 const btnSdRef = document.getElementById("btn-sd-refresh");
@@ -1575,7 +1833,7 @@ if (brandHomeLink) {
     e.preventDefault();
     const wasDetail = Boolean(window._activeStrategyDetail);
     if (wasDetail) closeStrategyDetail(true, true);
-    ["drawer-env", "drawer-settings", "drawer-logs"].forEach(function(id) {
+    ["drawer-env", "drawer-manual", "drawer-settings", "drawer-logs"].forEach(function(id) {
       const el = document.getElementById(id);
       if (el) el.classList.remove("open");
     });

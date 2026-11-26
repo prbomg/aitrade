@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.47"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.48"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -531,6 +531,7 @@ class ControlCenterState:
 
         self.position_sources: Dict[str, str] = saved.get("position_sources", {})
         self.position_opened_ts: Dict[str, float] = saved.get("position_opened_ts", {})
+        self.paused_strategies: List[str] = list(saved.get("paused_strategies") or [])
 
         self.manual_prefs = saved.get("manual_prefs", {
             "symbol": "BTCUSDT", "order_type": "Market", "qty": 0.02, "tp_pct": 1.6, "sl_pct": 0.8,
@@ -614,6 +615,7 @@ class ControlCenterState:
                 "time_stop_band_pct": self.regime_guard.time_stop_band_pct,
                 "position_sources": dict(self.position_sources),
                 "position_opened_ts": dict(self.position_opened_ts),
+                "paused_strategies": list(getattr(self, "paused_strategies", []) or []),
                 "manual_prefs": dict(self.manual_prefs),
                 "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -1467,8 +1469,15 @@ class ControlCenterState:
             if trade_booster and self.booster.state.get("enabled", True) and not self.entry_paused.is_set() and booster_cb_blocked:
                 self.add_log("🛑 [Разгон $1k→$10k] Сработал дневной стоп-кран или стоп цикла. Входы разгона приостановлены.")
 
+            paused_strat_set = set(getattr(self, "paused_strategies", []) or [])
             for s in approved_list:
-                is_b_strat = s.get("strategy_id") in booster_strat_ids
+                s_id_cur = str(s.get("strategy_id") or "")
+                is_b_strat = s_id_cur in booster_strat_ids
+                if s_id_cur in paused_strat_set:
+                    _log_demo_decision(b_ctrl_default if is_b_strat else self.bybit, s, "BOOSTER" if is_b_strat else "CORE", "SKIPPED", "Стратегия на паузе (UI)")
+                    if hasattr(self, "strategy_funnel"):
+                        self.strategy_funnel.record_guard_block(s_id_cur, "Пауза стратегии (UI)")
+                    continue
                 if is_b_strat:
                     if not trade_booster:
                         _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", "Автопилот Разгона выключен или скан без торговли")
@@ -1856,6 +1865,7 @@ class ControlCenterState:
                 "core_pairs": self.settings.get("universe", {}).get("core_pairs", []),
                 "demo_lab_enabled": self._is_demo_lab_active(),
                 "demo_lab_strategies": list((self.settings.get("demo_lab") or {}).get("admit_experimental_strategies") or []),
+                "paused_strategies": list(getattr(self, "paused_strategies", []) or []),
             },
             "manual_prefs": self.manual_prefs,
             "limit_chaser": self.limit_chaser.get_summary(),
@@ -1921,13 +1931,36 @@ class ControlCenterState:
             if hasattr(self, "shadow_engine")
             else {}
         )
+        demo_exit_counts = {"TP": 0, "SL": 0, "TIME_STOP": 0, "OTHER": 0}
+        for tr in demo_traces:
+            if tr.get("status") != "CLOSED":
+                continue
+            er = str(tr.get("exit_reason") or "").upper()
+            if er in ("TP", "SL", "TIME_STOP"):
+                demo_exit_counts[er] += 1
+            else:
+                demo_exit_counts["OTHER"] += 1
+        reconciliation: Dict[str, Any] = {"summary": {"total_signals": 0, "matched_both": 0, "matched_closed": 0, "shadow_only": 0, "demo_only": 0, "skipped_both": 0}, "signals": []}
+        try:
+            if hasattr(self, "bybit") and hasattr(self.bybit, "ledger"):
+                active_ledgers = [("autotrade", self.bybit.ledger)]
+                b_ctrl_d = getattr(self, "booster_bybit", self.bybit)
+                if b_ctrl_d is not self.bybit and hasattr(b_ctrl_d, "ledger"):
+                    active_ledgers.append(("booster", b_ctrl_d.ledger))
+                reconciliation = build_shadow_demo_reconciliation(
+                    getattr(self, "shadow_engine", None), active_ledgers, strategy_id=sid, limit=40
+                )
+        except Exception:
+            pass
         demo_lab_on = self._is_demo_lab_active()
         demo_lab_strats = list((self.settings.get("demo_lab") or {}).get("admit_experimental_strategies") or [])
+        paused_set = set(getattr(self, "paused_strategies", []) or [])
         wfa_entry = wfa_map.get(sid) or {}
         wfa_passed = bool(wfa_entry.get("wfe_passed", False))
         admitted_demo_lab = bool(demo_lab_on and sid in demo_lab_strats)
         meta = dict(catalog.get(sid, {"contour": "Стратегия", "tier": "—", "timeframe": "—", "max_hold": "—", "order_type": "—", "desc": "Параметры стратегии загружены из истории исполнения."}))
         meta["strategy_id"] = sid
+        meta["is_paused"] = sid in paused_set
         meta["risk_per_trade"] = "$15 (1.5% от $1,000-пода)" if demo_lab_on else "Консервативный лимит"
         meta["admission_status"] = "WFA_PASSED" if wfa_passed else ("DEMO_LAB" if admitted_demo_lab else "BLOCKED")
         return {
@@ -1938,9 +1971,11 @@ class ControlCenterState:
             "wfa": wfa_entry,
             "funnel_24h": funnel_map.get(sid) or {},
             "demo_metrics": live_map.get(sid) or {},
+            "demo_exit_breakdown": demo_exit_counts,
             "demo_equity_curve": demo_curve,
             "demo_open_positions": demo_open_pos,
             "demo_traces": demo_traces[:50],
+            "reconciliation": reconciliation,
             "shadow": shadow_detail,
             "ml_cal": ml_entry or {},
         }
@@ -2582,6 +2617,24 @@ def create_wsgi_app(state: ControlCenterState):
             elif path == "/api/cancel_order":
                 ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
                 resp = ctrl.cancel_order(data["symbol"], data["order_id"])
+            elif path == "/api/strategy_toggle":
+                raw_sid = str(data.get("strategy_id") or "").strip()
+                sid_t = raw_sid.split(":", 1)[1].strip() if ":" in raw_sid else raw_sid
+                if not sid_t:
+                    raise ValueError("Не указан идентификатор стратегии")
+                cur_paused = list(getattr(state, "paused_strategies", []) or [])
+                if "paused" in data:
+                    want_pause = bool(data.get("paused"))
+                else:
+                    want_pause = sid_t not in cur_paused
+                if want_pause and sid_t not in cur_paused:
+                    cur_paused.append(sid_t)
+                elif not want_pause and sid_t in cur_paused:
+                    cur_paused = [x for x in cur_paused if x != sid_t]
+                state.paused_strategies = cur_paused
+                state.save_persisted_state()
+                state.add_log(("⏸ Стратегия " + sid_t + " поставлена на паузу из UI.") if want_pause else ("▶️ Стратегия " + sid_t + " возвращена в торги из UI."))
+                resp = {"ok": True, "strategy_id": sid_t, "paused": want_pause, "paused_strategies": list(cur_paused)}
             elif path == "/api/cancel_all_orders":
                 res_list = [ctrl.cancel_all_orders() for ctrl in state._active_controllers()]
                 resp = {"ok": all(r.get("ok") for r in res_list)}

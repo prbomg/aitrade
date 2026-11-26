@@ -58,16 +58,32 @@ button:disabled, input:disabled, select:disabled { opacity:0.45; cursor:not-allo
 .calc-preview { background:#090d16; border:1px dashed #38bdf8; border-radius:7px; padding:7px 11px; font-size:11.5px; color:#cbd5e1; margin-top:6px; display:flex; gap:14px; flex-wrap:wrap; font-variant-numeric:tabular-nums; }
 
 /* Пульт управления стратегиями (3 компактные карточки) */
-.strategy-deck { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-bottom:12px; }
+.strategy-deck { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-bottom:10px; }
 @media (max-width:1150px){ .strategy-deck { grid-template-columns:1fr; } }
-.strat-card { background:var(--card); border:2px solid var(--border); border-radius:10px; padding:11px 14px; display:flex; flex-direction:column; justify-content:space-between; min-width:0; }
+.strat-card { background:var(--card); border:2px solid var(--border); border-radius:10px; padding:9px 12px; display:flex; flex-direction:column; justify-content:space-between; min-width:0; }
 .strat-card.active-booster { border-color:#a78bfa; box-shadow:0 0 15px rgba(139,92,246,0.16); }
 .strat-card.active-core { border-color:#38bdf8; box-shadow:0 0 15px rgba(56,189,248,0.16); }
-.strat-header { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px; }
-.strat-title { font-size:13px; font-weight:700; color:#fff; margin:0; }
-.strat-metrics { display:grid; grid-template-columns:1fr 1fr; gap:6px; background:rgba(9,13,22,0.7); padding:7px 9px; border-radius:7px; margin-bottom:9px; font-size:11px; font-variant-numeric:tabular-nums; }
-.strat-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-.btn-big-toggle { width:100%; padding:8px 12px; font-size:12px; font-weight:700; border-radius:7px; text-align:center; }
+.strat-header { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:5px; }
+.strat-title { font-size:12.5px; font-weight:700; color:#fff; margin:0; }
+.strat-metrics { display:grid; grid-template-columns:1fr 1fr; gap:4px 8px; background:rgba(9,13,22,0.7); padding:6px 8px; border-radius:7px; margin-bottom:7px; font-size:11px; font-variant-numeric:tabular-nums; }
+.strat-actions { display:flex; gap:5px; align-items:center; flex-wrap:wrap; }
+.btn-big-toggle { width:100%; padding:6px 10px; font-size:11.5px; font-weight:700; border-radius:7px; text-align:center; }
+.filter-bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.filter-chip { padding:3px 9px; font-size:11px; border-radius:6px; background:#162033; color:var(--muted); border:1px solid var(--border); cursor:pointer; font-weight:600; }
+.filter-chip.active { background:#0284c7; color:#fff; border-color:#38bdf8; }
+th.sortable { cursor:pointer; user-select:none; }
+th.sortable:hover { color:#38bdf8; }
+th.sortable.sort-asc::after { content:" ▲"; font-size:9.5px; color:#38bdf8; }
+th.sortable.sort-desc::after { content:" ▼"; font-size:9.5px; color:#38bdf8; }
+details.diag-details { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:9px 14px; margin-bottom:10px; }
+details.diag-details > summary { cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; font-weight:700; color:#fff; }
+details.diag-details > summary::-webkit-details-marker { display:none; }
+details.diag-details[open] > summary { margin-bottom:9px; padding-bottom:7px; border-bottom:1px solid var(--border); }
+.exit-bar-track { display:flex; width:100%; height:10px; border-radius:99px; overflow:hidden; background:#090d16; border:1px solid var(--border); margin:6px 0; }
+.exit-bar-tp { background:#10b981; height:100%; }
+.exit-bar-ts { background:#f59e0b; height:100%; }
+.exit-bar-sl { background:#ef4444; height:100%; }
+.exit-bar-other { background:#64748b; height:100%; }
 
 /* Компактная полоса активных позиций (без дублирования 13-колоночной таблицы) */
 .live-pos-banner { display:none; background:linear-gradient(180deg, rgba(16,185,129,0.08), rgba(17,24,39,0.95)); border:1px solid rgba(16,185,129,0.45); border-radius:10px; padding:9px 14px; margin-bottom:12px; }
@@ -163,7 +179,8 @@ tbody tr:hover td:first-child { background:#152136; }
   </div>
   <div class="controls-row">
     <button type="button" id="btn-toggle-env" class="btn-ghost btn-sm" title="Переключатель Demo / Real Mainnet и предторговый чек-лист">🔐 Контур ▾</button>
-    <button type="button" id="btn-toggle-drawer" class="btn-ghost btn-sm">⚙️ Ордер & Guard ▾</button>
+    <button type="button" id="btn-toggle-manual" class="btn-ghost btn-sm" title="Ручной ордер с калькулятором риска и маржи">🎛 Ордер ▾</button>
+    <button type="button" id="btn-toggle-drawer" class="btn-ghost btn-sm" title="Настройки Smart Guard, BTC Guard, Time-Stop и Limit Chaser">⚙️ Smart Guard ▾</button>
     <button type="button" id="btn-toggle-logs" class="btn-ghost btn-sm">📟 Логи ▾</button>
     <button type="button" id="btn-sound-toggle" class="btn-ghost btn-sm" title="Звуковое оповещение при сигнале A+ или открытии сделки">🔔 Звук</button>
     <button type="button" id="btn-scan-only" class="btn-primary btn-sm">🔍 Скан</button>
@@ -242,13 +259,13 @@ tbody tr:hover td:first-child { background:#152136; }
     </div>
   </div>
 
-  <!-- ВЫДВИЖНОЙ ЯЩИК 1: РУЧНОЙ ОРДЕР И КАЛЬКУЛЯТОР РИСКА + SMART GUARD -->
-  <div class="drawer-panel" id="drawer-settings">
+  <!-- ВЫДВИЖНОЙ ЯЩИК 1А: РУЧНОЙ ОРДЕР И КАЛЬКУЛЯТОР РИСКА (FRONTIER PREVIEW) -->
+  <div class="drawer-panel" id="drawer-manual" style="border-color:#10b981">
     <div class="panel-header">
-      <h3 class="panel-title">🎛 Ручной ордер (калькулятор риска в $) и настройки Smart Guard</h3>
-      <button type="button" class="btn-ghost btn-sm" id="btn-close-drawer">✖ Свернуть</button>
+      <h3 class="panel-title">🎛 Ручной ордер (превью маржи, риска и комиссий до входа)</h3>
+      <button type="button" class="btn-ghost btn-sm" id="btn-close-manual">✖ Свернуть</button>
     </div>
-    <div class="form-row" style="border-bottom:1px solid var(--border);padding-bottom:8px">
+    <div class="form-row" style="padding-bottom:6px">
       <div class="form-group"><label>Монета</label><select id="manual-symbol"></select></div>
       <div class="form-group"><label>Тип</label><select id="manual-type"><option value="Market">Market</option><option value="Limit">Limit</option></select></div>
       <div class="form-group"><label for="manual-limit-price">Цена для Limit</label><input type="number" id="manual-limit-price" min="0" step="any" placeholder="Только для Limit" style="width:120px" disabled></div>
@@ -268,7 +285,15 @@ tbody tr:hover td:first-child { background:#152136; }
       <span>🛡 Риск при Stop-Loss: <b class="pos-red" id="calc-risk">-$0.00</b></span>
       <span>🎯 Потенциал TP2: <b class="pos-green" id="calc-reward">+$0.00</b></span>
     </div>
-    <div class="form-row" style="padding-top:8px;margin-bottom:0">
+  </div>
+
+  <!-- ВЫДВИЖНОЙ ЯЩИК 1Б: СИСТЕМНЫЕ НАСТРОЙКИ SMART GUARD И ФИЛЬТРОВ -->
+  <div class="drawer-panel" id="drawer-settings">
+    <div class="panel-header">
+      <h3 class="panel-title">⚙️ Настройки Smart Guard, BTC Regime Guard, Time-Stop и Limit Chaser</h3>
+      <button type="button" class="btn-ghost btn-sm" id="btn-close-drawer">✖ Свернуть</button>
+    </div>
+    <div class="form-row" style="padding-top:4px;margin-bottom:0">
       <div class="form-group"><label>🛡 Smart Guard</label><select id="sg-enabled"><option value="1">ВКЛ (5с цикл)</option><option value="0">ВЫКЛ</option></select></div>
       <div class="form-group"><label>🎯 Авто TP1 (50%)</label><select id="sg-split"><option value="1">Да (Reduce-Only)</option><option value="0">Нет</option></select></div>
       <div class="form-group"><label>Безубыток при +%</label><input type="number" id="sg-be-pct" value="0.55" step="0.05" style="width:95px"></div>
@@ -300,44 +325,43 @@ tbody tr:hover td:first-child { background:#152136; }
 </div>
 
 <div class="container" id="main-dashboard-view">
-  <!-- ЖИВАЯ СВОДКА: ЧТО ПРОИСХОДИТ ПРЯМО СЕЙЧАС -->
-  <div id="live-stage-banner" class="panel" style="border:1px solid #38bdf8;background:linear-gradient(180deg, rgba(14,165,233,0.08), rgba(17,24,39,0.96));margin-bottom:12px">
-    <div class="panel-header" style="margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <h3 class="panel-title">📍 Что происходит сейчас</h3>
+  <!-- ЖИВАЯ СВОДКА: ЧТО ПРОИСХОДИТ ПРЯМО СЕЙЧАС (КОМПАКТНАЯ ПОЛОСА) -->
+  <div id="live-stage-banner" class="panel" style="border:1px solid #38bdf8;background:linear-gradient(180deg, rgba(14,165,233,0.07), rgba(17,24,39,0.96));padding:8px 12px;margin-bottom:10px">
+    <div class="panel-header" style="margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
         <span class="badge badge-amber" id="stage-service-badge">⏳ Подключение...</span>
-        <span class="badge badge-purple" title="Каждая стратегия торгует от своих $1,000, портфельный потолок на Demo — до $50,000 (20 пар, до 20 позиций) + бесконфликтный Live Shadow">🧪 Demo Lab: 13 стратегий × $1k/страт. + Shadow</span>
+        <span class="badge badge-purple" id="dyn-demo-lab-badge" title="Каждая стратегия торгует от своих $1,000, портфельный потолок на Demo — до $50,000 (20 пар, до 20 позиций) + бесконфликтный Live Shadow">🧪 Demo Lab × $1k/страт. + Shadow</span>
         <span style="font-size:11.5px;color:var(--muted)" id="runtime-status" role="status">Загрузка состояния сервиса…</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="badge badge-blue" id="stage-version-badge">v—</span>
-        <span style="font-size:11.5px;color:#38bdf8;font-weight:600" id="stage-next-4h-timer">След. 4h-окно T1: —</span>
+        <span style="font-size:11px;color:#38bdf8;font-weight:600" id="stage-next-4h-timer">След. 4h-окно T1: —</span>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:10px" id="stage-strategies-grid">
-      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px;min-width:0">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
-          <button type="button" class="strat-link" data-strategy-detail="T1_DONCHIAN_TSMOM" style="color:#38bdf8">T1_DONCHIAN_TSMOM (Core · 4h)</button>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:8px" id="stage-strategies-grid">
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:7px;padding:7px 10px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+          <button type="button" class="strat-link" data-strategy-detail="T1_DONCHIAN_TSMOM" style="color:#38bdf8">T1_DONCHIAN_TSMOM (4h)</button>
           <span class="badge badge-blue" id="stage-t1-badge">Ожидание</span>
         </div>
-        <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-t1-reason">Загрузка статуса T1...</div>
-        <div style="font-size:11px;color:var(--muted)" id="stage-t1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · сделки T1: 0 ($0.00)</div>
+        <div style="font-size:11.5px;color:#e2e8f0;margin-bottom:3px" id="stage-t1-reason">Загрузка статуса T1...</div>
+        <div style="font-size:10.5px;color:var(--muted)" id="stage-t1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · сделки T1: 0 ($0.00)</div>
       </div>
-      <div style="background:#090d16;border:1px solid var(--border);border-radius:8px;padding:9px 11px;min-width:0">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
-          <button type="button" class="strat-link" data-strategy-detail="B1_SQUEEZE_BREAKOUT" style="color:#c4b5fd">B1_SQUEEZE_BREAKOUT (Разгон · 15m/1h)</button>
+      <div style="background:#090d16;border:1px solid var(--border);border-radius:7px;padding:7px 10px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+          <button type="button" class="strat-link" data-strategy-detail="B1_SQUEEZE_BREAKOUT" style="color:#c4b5fd">B1_SQUEEZE_BREAKOUT (15m/1h)</button>
           <span class="badge badge-purple" id="stage-b1-badge">Ожидание</span>
         </div>
-        <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-b1-reason">Загрузка статуса B1...</div>
-        <div style="font-size:11px;color:var(--muted)" id="stage-b1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · сделки B1: 0 ($0.00)</div>
+        <div style="font-size:11.5px;color:#e2e8f0;margin-bottom:3px" id="stage-b1-reason">Загрузка статуса B1...</div>
+        <div style="font-size:10.5px;color:var(--muted)" id="stage-b1-stats">24ч: окон 0 · кандидатов 0 · отправлено 0 · сделки B1: 0 ($0.00)</div>
       </div>
-      <div style="background:#090d16;border:1px solid #4c1d95;border-radius:8px;padding:9px 11px;min-width:0">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
-          <b style="color:#a78bfa">🧪 Live Shadow Полигон (13 стратегий · расч. $1k)</b>
+      <div style="background:#090d16;border:1px solid #4c1d95;border-radius:7px;padding:7px 10px;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+          <b style="color:#a78bfa" id="dyn-shadow-title">🧪 Live Shadow Полигон ($1k/страт.)</b>
           <span class="badge badge-purple" id="stage-shadow-badge">0 откр.</span>
         </div>
-        <div style="font-size:12px;color:#e2e8f0;margin-bottom:5px" id="stage-shadow-reason">Ожидание первых сигналов Shadow Lab...</div>
-        <div style="font-size:11px;color:var(--muted)" id="stage-shadow-stats">Открыто: 0 · Закрыто: 0 · Риск: $15/сд. · Без конфликта тикеров</div>
+        <div style="font-size:11.5px;color:#e2e8f0;margin-bottom:3px" id="stage-shadow-reason">Ожидание первых сигналов Shadow Lab...</div>
+        <div style="font-size:10.5px;color:var(--muted)" id="stage-shadow-stats">Открыто: 0 · Закрыто: 0 · Риск: $15/сд. · Без конфликта тикеров</div>
       </div>
     </div>
   </div>
@@ -347,7 +371,7 @@ tbody tr:hover td:first-child { background:#152136; }
     <div class="strat-card" id="card-booster">
       <div>
         <div class="strat-header">
-          <h3 class="strat-title" title="Расчётный капитал $1,000 на стратегию; на общем Demo-счёте без отдельных субаккаунтов">🚀 1. Автопилот Разгона (B1–B7 + S1 · расч. $1k)</h3>
+          <h3 class="strat-title" id="dyn-booster-title" title="Расчётный капитал $1,000 на стратегию; на общем Demo-счёте без отдельных субаккаунтов">🚀 1. Автопилот Разгона (расч. $1k)</h3>
           <span class="badge badge-blue" id="badge-booster-state">Загрузка…</span>
         </div>
         <div class="strat-metrics">
@@ -359,7 +383,7 @@ tbody tr:hover td:first-child { background:#152136; }
       </div>
       <div class="strat-actions">
         <button type="button" id="btn-toggle-booster" class="btn-big-toggle btn-purple">🚀 ВКЛЮЧИТЬ АВТОПИЛОТ РАЗГОНА</button>
-        <button type="button" id="btn-once-booster" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход Разгона (8 стратегий)</button>
+        <button type="button" id="btn-once-booster" class="btn-ghost btn-sm" style="width:100%">⚡ Разовый скан + вход Разгона</button>
       </div>
     </div>
 
@@ -475,7 +499,7 @@ tbody tr:hover td:first-child { background:#152136; }
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">🔥 Деривативный сканер «OI + Funding + Liquidation Squeeze» (Информационный радар)</h3>
-        <span style="font-size:11.5px;color:var(--muted)">В Demo Lab Автопилот Разгона торгует 8 стратегий (<b>B1–B7 + S1</b>, 20 пар, Pure SL/TP)</span>
+        <span style="font-size:11.5px;color:var(--muted)" id="dyn-oi-note">В Demo Lab Автопилот Разгона торгует активные стратегии (20 пар, Pure SL/TP)</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -491,48 +515,45 @@ tbody tr:hover td:first-child { background:#152136; }
     </div>
   </div>
 
-  <!-- ВКЛАДКА 2: СИГНАЛЫ ОСНОВНОЙ ИИ + WFA GATEKEEPER (АКТИВНА ПО УМОЛЧАНИЮ) -->
+  <!-- ВКЛАДКА 2: ЕДИНЫЙ РЕЙТИНГ (SHADOW VS DEMO) + СИГНАЛЫ + ДИАГНОСТИКА -->
   <div id="tab-signals" class="tab-content active">
     <div class="panel" style="border-color:#a78bfa">
       <div class="panel-header">
-        <h3 class="panel-title">🧪 Live Shadow Полигон — Рейтинг стратегий ($1k/страт. · живой стакан · без конфликта тикеров)</h3>
-        <span style="font-size:11.5px;color:#c4b5fd" id="shadow-lab-summary-lbl">Открыто: 0 · Закрыто: 0</span>
+        <div>
+          <h3 class="panel-title">🏆 Единый рейтинг стратегий — Live Shadow vs Real Demo</h3>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px" id="unified-strat-subtitle">Сравнение Shadow ($1k/страт.) и реального Demo · клик по колонке сортирует</div>
+        </div>
+        <div class="filter-bar" id="unified-filter-bar">
+          <span class="filter-chip active" data-ufilter="ALL">Все</span>
+          <span class="filter-chip" data-ufilter="ACTIVE">В бою</span>
+          <span class="filter-chip" data-ufilter="OPEN">С позициями</span>
+          <span class="filter-chip" data-ufilter="PAUSED">На паузе</span>
+          <span style="font-size:11px;color:#c4b5fd;margin-left:4px" id="shadow-lab-summary-lbl">Открыто: 0 · Закрыто: 0</span>
+        </div>
       </div>
       <div class="table-wrap">
-        <table>
-          <thead><tr><th>Стратегия</th><th>Баланс $1k/страт.</th><th>Открыто / Закрыто</th><th>Win Rate</th><th>Profit Factor</th><th>Net PnL</th><th>Плавающий PnL</th><th>Ср. R</th><th>Max DD</th></tr></thead>
-          <tbody id="shadow-lab-tbody"><tr><td colspan="9" style="color:var(--muted)">Ожидание первых сигналов в Live Shadow...</td></tr></tbody>
+        <table id="unified-strat-table">
+          <thead>
+            <tr>
+              <th class="sortable" data-usort="strategy_id">Стратегия</th>
+              <th>Статус</th>
+              <th class="sortable sort-desc" data-usort="sh_pnl">Shadow Net (Эквити)</th>
+              <th class="sortable" data-usort="sh_wr">Shadow WR / PF / R</th>
+              <th class="sortable" data-usort="dm_pnl">Real Demo Net</th>
+              <th class="sortable" data-usort="dm_trades">Demo Сд. / Слиппедж</th>
+              <th class="sortable" data-usort="delta">Δ (Demo − Shadow)</th>
+              <th>Управление</th>
+            </tr>
+          </thead>
+          <tbody id="unified-strat-tbody"><tr><td colspan="8" style="color:var(--muted)">Загрузка сводного рейтинга стратегий…</td></tr></tbody>
         </table>
       </div>
     </div>
+
     <div class="panel">
       <div class="panel-header">
-        <h3 class="panel-title">📈 Раздельный учёт реальных Demo-ордеров (изолировано от legacy-истории)</h3>
+        <h3 class="panel-title" id="dyn-signals-title">🎯 Актуальные сигналы стратегий (Demo Lab · 20 пар)</h3>
         <span style="font-size:11.5px;color:var(--muted)" id="legacy-isolated-lbl">Legacy: —</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Стратегия / Горизонт</th><th>Закрыто (Открыто)</th><th>Net PnL</th><th>Max DD</th><th>Ср. удержание</th><th>Ср. Realized R</th><th>Ср. слиппедж</th><th>Комиссии</th></tr></thead>
-          <tbody id="live-strat-metrics-tbody"><tr><td colspan="8" style="color:var(--muted)">Загрузка раздельного учёта...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">📊 Воронка стратегий за 24ч — Причины простоя и отказов</h3>
-        <span style="font-size:11.5px;color:var(--muted)" id="funnel-24h-updated">Обновлено: —</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Стратегия</th><th>Окон допуска</th><th>Кандидаты</th><th>Блок WFA/ML</th><th>Блок Guard/Биржа</th><th>Отправлено</th><th>Исполнено 24ч</th><th>Причина простоя / последнего блока</th></tr></thead>
-          <tbody id="strategy-funnel-tbody"><tr><td colspan="8" style="color:var(--muted)">Ожидание первого скана...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">🎯 Сигналы стратегий (13 стратегий Demo Lab · 20 пар)</h3>
-        <span style="font-size:11.5px;color:var(--muted)">Автотрейдинг Core: <b>T1–T3, C2–C3</b> · Разгон: <b>B1–B7, S1</b> (приоритет: Tier 1 → Tier 2 → Tier 3)</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -541,18 +562,48 @@ tbody tr:hover td:first-child { background:#152136; }
         </table>
       </div>
     </div>
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">🛡 WFA Gatekeeper — Допуск стратегий по 180-дневному Rolling WFA</h3>
-        <span style="font-size:11.5px;color:var(--muted)" id="wfa-val-updated">Обновлено: —</span>
+
+    <details class="diag-details">
+      <summary><span>📊 Воронка стратегий за 24ч — Причины простоя и отказов</span><span style="font-size:11.5px;color:var(--muted);font-weight:400" id="funnel-24h-updated">Обновлено: —</span></summary>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Стратегия</th><th>Окон допуска</th><th>Кандидаты</th><th>Блок WFA/ML</th><th>Блок Guard/Биржа</th><th>Отправлено</th><th>Исполнено 24ч</th><th>Причина простоя / последнего блока</th></tr></thead>
+          <tbody id="strategy-funnel-tbody"><tr><td colspan="8" style="color:var(--muted)">Ожидание первого скана...</td></tr></tbody>
+        </table>
       </div>
+    </details>
+
+    <details class="diag-details">
+      <summary><span>🛡 WFA Gatekeeper — Допуск стратегий по 180-дневному Rolling WFA</span><span style="font-size:11.5px;color:var(--muted);font-weight:400" id="wfa-val-updated">Обновлено: —</span></summary>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Стратегия</th><th>Статус допуска</th><th>OOS Сделок</th><th>Profit Factor</th><th>1x E[R]</th><th>2x Stress E[R]</th><th>WFE</th></tr></thead>
           <tbody id="wfa-validation-tbody"><tr><td colspan="7" style="color:var(--muted)">Загрузка артефакта WFA...</td></tr></tbody>
         </table>
       </div>
-    </div>
+    </details>
+
+    <details class="diag-details">
+      <summary><span>🔬 Подробные раздельные таблицы: Live Shadow и Real Demo</span><span style="font-size:11.5px;color:var(--muted);font-weight:400">Max DD, удержание, комиссии</span></summary>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;font-weight:700;color:#c4b5fd;margin-bottom:6px">🧪 Live Shadow Полигон ($1k/страт.)</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Стратегия</th><th>Баланс $1k/страт.</th><th>Открыто / Закрыто</th><th>Win Rate</th><th>Profit Factor</th><th>Net PnL</th><th>Плавающий PnL</th><th>Ср. R</th><th>Max DD</th></tr></thead>
+            <tbody id="shadow-lab-tbody"><tr><td colspan="9" style="color:var(--muted)">Ожидание первых сигналов в Live Shadow...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:12px;font-weight:700;color:#38bdf8;margin-bottom:6px">📈 Раздельный учёт реальных Demo-ордеров</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Стратегия / Горизонт</th><th>Закрыто (Открыто)</th><th>Net PnL</th><th>Max DD</th><th>Ср. удержание</th><th>Ср. Realized R</th><th>Ср. слиппедж</th><th>Комиссии</th></tr></thead>
+            <tbody id="live-strat-metrics-tbody"><tr><td colspan="8" style="color:var(--muted)">Загрузка раздельного учёта...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
   </div>
 
   <!-- ВКЛАДКА 3: ПОЗИЦИИ И ОРДЕРА -->
@@ -699,7 +750,15 @@ tbody tr:hover td:first-child { background:#152136; }
   <!-- ВКЛАДКА 6: ИСТОРИЯ -->
   <div id="tab-history" class="tab-content">
     <div class="panel">
-      <div class="panel-header"><h3 class="panel-title">💰 История закрытых сделок и частичных тейков TP1 (Closed PnL)</h3><span style="font-size:11.5px;color:var(--muted)" id="history-limit-lbl">Показано 0 записей (7д)</span></div>
+      <div class="panel-header">
+        <h3 class="panel-title">💰 История закрытых сделок и частичных тейков TP1 (Closed PnL)</h3>
+        <div class="filter-bar">
+          <select id="hist-filter-strat" style="padding:3px 7px;font-size:11.5px"><option value="">Все стратегии</option></select>
+          <input type="text" id="hist-filter-sym" placeholder="Монета (напр. SOL)" style="width:130px;padding:3px 7px;font-size:11.5px">
+          <label style="display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--muted);cursor:pointer"><input type="checkbox" id="hist-hide-legacy"> Скрыть Legacy</label>
+          <span style="font-size:11.5px;color:var(--muted)" id="history-limit-lbl">Показано 0 записей (7д)</span>
+        </div>
+      </div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Монета</th><th>Стратегия</th><th>Направление</th><th>Объем</th><th>Цена входа</th><th>Цена выхода</th><th>Закрытый PnL (USDT)</th><th>Плечо</th><th>Дата и время</th></tr></thead>
@@ -725,13 +784,15 @@ tbody tr:hover td:first-child { background:#152136; }
         <span class="badge badge-blue" id="sd-contour-badge">—</span>
         <span class="badge badge-purple" id="sd-tier-badge">—</span>
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
+      <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+        <button type="button" id="btn-sd-toggle-pause" class="btn-warning btn-sm" title="Поставить стратегию на паузу или вернуть в Demo-торги без перезапуска сервера">⏸ Пауза в Demo</button>
         <span style="font-size:11px;color:var(--muted)" id="sd-updated">Обновлено: —</span>
         <button type="button" id="btn-sd-refresh" class="btn-ghost btn-sm">🔄 Обновить</button>
       </div>
     </div>
     <div style="font-size:12.5px;color:#e2e8f0;margin-bottom:6px" id="sd-desc">Загрузка описания стратегии...</div>
     <div style="font-size:11.5px;color:var(--muted)" id="sd-params">Таймфрейм: — · Горизонт: — · Ордер: — · Риск: —</div>
+    <div id="sd-exit-breakdown-box" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08);font-size:11.5px;color:#cbd5e1"></div>
   </div>
 
   <div class="sd-kpi-grid">
@@ -765,6 +826,19 @@ tbody tr:hover td:first-child { background:#152136; }
     </div>
   </div>
 
+  <div class="panel" id="sd-reconciliation-panel">
+    <div class="panel-header">
+      <h3 class="panel-title">🔗 Триангуляция Shadow vs Real Demo (по общему signal_id)</h3>
+      <span style="font-size:11.5px;color:#38bdf8" id="sd-reconcile-summary">Сигналов с signal_id: 0</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Время (UTC)</th><th>Монета</th><th>Сторона</th><th>Статус пары</th><th>Shadow (решение / исход)</th><th>Demo (решение / исход)</th><th>Задержка Demo</th><th>Причина пропуска</th></tr></thead>
+        <tbody id="sd-reconcile-tbody"><tr><td colspan="8" style="color:var(--muted)">Пока нет сигналов с общим signal_id (появятся после первого скана на v46+)</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="panel">
     <div class="panel-header"><h3 class="panel-title">🟢 Текущие открытые позиции стратегии (Real Demo + Live Shadow)</h3></div>
     <div class="table-wrap">
@@ -789,8 +863,8 @@ tbody tr:hover td:first-child { background:#152136; }
     <div class="panel-header"><h3 class="panel-title">📊 Сквозная трассировка реальных Demo-ордеров (до 50 последних)</h3></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Монета</th><th>Сторона</th><th>Статус</th><th>Цена сигнала</th><th>Факт. вход</th><th>Слиппедж</th><th>Комиссии</th><th>PnL ($)</th><th>Realized R</th><th>Удержание</th><th>Открыто (UTC)</th></tr></thead>
-        <tbody id="sd-demo-traces-tbody"><tr><td colspan="11" style="color:var(--muted)">Пока нет реальных Demo-ордеров по этой стратегии</td></tr></tbody>
+        <thead><tr><th>Монета</th><th>Сторона</th><th>Статус</th><th>Выход</th><th>Задержка</th><th>Цена сигнала</th><th>Факт. вход</th><th>Слиппедж</th><th>Комиссии</th><th>PnL ($)</th><th>Realized R</th><th>Удержание</th><th>Открыто (UTC)</th></tr></thead>
+        <tbody id="sd-demo-traces-tbody"><tr><td colspan="13" style="color:var(--muted)">Пока нет реальных Demo-ордеров по этой стратегии</td></tr></tbody>
       </table>
     </div>
   </div>
