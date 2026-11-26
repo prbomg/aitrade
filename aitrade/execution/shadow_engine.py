@@ -83,12 +83,32 @@ class LiveShadowEngine:
                     fees_usd REAL DEFAULT 0,
                     pnl_usd REAL DEFAULT 0,
                     realized_r REAL DEFAULT 0,
-                    exit_reason TEXT DEFAULT ''
+                    exit_reason TEXT DEFAULT '',
+                    signal_id TEXT DEFAULT '',
+                    signal_created_ms INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS shadow_signal_decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL,
+                    signal_id TEXT NOT NULL,
+                    strategy_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    reason TEXT DEFAULT '',
+                    shadow_trade_id TEXT DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS idx_shadow_status ON shadow_trades(status);
                 CREATE INDEX IF NOT EXISTS idx_shadow_strat ON shadow_trades(strategy_id);
+                CREATE INDEX IF NOT EXISTS idx_shadow_dec_sig ON shadow_signal_decisions(signal_id);
                 """
             )
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(shadow_trades)").fetchall()}
+            if "signal_id" not in cols:
+                conn.execute("ALTER TABLE shadow_trades ADD COLUMN signal_id TEXT DEFAULT ''")
+            if "signal_created_ms" not in cols:
+                conn.execute("ALTER TABLE shadow_trades ADD COLUMN signal_created_ms INTEGER DEFAULT 0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_signal_id ON shadow_trades(signal_id)")
 
     @contextmanager
     def _connect(self):
@@ -114,19 +134,32 @@ class LiveShadowEngine:
                 (r[0], r[1])
                 for r in conn.execute("SELECT strategy_id, symbol FROM shadow_trades WHERE status='OPEN'").fetchall()
             }
+            def _log_decision(sig_id: str, s_id: str, sym_s: str, side_s: str, decision: str, reason: str = "", trade_id: str = "") -> None:
+                if not sig_id:
+                    return
+                conn.execute(
+                    "INSERT INTO shadow_signal_decisions (ts, signal_id, strategy_id, symbol, side, decision, reason, shadow_trade_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (ts, sig_id, s_id, sym_s, side_s, decision, reason[:160], trade_id),
+                )
+
             for sig in signals:
                 strat_id = str(sig.get("strategy_id") or "").strip()
                 sym = str(sig.get("symbol") or "").strip()
                 side = str(sig.get("side") or "").strip()
+                sig_id = str(sig.get("signal_id") or "").strip()
+                sig_created_ms = int(sig.get("signal_created_ms") or int(ts * 1000))
                 if not strat_id or not sym or side not in ("Buy", "Sell"):
                     continue
                 if (strat_id, sym) in open_keys:
+                    _log_decision(sig_id, strat_id, sym, side, "SKIPPED", "Позиция по этой стратегии и монете уже открыта в Shadow")
                     continue
 
                 sig_entry = float(sig.get("entry_price") or 0.0)
                 sl_px = float(sig.get("stop_loss") or 0.0)
                 tp_px = float(sig.get("take_profit") or sig.get("take_profit_2") or sig.get("take_profit_1") or 0.0)
                 if sig_entry <= 0 or sl_px <= 0 or tp_px <= 0:
+                    _log_decision(sig_id, strat_id, sym, side, "SKIPPED", "Некорректные уровни entry/SL/TP")
                     continue
 
                 bid, ask = bbo_map.get(sym, (0.0, 0.0))
@@ -138,17 +171,21 @@ class LiveShadowEngine:
 
                 # Проверка валидности SL/TP относительно фактического входа
                 if side == "Buy" and not (sl_px < entry_px < tp_px):
+                    _log_decision(sig_id, strat_id, sym, side, "SKIPPED", "Цена входа вышла за пределы SL/TP (Buy)")
                     continue
                 if side == "Sell" and not (tp_px < entry_px < sl_px):
+                    _log_decision(sig_id, strat_id, sym, side, "SKIPPED", "Цена входа вышла за пределы SL/TP (Sell)")
                     continue
 
                 stop_dist = abs(entry_px - sl_px)
                 if stop_dist <= 1e-9:
+                    _log_decision(sig_id, strat_id, sym, side, "SKIPPED", "Нулевая дистанция стопа")
                     continue
                 max_notional = self.POD_CAPITAL_USD * self.MAX_POD_LEVERAGE
                 qty = min(self.RISK_PER_TRADE_USD / stop_dist, max_notional / entry_px)
                 notional = qty * entry_px
                 if notional < 10.0:
+                    _log_decision(sig_id, strat_id, sym, side, "SKIPPED", "Номинал ниже минимума $10")
                     continue
                 planned_risk = qty * stop_dist
                 hold_min = int(DEFAULT_HOLD_MINUTES.get(strat_id, 720))
@@ -157,11 +194,12 @@ class LiveShadowEngine:
                 conn.execute(
                     """
                     INSERT INTO shadow_trades
-                    (id, strategy_id, symbol, side, status, opened_ts, max_hold_min, signal_entry, entry_px, sl_px, tp_px, qty, notional_usd, risk_usd)
-                    VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, strategy_id, symbol, side, status, opened_ts, max_hold_min, signal_entry, entry_px, sl_px, tp_px, qty, notional_usd, risk_usd, signal_id, signal_created_ms)
+                    VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (tid, strat_id, sym, side, ts, hold_min, sig_entry, entry_px, sl_px, tp_px, qty, notional, planned_risk),
+                    (tid, strat_id, sym, side, ts, hold_min, sig_entry, entry_px, sl_px, tp_px, qty, notional, planned_risk, sig_id, sig_created_ms),
                 )
+                _log_decision(sig_id, strat_id, sym, side, "ENTERED", "", tid)
                 open_keys.add((strat_id, sym))
                 opened_count += 1
         return opened_count
@@ -228,7 +266,7 @@ class LiveShadowEngine:
         bbo = bbo_map or {}
         with self._lock, self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, strategy_id, symbol, side, status, opened_ts, closed_ts, entry_px, sl_px, tp_px, exit_px, qty, risk_usd, fees_usd, pnl_usd, realized_r, exit_reason "
+                "SELECT id, strategy_id, symbol, side, status, opened_ts, closed_ts, entry_px, sl_px, tp_px, exit_px, qty, risk_usd, fees_usd, pnl_usd, realized_r, exit_reason, signal_id, signal_created_ms "
                 "FROM shadow_trades ORDER BY opened_ts ASC"
             ).fetchall()
 
@@ -237,7 +275,7 @@ class LiveShadowEngine:
         closed_list: List[Dict[str, Any]] = []
 
         for r in rows:
-            tid, s_id, sym, side, status, o_ts, c_ts, e_px, sl_px, tp_px, x_px, qty, risk_usd, fees, pnl, r_mult, reason = r
+            tid, s_id, sym, side, status, o_ts, c_ts, e_px, sl_px, tp_px, x_px, qty, risk_usd, fees, pnl, r_mult, reason, sig_id, sig_c_ms = r
             st = by_strat.setdefault(
                 s_id,
                 {
@@ -267,6 +305,8 @@ class LiveShadowEngine:
                 open_list.append(
                     {
                         "id": tid,
+                        "signal_id": sig_id or "",
+                        "signal_created_ms": int(sig_c_ms or 0),
                         "strategy_id": s_id,
                         "symbol": sym,
                         "side": side,
@@ -298,6 +338,8 @@ class LiveShadowEngine:
                 closed_list.append(
                     {
                         "id": tid,
+                        "signal_id": sig_id or "",
+                        "signal_created_ms": int(sig_c_ms or 0),
                         "strategy_id": s_id,
                         "symbol": sym,
                         "side": side,
@@ -353,7 +395,7 @@ class LiveShadowEngine:
         bbo = bbo_map or {}
         with self._lock, self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, symbol, side, status, opened_ts, closed_ts, entry_px, sl_px, tp_px, exit_px, qty, notional_usd, risk_usd, fees_usd, pnl_usd, realized_r, exit_reason "
+                "SELECT id, symbol, side, status, opened_ts, closed_ts, entry_px, sl_px, tp_px, exit_px, qty, notional_usd, risk_usd, fees_usd, pnl_usd, realized_r, exit_reason, signal_id, signal_created_ms "
                 "FROM shadow_trades WHERE strategy_id=? ORDER BY opened_ts ASC",
                 (sid,),
             ).fetchall()
@@ -366,7 +408,7 @@ class LiveShadowEngine:
         eq_cur = eq_peak = max_dd = 0.0
 
         for r in rows:
-            tid, sym, side, status, o_ts, c_ts, e_px, sl_px, tp_px, x_px, qty, notional, risk_usd, fees, pnl, r_mult, reason = r
+            tid, sym, side, status, o_ts, c_ts, e_px, sl_px, tp_px, x_px, qty, notional, risk_usd, fees, pnl, r_mult, reason, sig_id, sig_c_ms = r
             if status == "OPEN":
                 bid, ask = bbo.get(sym, (0.0, 0.0))
                 mark = bid if (side == "Buy" and bid > 0) else (ask if (side == "Sell" and ask > 0) else e_px)
@@ -375,6 +417,8 @@ class LiveShadowEngine:
                 open_list.append(
                     {
                         "id": tid,
+                        "signal_id": sig_id or "",
+                        "signal_created_ms": int(sig_c_ms or 0),
                         "symbol": sym,
                         "side": side,
                         "entry_px": round(e_px, 6),
@@ -411,6 +455,8 @@ class LiveShadowEngine:
                 closed_list.append(
                     {
                         "id": tid,
+                        "signal_id": sig_id or "",
+                        "signal_created_ms": int(sig_c_ms or 0),
                         "symbol": sym,
                         "side": side,
                         "entry_px": round(e_px, 6),

@@ -273,6 +273,17 @@ def compute_live_strategy_metrics(
             intents_map, active_lots, _ = ledger._execution_lifecycles()
             closed_rows = ledger.attribute(ledger.records("closed"))
             executions = ledger.records("executions")
+            exit_reason_by_oid: Dict[str, str] = {}
+            with ledger.connect() as conn:
+                for (raw_ev,) in conn.execute("SELECT payload FROM events WHERE kind='EXIT_SUBMITTED'").fetchall():
+                    try:
+                        ev_p = json.loads(raw_ev)
+                        e_oid = str(ev_p.get("orderId") or "")
+                        e_rsn = str(ev_p.get("exit_reason") or "").strip()
+                        if e_oid and e_rsn:
+                            exit_reason_by_oid[e_oid] = e_rsn
+                    except Exception:
+                        continue
         except Exception:
             continue
 
@@ -328,8 +339,12 @@ def compute_live_strategy_metrics(
             clean_s = normalize_strategy_id(intent_obj.get("strategy_id"))
             side = str(intent_obj.get("side") or "")
             sym = str(intent_obj.get("symbol") or "")
+            sig_ctx = intent_obj.get("signal_context") if isinstance(intent_obj.get("signal_context"), dict) else {}
+            sig_id = str(intent_obj.get("signal_id") or sig_ctx.get("signal_id") or "").strip()
+            sig_created_ms = int(intent_obj.get("signal_created_ms") or sig_ctx.get("signal_created_ms") or 0)
             sig_entry = float(intent_obj.get("entry") or 0.0)
             sl_px = float(intent_obj.get("sl") or 0.0)
+            tp_px = float(intent_obj.get("tp") or 0.0)
             req_qty = float(intent_obj.get("requestedQty") or intent_obj.get("qty") or 0.0)
             created_ms = int(float(intent_obj.get("created") or 0.0) * 1000)
 
@@ -368,10 +383,27 @@ def compute_live_strategy_metrics(
             c_rows = closed_by_intent.get(iid, [])
             closed_pnl_sum = sum(float(c.get("closedPnl") or 0.0) for c in c_rows)
             exit_fees = 0.0
+            exit_reason = ""
             for c in c_rows:
                 c_oid = str(c.get("orderId") or "")
+                if not exit_reason and c_oid in exit_reason_by_oid:
+                    exit_reason = exit_reason_by_oid[c_oid]
                 for ex in exec_by_oid.get(c_oid, []):
                     exit_fees += float(ex.get("execFee") or 0.0)
+                    if not exit_reason:
+                        st_ex = str(ex.get("stopOrderType") or "").lower()
+                        if "take" in st_ex or "profit" in st_ex:
+                            exit_reason = "TP"
+                        elif "stop" in st_ex:
+                            exit_reason = "SL"
+            if c_rows and not exit_reason:
+                avg_exit_px = float(c_rows[-1].get("avgExitPrice") or 0.0)
+                if avg_exit_px > 0 and tp_px > 0 and abs(avg_exit_px - tp_px) / tp_px <= 0.0025:
+                    exit_reason = "TP"
+                elif avg_exit_px > 0 and sl_px > 0 and abs(avg_exit_px - sl_px) / sl_px <= 0.0025:
+                    exit_reason = "SL"
+                else:
+                    exit_reason = "EXCHANGE_CLOSE"
             total_fees = round(entry_fees + exit_fees, 4)
 
             if c_rows and actual_fill_px <= 0:
@@ -384,6 +416,10 @@ def compute_live_strategy_metrics(
                     slip_bps = round(((actual_fill_px - sig_entry) / sig_entry) * 10000.0, 2)
                 elif side == "Sell":
                     slip_bps = round(((sig_entry - actual_fill_px) / sig_entry) * 10000.0, 2)
+
+            fill_latency_ms: Optional[int] = None
+            if filled_qty > 0 and opened_ms > 0 and sig_created_ms > 0:
+                fill_latency_ms = max(0, int(opened_ms - sig_created_ms))
 
             planned_risk_usd = abs(sig_entry - sl_px) * (filled_qty if filled_qty > 0 else req_qty) if (sig_entry > 0 and sl_px > 0) else 0.0
             realized_r = round(closed_pnl_sum / planned_risk_usd, 3) if (c_rows and planned_risk_usd > 1e-6) else None
@@ -408,6 +444,10 @@ def compute_live_strategy_metrics(
             traces.append(
                 {
                     "intent_id": iid,
+                    "signal_id": sig_id,
+                    "signal_created_ms": sig_created_ms,
+                    "fill_latency_ms": fill_latency_ms,
+                    "exit_reason": exit_reason,
                     "account": acc_name,
                     "strategy_id": clean_s,
                     "symbol": sym or (c_rows[0].get("symbol") if c_rows else ""),
@@ -475,4 +515,199 @@ def compute_live_strategy_metrics(
             "trades": legacy_trades,
             "net_pnl_usd": round(legacy_net_usd, 2),
         },
+    }
+
+
+def build_shadow_demo_reconciliation(
+    shadow_engine: Any,
+    ledgers: Iterable[Tuple[str, Ledger]],
+    strategy_id: Optional[str] = None,
+    limit: int = 200,
+) -> Dict[str, Any]:
+    """Сквозная сверка Shadow vs Bybit Demo по общему signal_id: входы, пропуски, задержки и правила выхода."""
+    target_strat = normalize_strategy_id(strategy_id) if strategy_id else ""
+    shadow_trades_by_sig: Dict[str, Dict[str, Any]] = {}
+    shadow_decisions_by_sig: Dict[str, Dict[str, Any]] = {}
+    if shadow_engine is not None and hasattr(shadow_engine, "_connect"):
+        try:
+            with shadow_engine._lock, shadow_engine._connect() as conn:
+                t_rows = conn.execute(
+                    "SELECT id, signal_id, signal_created_ms, strategy_id, symbol, side, status, opened_ts, closed_ts, "
+                    "entry_px, exit_px, sl_px, tp_px, fees_usd, pnl_usd, realized_r, exit_reason "
+                    "FROM shadow_trades WHERE signal_id != '' ORDER BY opened_ts DESC LIMIT ?",
+                    (max(50, int(limit) * 3),),
+                ).fetchall()
+                for r in t_rows:
+                    sid_norm = normalize_strategy_id(r[3])
+                    if target_strat and sid_norm != target_strat:
+                        continue
+                    sig_id = str(r[1] or "").strip()
+                    if sig_id and sig_id not in shadow_trades_by_sig:
+                        shadow_trades_by_sig[sig_id] = {
+                            "trade_id": r[0],
+                            "signal_id": sig_id,
+                            "signal_created_ms": int(r[2] or 0),
+                            "strategy_id": sid_norm,
+                            "symbol": r[4],
+                            "side": r[5],
+                            "status": r[6],
+                            "opened_ms": int(float(r[7] or 0.0) * 1000),
+                            "closed_ms": int(float(r[8] or 0.0) * 1000) if r[8] else 0,
+                            "entry_px": round(float(r[9] or 0.0), 6),
+                            "exit_px": round(float(r[10] or 0.0), 6) if r[10] else None,
+                            "sl_px": round(float(r[11] or 0.0), 6),
+                            "tp_px": round(float(r[12] or 0.0), 6),
+                            "fees_usd": round(float(r[13] or 0.0), 4),
+                            "pnl_usd": round(float(r[14] or 0.0), 2) if r[6] == "CLOSED" else None,
+                            "realized_r": round(float(r[15] or 0.0), 3) if r[6] == "CLOSED" else None,
+                            "exit_reason": r[16] or "",
+                        }
+                d_rows = conn.execute(
+                    "SELECT ts, signal_id, strategy_id, symbol, side, decision, reason, shadow_trade_id "
+                    "FROM shadow_signal_decisions WHERE signal_id != '' ORDER BY ts DESC LIMIT ?",
+                    (max(100, int(limit) * 4),),
+                ).fetchall()
+                for r in d_rows:
+                    sid_norm = normalize_strategy_id(r[2])
+                    if target_strat and sid_norm != target_strat:
+                        continue
+                    sig_id = str(r[1] or "").strip()
+                    if sig_id and sig_id not in shadow_decisions_by_sig:
+                        shadow_decisions_by_sig[sig_id] = {
+                            "ts": float(r[0] or 0.0),
+                            "signal_id": sig_id,
+                            "strategy_id": sid_norm,
+                            "symbol": r[3],
+                            "side": r[4],
+                            "decision": r[5],
+                            "reason": r[6] or "",
+                            "trade_id": r[7] or "",
+                        }
+        except Exception:
+            pass
+
+    ledger_list = list(ledgers)
+    live_metrics = compute_live_strategy_metrics(ledger_list)
+    demo_traces_by_sig: Dict[str, Dict[str, Any]] = {}
+    for tr in live_metrics.get("execution_traces") or []:
+        sig_id = str(tr.get("signal_id") or "").strip()
+        if not sig_id:
+            continue
+        if target_strat and normalize_strategy_id(tr.get("strategy_id")) != target_strat:
+            continue
+        if sig_id not in demo_traces_by_sig:
+            demo_traces_by_sig[sig_id] = tr
+
+    demo_decisions_by_sig: Dict[str, Dict[str, Any]] = {}
+    for acc_name, ledger in ledger_list:
+        try:
+            with ledger.connect() as conn:
+                ev_rows = conn.execute(
+                    "SELECT ts, payload FROM events WHERE kind='SIGNAL_DECISION' ORDER BY ts DESC LIMIT ?",
+                    (max(100, int(limit) * 4),),
+                ).fetchall()
+            for ts_v, raw_p in ev_rows:
+                try:
+                    p = json.loads(raw_p)
+                except Exception:
+                    continue
+                sig_id = str(p.get("signal_id") or "").strip()
+                if not sig_id:
+                    continue
+                sid_norm = normalize_strategy_id(p.get("strategy_id"))
+                if target_strat and sid_norm != target_strat:
+                    continue
+                if sig_id not in demo_decisions_by_sig:
+                    demo_decisions_by_sig[sig_id] = {
+                        "ts": float(ts_v or 0.0),
+                        "account": acc_name,
+                        "signal_id": sig_id,
+                        "signal_created_ms": int(p.get("signal_created_ms") or 0),
+                        "strategy_id": sid_norm,
+                        "symbol": str(p.get("symbol") or ""),
+                        "side": str(p.get("side") or ""),
+                        "decision": str(p.get("decision") or ""),
+                        "reason": str(p.get("reason") or ""),
+                        "intent_id": str(p.get("intent_id") or ""),
+                    }
+        except Exception:
+            continue
+
+    all_sig_ids = set(shadow_trades_by_sig) | set(shadow_decisions_by_sig) | set(demo_traces_by_sig) | set(demo_decisions_by_sig)
+    records: List[Dict[str, Any]] = []
+    matched_both = 0
+    matched_closed = 0
+    shadow_only = 0
+    demo_only = 0
+    skipped_both = 0
+
+    for sig_id in all_sig_ids:
+        sh_t = shadow_trades_by_sig.get(sig_id)
+        sh_d = shadow_decisions_by_sig.get(sig_id)
+        dm_t = demo_traces_by_sig.get(sig_id)
+        dm_d = demo_decisions_by_sig.get(sig_id)
+
+        meta = sh_t or dm_t or dm_d or sh_d or {}
+        created_ms = int(
+            (sh_t or {}).get("signal_created_ms")
+            or (dm_t or {}).get("signal_created_ms")
+            or (dm_d or {}).get("signal_created_ms")
+            or (sh_t or {}).get("opened_ms")
+            or (dm_t or {}).get("opened_ms")
+            or int(float((dm_d or sh_d or {}).get("ts") or 0.0) * 1000)
+        )
+        sh_entered = sh_t is not None
+        dm_entered = dm_t is not None and dm_t.get("status") in ("OPEN", "CLOSED", "FILLED")
+        if sh_entered and dm_entered:
+            pair_status = "MATCHED_BOTH"
+            matched_both += 1
+            if sh_t.get("status") == "CLOSED" and dm_t.get("status") == "CLOSED":
+                matched_closed += 1
+        elif sh_entered:
+            pair_status = "SHADOW_ONLY"
+            shadow_only += 1
+        elif dm_entered:
+            pair_status = "DEMO_ONLY"
+            demo_only += 1
+        else:
+            pair_status = "SKIPPED_BOTH"
+            skipped_both += 1
+
+        records.append(
+            {
+                "signal_id": sig_id,
+                "signal_created_ms": created_ms,
+                "signal_created_utc": _fmt_utc_ms(created_ms),
+                "strategy_id": meta.get("strategy_id", ""),
+                "symbol": meta.get("symbol", ""),
+                "side": meta.get("side", ""),
+                "pair_status": pair_status,
+                "shadow": {
+                    "decision": "ENTERED" if sh_entered else (sh_d.get("decision") if sh_d else "NO_RECORD"),
+                    "skip_reason": "" if sh_entered else (sh_d.get("reason", "") if sh_d else ""),
+                    "trade": sh_t,
+                },
+                "demo": {
+                    "decision": (dm_d.get("decision") if dm_d else ("SUBMITTED" if dm_t else "NO_RECORD")),
+                    "skip_reason": "" if dm_entered else (dm_d.get("reason", "") if dm_d else ""),
+                    "fill_latency_ms": dm_t.get("fill_latency_ms") if dm_t else None,
+                    "exit_reason": dm_t.get("exit_reason", "") if dm_t else "",
+                    "trace": dm_t,
+                },
+            }
+        )
+
+    records.sort(key=lambda x: int(x.get("signal_created_ms") or 0), reverse=True)
+    return {
+        "ok": True,
+        "strategy_filter": target_strat or None,
+        "summary": {
+            "total_signals": len(records),
+            "matched_both": matched_both,
+            "matched_closed": matched_closed,
+            "shadow_only": shadow_only,
+            "demo_only": demo_only,
+            "skipped_both": skipped_both,
+        },
+        "signals": records[: max(1, int(limit))],
     }

@@ -24,14 +24,14 @@ from aitrade.booster.env_manager import BybitEnvManager
 from aitrade.config import BASE_DIR, load_settings
 from aitrade.engine import AITradeCombineEngine
 from aitrade.exchange.ws_stream import BybitV5WebSocketHub
-from aitrade.execution.audit_metrics import StrategyFunnel24h, compute_live_strategy_metrics
+from aitrade.execution.audit_metrics import StrategyFunnel24h, build_shadow_demo_reconciliation, compute_live_strategy_metrics
 from aitrade.execution.shadow_engine import LiveShadowEngine
 from aitrade.execution.smart_position_manager import SmartPositionManager
 from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.24-intraday.45"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.46"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -222,18 +222,18 @@ class BybitV5DirectController:
     def pyramid_position(self,*args,**kwargs):
         return {'ok':False,'retMsg':'Доливка отключена: сначала требуется отдельный расчёт совокупного риска'}
 
-    def close_position(self, symbol: str, side: str, size: str, position_idx: int = 0, lock_timeout: Optional[float] = None) -> Dict[str, Any]:
+    def close_position(self, symbol: str, side: str, size: str, position_idx: int = 0, lock_timeout: Optional[float] = None, exit_reason: str = "") -> Dict[str, Any]:
         if lock_timeout is None:
             with self._entry_lock:
-                return self._close_position_locked(symbol,side,size,position_idx)
+                return self._close_position_locked(symbol,side,size,position_idx,exit_reason=exit_reason)
         acquired = self._entry_lock.acquire(timeout=float(lock_timeout))
         try:
-            return self._close_position_locked(symbol,side,size,position_idx)
+            return self._close_position_locked(symbol,side,size,position_idx,exit_reason=exit_reason)
         finally:
             if acquired:
                 self._entry_lock.release()
 
-    def _close_position_locked(self, symbol, side, size, position_idx):
+    def _close_position_locked(self, symbol, side, size, position_idx, exit_reason: str = ""):
         close_side = "Sell" if side == "Buy" else "Buy"
         # Unknown market-close submission survives restart; do not submit another close blindly.
         for pending in self.ledger.pending_exit_orders():
@@ -243,19 +243,29 @@ class BybitV5DirectController:
             "category": "linear", "symbol": symbol, "side": close_side, "orderType": "Market",
             "qty": str(size), "reduceOnly": True, "timeInForce": "IOC", "positionIdx": int(position_idx)
         })
-        return {"ok": resp.get("retCode") == 0, "status":"PENDING", "orderId":resp.get("result",{}).get("orderId"), "retMsg":"Заявка закрытия принята; исполнение ещё не подтверждено"}
+        ok_close = resp.get("retCode") == 0
+        oid = resp.get("result", {}).get("orderId")
+        if ok_close and exit_reason:
+            try:
+                self.ledger.event("EXIT_SUBMITTED", {
+                    "symbol": symbol, "side": side, "positionIdx": int(position_idx),
+                    "orderId": str(oid or ""), "exit_reason": str(exit_reason),
+                })
+            except Exception:
+                pass
+        return {"ok": ok_close, "status":"PENDING", "orderId":oid, "retMsg":"Заявка закрытия принята; исполнение ещё не подтверждено"}
 
-    def close_half_position(self, symbol: str, side: str, size: str, position_idx: int = 0) -> Dict[str, Any]:
+    def close_half_position(self, symbol: str, side: str, size: str, position_idx: int = 0, exit_reason: str = "MANUAL") -> Dict[str, Any]:
         spec = self.spm.get_spec(symbol)
         half_sz = min(float(size or 0), max(spec["min_qty"], float(size or 0) * 0.5))
         qty_str = self.spm.fmt_step(half_sz, spec["qty_step"], True)
-        return self.close_position(symbol, side, qty_str, position_idx)
+        return self.close_position(symbol, side, qty_str, position_idx, exit_reason=exit_reason)
 
-    def close_all_positions(self) -> Dict[str, Any]:
+    def close_all_positions(self, exit_reason: str = "MANUAL") -> Dict[str, Any]:
         positions = self.get_positions()
         results=[]
         for p in positions:
-            results.append(self.close_position(p.get("symbol", ""), p.get("side", "Buy"), str(p.get("size", "0")), int(p.get("positionIdx", 0) or 0)))
+            results.append(self.close_position(p.get("symbol", ""), p.get("side", "Buy"), str(p.get("size", "0")), int(p.get("positionIdx", 0) or 0), exit_reason=exit_reason))
         return {"ok": all(r.get("ok") for r in results), "submitted_count": len(results)}
 
     def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
@@ -391,7 +401,10 @@ class BybitV5DirectController:
             hold_min=14400 if is_t1_core else (10080 if 'T3_KELTNER_TREND_4H' in str(strategy_id) else (2880 if 'T2_RS_BTC_BREAKOUT' in str(strategy_id) else (2160 if 'C2_MTF_COMBO_BREAKOUT' in str(strategy_id) else (1440 if 'C3_ENSEMBLE_VOTE_2OF3' in str(strategy_id) else (1080 if any(k in str(strategy_id) for k in ('S1_TREND_RETEST','B1_SQUEEZE_BREAKOUT','B2_DONCHIAN_INTRADAY','B7_FUNDING_SQUEEZE_MOMENTUM')) else (720 if any(k in str(strategy_id) for k in ('B5_OI_TREND_EXPANSION','B6_EMA_PULLBACK_TREND')) else (480 if any(k in str(strategy_id) for k in ('AUTOTRADE_MOMENTUM_FUNDING','B3_VWAP_MOMENTUM_IMPULSE','B4_ORB_SESSION_BREAKOUT')) else (240 if 'S3_VWAP_RANGE' in str(strategy_id) else (180 if strategy_id.startswith('BOOSTER') else 0)))))))))
             _rm=getattr(owner,'release_manifest',None)
             rel_ver=_rm.get('version',DEFAULT_RELEASE_VERSION) if isinstance(_rm,dict) else DEFAULT_RELEASE_VERSION
-            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':signal_context or {},'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
+            sig_ctx=signal_context if isinstance(signal_context,dict) else {}
+            sig_id=str(sig_ctx.get('signal_id') or '').strip()
+            sig_created_ms=int(sig_ctx.get('signal_created_ms') or 0)
+            self.ledger.intent(intent_id,symbol,strategy_id,qty*risk_per_coin,{'side':side,'qty':qty,'requestedQty':qty,'signal_id':sig_id,'signal_created_ms':sig_created_ms,'campaign_id':str(b_state.get('started_at_ms',0)) if isinstance(b_state,dict) and strategy_id.startswith('BOOSTER') else None,'strategy_version':rel_ver,'signal_context':sig_ctx,'entry':ref,'sl':sl,'tp':tp,'exit_plan':{'version':1,'max_hold_minutes':hold_min}})
             if hasattr(self.spm,'ensure_isolated_margin') and 'FUNDING_CARRY' not in str(strategy_id):
                 iso_res=self.spm.ensure_isolated_margin(symbol,int(leverage))
                 if isinstance(iso_res,dict) and iso_res.get('ok') is False:
@@ -417,13 +430,17 @@ class BybitV5DirectController:
                 submitted=True
                 response=self.spm.signed_post('/v5/order/create',payload)
                 result={'ok':True,'status':'PENDING','orderId':response['result']['orderId'],'qty':str(qty),'symbol':symbol,'side':side,'retMsg':'Заявка принята; исполнение ожидается'}
+            result['intent_id']=intent_id
+            if sig_id:
+                result['signal_id']=sig_id
             self.ledger.finish(intent_id,result.get('status','PENDING'),result)
             return result
         except Exception as exc:
             uncertain=submitted or (isinstance(exc,ExchangeError) and exc.uncertain)
             if intent_id:self.ledger.finish(intent_id,'UNCERTAIN' if uncertain else 'REJECTED',{'error':str(exc)[:200]})
-            self.ledger.event('ENTRY_BLOCKED',{'symbol':symbol,'strategy':strategy_id,'reason':str(exc)[:200]})
-            return {'ok':False,'symbol':symbol,'retMsg':str(exc)[:200]}
+            sig_id_err=str((signal_context or {}).get('signal_id') or '').strip() if isinstance(signal_context,dict) else ''
+            self.ledger.event('ENTRY_BLOCKED',{'symbol':symbol,'strategy':strategy_id,'signal_id':sig_id_err,'reason':str(exc)[:200]})
+            return {'ok':False,'symbol':symbol,'signal_id':sig_id_err,'retMsg':str(exc)[:200]}
 
 
 class ControlCenterState:
@@ -754,6 +771,7 @@ class ControlCenterState:
                                 str(p.get("size", "0")),
                                 int(p.get("positionIdx", 0) or 0),
                                 lock_timeout=3.0,
+                                exit_reason="EMERGENCY_STOP",
                             )
                         except TypeError:
                             cl_res = ctrl.close_position(
@@ -1042,7 +1060,12 @@ class ControlCenterState:
             if hold and p.get("opened_ms") and (time.time() * 1000 - p["opened_ms"]) >= hold * 60000:
                 pending = [o for o in open_orders if self._is_active_market_close_order(o, sym)]
                 if not pending:
-                    ctrl.close_position(sym, side, size_str, p_idx)
+                    c_res = ctrl.close_position(sym, side, size_str, p_idx)
+                    if isinstance(c_res, dict) and c_res.get("ok") and hasattr(ctrl, "ledger"):
+                        try:
+                            ctrl.ledger.event("EXIT_SUBMITTED", {"symbol": sym, "side": side, "positionIdx": int(p_idx), "orderId": str(c_res.get("orderId") or ""), "exit_reason": "TIME_STOP"})
+                        except Exception:
+                            pass
                     self.add_log("⏱ Лимит времени стратегии: отправлено закрытие " + sym)
                 continue
             move_pct = ((mark_px - avg_px) / avg_px) * 100.0 if side == "Buy" else ((avg_px - mark_px) / avg_px) * 100.0
@@ -1054,6 +1077,11 @@ class ControlCenterState:
                 if n_act == "CLOSE_FULL":
                     c_res = ctrl.close_position(sym, side, size_str, p_idx)
                     if c_res.get("ok"):
+                        if hasattr(ctrl, "ledger"):
+                            try:
+                                ctrl.ledger.event("EXIT_SUBMITTED", {"symbol": sym, "side": side, "positionIdx": int(p_idx), "orderId": str(c_res.get("orderId") or ""), "exit_reason": "NEWS_GUARD"})
+                            except Exception:
+                                pass
                         self.add_log("🚨 [News Guard] Экстренное закрытие " + sym + " (" + side + "): " + str(n_eval.get("reason")))
                     continue
                 elif n_act == "PROTECT" and not is_be and move_pct >= 0.18:
@@ -1069,6 +1097,11 @@ class ControlCenterState:
                 age_min = self.get_position_age_minutes(p)
                 if age_min >= self.regime_guard.time_stop_minutes and abs(move_pct) <= self.regime_guard.time_stop_band_pct:
                     c_res = ctrl.close_position(sym, side, size_str, p_idx)
+                    if isinstance(c_res, dict) and c_res.get("ok") and hasattr(ctrl, "ledger"):
+                        try:
+                            ctrl.ledger.event("EXIT_SUBMITTED", {"symbol": sym, "side": side, "positionIdx": int(p_idx), "orderId": str(c_res.get("orderId") or ""), "exit_reason": "TIME_STOP"})
+                        except Exception:
+                            pass
                     if c_res.get("ok"):
                         self.add_log(
                             "⏱ Time-Stop сработал для " + sym + ": сделка висела " + str(age_min)
@@ -1401,41 +1434,76 @@ class ControlCenterState:
             exec_queue: List[Tuple[str, Dict[str, Any]]] = []
             booster_slots = 0
             core_slots = 0
+            b_ctrl_default = getattr(self, "booster_bybit", self.bybit)
 
-            if trade_booster and self.booster.state.get("enabled", True) and not self.entry_paused.is_set():
-                if b_metrics["circuit_breaker_tripped"] and not (demo_lab_active and demo_lab_cfg_run.get("disable_daily_stops_on_demo", False)):
-                    self.add_log("🛑 [Разгон $1k→$10k] Сработал дневной стоп-кран или стоп цикла. Входы разгона приостановлены.")
+            def _log_demo_decision(ctrl_obj: Any, sig_obj: Dict[str, Any], contour: str, decision: str, reason: str = "", intent_id: str = "") -> None:
+                sig_id_val = str(sig_obj.get("signal_id") or "").strip()
+                if not sig_id_val or not hasattr(ctrl_obj, "ledger"):
+                    return
+                try:
+                    ctrl_obj.ledger.event("SIGNAL_DECISION", {
+                        "signal_id": sig_id_val,
+                        "signal_created_ms": int(sig_obj.get("signal_created_ms") or 0),
+                        "strategy_id": str(sig_obj.get("strategy_id") or ""),
+                        "contour": contour,
+                        "symbol": str(sig_obj.get("symbol") or ""),
+                        "side": str(sig_obj.get("side") or ""),
+                        "decision": decision,
+                        "reason": str(reason or "")[:180],
+                        "intent_id": str(intent_id or ""),
+                    })
+                except Exception:
+                    pass
+
+            approved_list = list(scan_res.get("approved_signals") or [])
+            booster_pos = [p for p in positions if str(p.get("strategy_id", "")).startswith("BOOSTER:")]
+            b_max_pos = int((b_metrics or {}).get("max_positions", 2) or 2)
+            max_b_slots = max(b_max_pos, 12) if demo_lab_active else b_max_pos
+            booster_slots = max(0, max_b_slots - len(booster_pos))
+            eff_core_max = max(self.core_max_positions, 8) if demo_lab_active else self.core_max_positions
+            core_slots = max(0, eff_core_max - len([p for p in positions if str(p.get("strategy_id", "")).startswith("CORE:")]))
+            min_prob = self.core_min_prob_pct / 100.0
+            booster_cb_blocked = bool((b_metrics or {}).get("circuit_breaker_tripped", False) and not (demo_lab_active and demo_lab_cfg_run.get("disable_daily_stops_on_demo", False)))
+            if trade_booster and self.booster.state.get("enabled", True) and not self.entry_paused.is_set() and booster_cb_blocked:
+                self.add_log("🛑 [Разгон $1k→$10k] Сработал дневной стоп-кран или стоп цикла. Входы разгона приостановлены.")
+
+            for s in approved_list:
+                is_b_strat = s.get("strategy_id") in booster_strat_ids
+                if is_b_strat:
+                    if not trade_booster:
+                        _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", "Автопилот Разгона выключен или скан без торговли")
+                    elif not self.booster.state.get("enabled", True):
+                        _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", "Модуль Deposit Booster выключен")
+                    elif self.entry_paused.is_set():
+                        _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", f"Новые входы на паузе ({getattr(self, 'entry_pause_reason', '')})")
+                    elif booster_cb_blocked:
+                        _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", "Сработал дневной стоп-кран Разгона")
+                    elif s.get("cal_status") == "QUARANTINE":
+                        _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", "Стратегия в карантине ML-калибратора")
+                    elif not (s.get("passed_ml_filter") and s.get("debate_verdict") == "APPROVED"):
+                        _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", "Отклонён ML/Debate фильтром")
+                    elif booster_slots <= 0:
+                        _log_demo_decision(b_ctrl_default, s, "BOOSTER", "SKIPPED", f"Нет свободных слотов Разгона (лимит {max_b_slots})")
+                    else:
+                        exec_queue.append(("BOOSTER", s))
                 else:
-                    booster_pos = [p for p in positions if str(p.get("strategy_id", "")).startswith("BOOSTER:")]
-                    max_b_slots = max(int(b_metrics["max_positions"]), 12) if demo_lab_active else int(b_metrics["max_positions"])
-                    booster_slots = max(0, max_b_slots - len(booster_pos))
-                    if booster_slots > 0:
-                        for s in (scan_res.get("approved_signals") or []):
-                            if (
-                                s.get("strategy_id") in booster_strat_ids
-                                and s.get("passed_ml_filter")
-                                and s.get("debate_verdict") == "APPROVED"
-                                and s.get("cal_status") != "QUARANTINE"
-                            ):
-                                exec_queue.append(("BOOSTER", s))
-
-            if trade_core and not self.entry_paused.is_set():
-                eff_core_max = max(self.core_max_positions, 8) if demo_lab_active else self.core_max_positions
-                core_slots = max(0, eff_core_max - len([p for p in positions if str(p.get("strategy_id", "")).startswith("CORE:")]))
-                min_prob = self.core_min_prob_pct / 100.0
-                if core_slots > 0:
-                    for s in (scan_res.get("approved_signals", []) or []):
-                        if (
-                            s.get("strategy_id") not in booster_strat_ids
-                            and s.get("passed_ml_filter")
-                            and s.get("debate_verdict") == "APPROVED"
-                            and s.get("cal_status") != "QUARANTINE"
-                            and (
-                                ((s.get("features") or {}).get("ml_calibration_status") in ("WARMING_UP", "DEMO_LAB_EXPERIMENTAL"))
-                                or float(s.get("ml_win_probability", 0) or 0) >= (0.60 if s.get("strategy_id") in ("S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING") else min_prob)
-                            )
-                        ):
-                            exec_queue.append(("CORE", s))
+                    if not trade_core:
+                        _log_demo_decision(self.bybit, s, "CORE", "SKIPPED", "Автотрейдинг Core выключен или скан без торговли")
+                    elif self.entry_paused.is_set():
+                        _log_demo_decision(self.bybit, s, "CORE", "SKIPPED", f"Новые входы на паузе ({getattr(self, 'entry_pause_reason', '')})")
+                    elif s.get("cal_status") == "QUARANTINE":
+                        _log_demo_decision(self.bybit, s, "CORE", "SKIPPED", "Стратегия в карантине ML-калибратора")
+                    elif not (s.get("passed_ml_filter") and s.get("debate_verdict") == "APPROVED"):
+                        _log_demo_decision(self.bybit, s, "CORE", "SKIPPED", "Отклонён ML/Debate фильтром")
+                    elif not (
+                        ((s.get("features") or {}).get("ml_calibration_status") in ("WARMING_UP", "DEMO_LAB_EXPERIMENTAL"))
+                        or float(s.get("ml_win_probability", 0) or 0) >= (0.60 if s.get("strategy_id") in ("S3_VWAP_RANGE", "AUTOTRADE_MOMENTUM_FUNDING") else min_prob)
+                    ):
+                        _log_demo_decision(self.bybit, s, "CORE", "SKIPPED", f"Оценка ML ниже порога {self.core_min_prob_pct:.1f}%")
+                    elif core_slots <= 0:
+                        _log_demo_decision(self.bybit, s, "CORE", "SKIPPED", f"Нет свободных слотов Core (лимит {eff_core_max})")
+                    else:
+                        exec_queue.append(("CORE", s))
 
             # Единая приоритетная очередь: Tier 1 (T1, B1) -> Tier 2 (C3, C2) -> Tier 3 (экспериментальные)
             exec_queue.sort(key=lambda item: (self._strategy_priority_rank(str(item[1].get("strategy_id", ""))), -float(item[1].get("ml_win_probability", 0) or 0)))
@@ -1445,15 +1513,19 @@ class ControlCenterState:
 
             for kind, sig in exec_queue:
                 if kind == "BOOSTER":
+                    b_ctrl = getattr(self, "booster_bybit", self.bybit)
                     if booster_slots <= 0:
+                        _log_demo_decision(b_ctrl, sig, "BOOSTER", "SKIPPED", "Слоты Разгона заполнены более приоритетными сигналами")
                         continue
                     side = sig["side"]
                     strat_code = str(sig.get("strategy_id", "S1_TREND_RETEST"))
                     if not (demo_lab_active and demo_lab_cfg_run.get("disable_daily_stops_on_demo", False)):
                         on_cd, cd_left = self.booster.is_symbol_on_cooldown(sig["symbol"])
                         if on_cd:
+                            cd_msg = f"Кулдаун {sig['symbol']} ({cd_left} мин)"
+                            _log_demo_decision(b_ctrl, sig, "BOOSTER", "SKIPPED", cd_msg)
                             if hasattr(self, "strategy_funnel"):
-                                self.strategy_funnel.record_guard_block(strat_code, f"Кулдаун {sig['symbol']} ({cd_left} мин)")
+                                self.strategy_funnel.record_guard_block(strat_code, cd_msg)
                             self.add_log("⏳ [Кулдаун после стопа] Пропуск " + sig["symbol"] + ": еще " + str(cd_left) + " мин")
                             continue
                     try:
@@ -1462,23 +1534,27 @@ class ControlCenterState:
                         allowed, guard_msg = self.regime_guard.can_open_position(sig["symbol"], side, positions, ws_sum)
                     n_mod = self.x_radar.get_coin_modifier(sig["symbol"], "LONG" if side == "Buy" else "SHORT")
                     if not allowed or not n_mod["allowed"]:
+                        why_b = guard_msg if not allowed else str(n_mod.get("reason", "X/News"))
+                        _log_demo_decision(b_ctrl, sig, "BOOSTER", "SKIPPED", why_b)
                         if hasattr(self, "strategy_funnel"):
-                            self.strategy_funnel.record_guard_block(strat_code, guard_msg if not allowed else str(n_mod.get("reason", "X/News")))
+                            self.strategy_funnel.record_guard_block(strat_code, why_b)
                         continue
                     sizing = self.booster.calculate_order_qty(float(sig["entry_price"]), float(sig["stop_loss"]), b_sizing_metrics)
                     w_mult = float(sig.get("cal_weight", 1.0) or 1.0)
                     adj_qty = round(sizing["qty_coins"] * w_mult, 6)
                     b_otype = sig.get("order_type") if sig.get("order_type") in ("Market", "Limit") else "Limit"
-                    b_ctrl = getattr(self, "booster_bybit", self.bybit)
                     r = b_ctrl.place_order(
                         sig["symbol"], side, b_otype, adj_qty,
                         float(sig["entry_price"]), float(sig.get("take_profit") or sig["take_profit_2"]), float(sig["stop_loss"]),
                         sizing["leverage"], False, strategy_id="BOOSTER:" + strat_code,
-                        signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", DEFAULT_RELEASE_VERSION)}
+                        signal_context={"signal_id": sig.get("signal_id", ""), "signal_created_ms": sig.get("signal_created_ms", 0), "features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": w_mult, "version": getattr(self, "release_manifest", {}).get("version", DEFAULT_RELEASE_VERSION)}
                     )
-                    if not r.get("ok") and hasattr(self, "strategy_funnel"):
-                        self.strategy_funnel.record_guard_block(strat_code, str(r.get("retMsg", "Ошибка биржи")))
+                    if not r.get("ok"):
+                        _log_demo_decision(b_ctrl, sig, "BOOSTER", "REJECTED", str(r.get("retMsg", "Ошибка биржи")))
+                        if hasattr(self, "strategy_funnel"):
+                            self.strategy_funnel.record_guard_block(strat_code, str(r.get("retMsg", "Ошибка биржи")))
                     if r.get("ok"):
+                        _log_demo_decision(b_ctrl, sig, "BOOSTER", "SUBMITTED", "", intent_id=str(r.get("intent_id") or ""))
                         if hasattr(self, "strategy_funnel"):
                             self.strategy_funnel.record_submit(strat_code)
                         booster_slots -= 1
@@ -1489,6 +1565,7 @@ class ControlCenterState:
                         self.add_log("🚀 [Разгон " + strat_code + "] Вход (" + b_otype + ") " + sig["symbol"] + " " + side + " qty=" + str(r.get("qty")))
                 else:
                     if core_slots <= 0:
+                        _log_demo_decision(self.bybit, sig, "CORE", "SKIPPED", "Слоты Core заполнены более приоритетными сигналами")
                         continue
                     side = sig["side"]
                     if side not in ("Buy", "Sell"): raise ValueError("Invalid signal side")
@@ -1500,6 +1577,7 @@ class ControlCenterState:
                     n_mod = self.x_radar.get_coin_modifier(sig["symbol"], sig.get("direction", sig.get("side", "LONG")))
                     if not allowed or not n_mod["allowed"]:
                         why = guard_msg if not allowed else n_mod["reason"]
+                        _log_demo_decision(self.bybit, sig, "CORE", "SKIPPED", why)
                         if hasattr(self, "strategy_funnel"):
                             self.strategy_funnel.record_guard_block(core_strat_id, why)
                         self.add_log("🛡 [Основная ИИ Фильтр] Пропуск " + str(sig["symbol"]) + " (" + side + "): " + why)
@@ -1509,13 +1587,15 @@ class ControlCenterState:
                     r = self.bybit.place_order(
                         sig["symbol"], side, sig_otype, float(sig.get("position_size_coins", 0) or 0),
                         float(sig.get("entry_price", 0) or 0), float(sig.get("take_profit", 0) or 0),
-                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + core_strat_id, signal_context={"features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": sig.get("cal_weight", 1.0), "version": getattr(self, "release_manifest", {}).get("version", DEFAULT_RELEASE_VERSION)}
+                        float(sig.get("stop_loss", 0) or 0), self.max_leverage, sig_split_tp, strategy_id="CORE:" + core_strat_id, signal_context={"signal_id": sig.get("signal_id", ""), "signal_created_ms": sig.get("signal_created_ms", 0), "features": sig.get("features", {}), "ml_score": sig.get("ml_win_probability"), "cal_weight": sig.get("cal_weight", 1.0), "version": getattr(self, "release_manifest", {}).get("version", DEFAULT_RELEASE_VERSION)}
                     )
                     if not r.get("ok"):
+                        _log_demo_decision(self.bybit, sig, "CORE", "REJECTED", str(r.get("retMsg", "Ошибка биржи")))
                         if hasattr(self, "strategy_funnel"):
                             self.strategy_funnel.record_guard_block(core_strat_id, str(r.get("retMsg", "Ошибка биржи")))
                         self.add_log("Вход Core отклонён: " + str(r.get("retMsg")))
                     if r.get("ok"):
+                        _log_demo_decision(self.bybit, sig, "CORE", "SUBMITTED", "", intent_id=str(r.get("intent_id") or ""))
                         if hasattr(self, "strategy_funnel"):
                             self.strategy_funnel.record_submit(core_strat_id)
                         core_slots -= 1
@@ -2087,6 +2167,23 @@ def create_wsgi_app(state: ControlCenterState):
             payload = json.dumps(state.get_strategy_detail(sid), ensure_ascii=False).encode("utf-8")
             start_response("200 OK", headers + [("Content-Type", "application/json; charset=utf-8")])
             return [payload]
+        if method == "GET" and path == "/api/signal_reconciliation":
+            qs = parse_qs(environ.get("QUERY_STRING", ""))
+            sid = (qs.get("strategy") or qs.get("id") or [""])[0].strip() or None
+            try:
+                lim = max(1, min(500, int((qs.get("limit") or ["200"])[0] or 200)))
+            except ValueError:
+                lim = 200
+            active_ledgers = [("autotrade", state.bybit.ledger)]
+            b_ctrl_r = getattr(state, "booster_bybit", state.bybit)
+            if b_ctrl_r is not state.bybit:
+                active_ledgers.append(("booster", b_ctrl_r.ledger))
+            rec_data = build_shadow_demo_reconciliation(
+                getattr(state, "shadow_engine", None), active_ledgers, strategy_id=sid, limit=lim
+            )
+            payload = json.dumps(rec_data, ensure_ascii=False).encode("utf-8")
+            start_response("200 OK", headers + [("Content-Type", "application/json; charset=utf-8")])
+            return [payload]
         if method == "POST":
             if environ.get("HTTP_X_REQUESTED_WITH") not in ("AItrade", "KAIROS"): raise ValueError("Требуется заголовок клиента")
             origin=environ.get("HTTP_ORIGIN")
@@ -2473,10 +2570,13 @@ def create_wsgi_app(state: ControlCenterState):
                 state.add_log("📈 Включен Trailing Stop (" + str(resp.get("trailing_dist")) + ") для " + str(data["symbol"]))
             elif path == "/api/close_position":
                 ctrl = getattr(state, "booster_bybit", state.bybit) if str(data.get("account", "")).lower() == "booster" else state.bybit
-                resp = ctrl.close_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0))
+                try:
+                    resp = ctrl.close_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0), exit_reason="MANUAL")
+                except TypeError:
+                    resp = ctrl.close_position(data["symbol"], data["side"], str(data["size"]), int(data.get("position_idx", 0) or 0))
                 state.add_log("✖ Отправлена заявка на закрытие позиции " + str(data["symbol"]))
             elif path == "/api/close_all_positions":
-                res_list = [ctrl.close_all_positions() for ctrl in state._active_controllers()]
+                res_list = [ctrl.close_all_positions(exit_reason="MANUAL") for ctrl in state._active_controllers()]
                 resp = {"ok": all(r.get("ok") for r in res_list), "submitted_count": sum(int(r.get("submitted_count", 0)) for r in res_list)}
                 state.add_log("🚨 Отправлены заявки на закрытие позиций на все активные контуры.")
             elif path == "/api/cancel_order":

@@ -63,6 +63,8 @@ class TradeSignal:
     stop_to_liq_multiple: float = 0.0
     estimated_l2_slippage_bps: float = 0.0
     risk_amount_usd: float = 0.0
+    signal_id: str = ""
+    signal_created_ms: int = 0
 
     @property
     def stop_distance_pct(self) -> float:

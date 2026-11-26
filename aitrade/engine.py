@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import datetime
+import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
@@ -214,6 +216,10 @@ class AITradeCombineEngine:
         booster_in_play_pairs = 0
 
         def evaluate_and_bucket(sig: TradeSignal, ctx: MarketContext) -> None:
+            if not sig.signal_id:
+                sig.signal_id = "sig-" + uuid.uuid4().hex[:16]
+            if not sig.signal_created_ms:
+                sig.signal_created_ms = int(time.time() * 1000)
             raw_candidates.append(sig)
             sig = self.ml_labeler.evaluate_signal(sig, ctx)
             sig = self.risk_engine.size_and_validate_signal(sig, ctx.orderbook, equity_usd)
