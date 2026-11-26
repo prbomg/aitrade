@@ -41,7 +41,6 @@ from aitrade.strategies.mtf_combo_breakout import generate_mtf_combo_signal
 from aitrade.strategies.oi_trend_expansion import generate_oi_trend_expansion_signal
 from aitrade.strategies.orb_session_breakout import generate_orb_session_signal, is_in_orb_session_window
 from aitrade.strategies.rs_btc_breakout import generate_rs_btc_signal
-from aitrade.strategies.vwap_momentum_impulse import generate_vwap_momentum_signal
 from aitrade.strategies.funding_carry import FundingCarryEngine
 from aitrade.strategies.lead_lag_density import evaluate_lead_lag_density_strategy
 from aitrade.strategies.liquidity_sweep_fvg import evaluate_liquidity_sweep_fvg_strategy
@@ -197,7 +196,6 @@ class AITradeCombineEngine:
                 "T1_DONCHIAN_TSMOM",
                 "B1_SQUEEZE_BREAKOUT",
                 "B2_DONCHIAN_INTRADAY",
-                "B3_VWAP_MOMENTUM_IMPULSE",
                 "B4_ORB_SESSION_BREAKOUT",
                 "B5_OI_TREND_EXPANSION",
                 "B6_EMA_PULLBACK_TREND",
@@ -336,18 +334,9 @@ class AITradeCombineEngine:
                         if b6_sig is not None:
                             sym_signals.append(b6_sig)
 
-                # 0c) 15m Demo Lab стратегии Разгона (B3/B4/B5 имеют собственные фильтры RVOL/OI, не запираем за жёстким CoinsInPlay)
+                # 0c) 15m Demo Lab стратегии Разгона (B4/B5 имеют собственные фильтры RVOL/OI; B3 отключена как провальная)
                 if ctx.screener.spread_pct <= 0.15 and len(ctx.candles_15m) >= 40:
                     ref_px_15 = ctx.orderbook.mid_price if ctx.orderbook.mid_price > 0 else ctx.candles_15m[-1].close
-                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["eligible_window"] = True
-                    diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"] += 1
-                    b3_sig = generate_vwap_momentum_signal(
-                        sym, ctx.candles_15m, bars_1h=ctx.candles_1h,
-                        rvol=float(ctx.screener.rvol or 1.0), funding_rate=float(ctx.screener.funding_rate or 0.0),
-                        reference_open_px=ref_px_15,
-                    )
-                    if b3_sig is not None:
-                        sym_signals.append(b3_sig)
 
                     if is_in_orb_session_window(int(ctx.candles_15m[-1].timestamp)):
                         diag["B4_ORB_SESSION_BREAKOUT"]["eligible_window"] = True
@@ -497,12 +486,6 @@ class AITradeCombineEngine:
         elif not diag["B2_DONCHIAN_INTRADAY"]["idle_reason"]:
             p_chk = diag["B2_DONCHIAN_INTRADAY"]["pairs_checked"]
             diag["B2_DONCHIAN_INTRADAY"]["idle_reason"] = f"Нет пробоя 12h/24h Donchian по 4h-тренду на {p_chk} парах" if p_chk > 0 else "Нет пар в игре (CoinsInPlay)"
-
-        if diag["B3_VWAP_MOMENTUM_IMPULSE"]["approved"] > 0:
-            diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"] = "Есть одобренный сигнал B3 (VWAP импульс)"
-        elif not diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"]:
-            p_chk3 = diag["B3_VWAP_MOMENTUM_IMPULSE"]["pairs_checked"]
-            diag["B3_VWAP_MOMENTUM_IMPULSE"]["idle_reason"] = f"Нет импульса от VWAP (Z=0.45..2.2, RVOL>=1.35) на {p_chk3} парах" if p_chk3 > 0 else "Нет пар в игре (CoinsInPlay)"
 
         if diag["B4_ORB_SESSION_BREAKOUT"]["approved"] > 0:
             diag["B4_ORB_SESSION_BREAKOUT"]["idle_reason"] = "Есть одобренный сигнал B4 (Session ORB)"

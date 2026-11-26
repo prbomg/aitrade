@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.46"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.47"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -1887,7 +1887,7 @@ class ControlCenterState:
             "C3_ENSEMBLE_VOTE_2OF3": {"contour": "Автотрейдинг (Core)", "tier": "Tier 2 · Комбо", "timeframe": "15m–4h", "max_hold": "до 24 часов", "order_type": "Market / Chaser", "desc": "Ансамблевое голосование: вход только при совпадении направления сразу ≥2 независимых стратегий на одной монете (Pure SL/TP 3.5R)."},
             "C2_MTF_COMBO_BREAKOUT": {"contour": "Автотрейдинг (Core)", "tier": "Tier 2 · Комбо", "timeframe": "15m / 1h / 4h", "max_hold": "до 36 часов", "order_type": "Market / Chaser", "desc": "Мультитаймфреймовый комбо-пробой: 4h тренд + относительная сила к BTC + позиция относительно VWAP + 8h пробой."},
             "B2_DONCHIAN_INTRADAY": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "1h / 4h", "max_hold": "до 18 часов", "order_type": "Market / Chaser", "desc": "Внутридневной пробой 12h/24h канала Donchian по направлению 4h-тренда на всех 20 парах."},
-            "B3_VWAP_MOMENTUM_IMPULSE": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m / 1h", "max_hold": "до 8 часов", "order_type": "Market / Chaser", "desc": "Импульсный отрыв от сессионного VWAP (Z=0.45..2.2σ) с подтверждением RVOL ≥ 1.35."},
+            "B3_VWAP_MOMENTUM_IMPULSE": {"contour": "Разгон (Архив)", "tier": "Отключена", "timeframe": "15m / 1h", "max_hold": "до 8 часов", "order_type": "Market / Chaser", "desc": "Импульсный отрыв от сессионного VWAP (отключена после провала живого теста: WR ~24.5%, PF 0.50–0.56)."},
             "B4_ORB_SESSION_BREAKOUT": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m", "max_hold": "до 8 часов", "order_type": "Market / Chaser", "desc": "Пробой диапазона открытия торговых сессий (Азия 00:00, Европа 07:00, США 13:00 UTC)."},
             "B5_OI_TREND_EXPANSION": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m", "max_hold": "до 12 часов", "order_type": "Market / Chaser", "desc": "Пробой 20-барного диапазона с одновременным притоком открытого интереса (ΔOI ≥ +1.2%)."},
             "B6_EMA_PULLBACK_TREND": {"contour": "Разгон (Booster)", "tier": "Tier 3 · Demo Lab", "timeframe": "15m / 1h / 4h", "max_hold": "до 12 часов", "order_type": "Market / Chaser", "desc": "Откат к EMA21 в сильном 4h-тренде (1h ADX ≥ 20) с бычьим/медвежьим отскоком по RSI."},
