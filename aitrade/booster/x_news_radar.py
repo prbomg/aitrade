@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import json, re, time, urllib.request
+import json, re, threading, time, urllib.request
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
@@ -78,6 +78,7 @@ class XNewsSentimentRadar:
     PANIC_TRIGGERS = ["insolven*", "bankrupt*", "binance halt", "bybit halt", "exchange halt", "withdrawals suspended", "usdt depeg*", "usdc depeg*", "tether depeg*", "major stablecoin depeg*"]
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self.enabled: bool = True
         self.block_on_panic: bool = True
         self.allow_emergency_close: bool = False
@@ -280,15 +281,14 @@ class XNewsSentimentRadar:
                     "url": str(item.get("url", "")),
                 })
 
-        self.items = parsed_items[:35]
-
+        top_items = parsed_items[:35]
         # Агрегация сентимента по монетам (за последние 90 минут) и глобального фона
         coin_map: Dict[str, Dict[str, Any]] = {}
         recent_scores: List[int] = []
         panic_found = False
         panic_txt = ""
 
-        for it in self.items:
+        for it in top_items:
             if it["age_min"] <= 90:
                 if it["score"] != 0:
                     recent_scores.append(it["score"])
@@ -300,28 +300,29 @@ class XNewsSentimentRadar:
                     entry["score"] = max(-100, min(100, entry["score"] + it["score"]))
                     entry["count"] += 1
 
-        self.coin_sentiment = coin_map
-        self.panic_active = panic_found
-        self.panic_reason = panic_txt
-
         avg_sc = round(sum(recent_scores) / len(recent_scores), 1) if recent_scores else 0.0
-        self.global_score = avg_sc
+        with self._lock:
+            self.items = top_items
+            self.coin_sentiment = coin_map
+            self.panic_active = panic_found
+            self.panic_reason = panic_txt
+            self.global_score = avg_sc
 
-        if not self.enabled:
-            self.global_state = "DISABLED"
-            self.global_label = "🐦 X/News: ВЫКЛ"
-        elif self.panic_active:
-            self.global_state = "PANIC"
-            self.global_label = "🔴 X/News: PANIC (" + str(avg_sc) + ")"
-        elif avg_sc >= 12.0:
-            self.global_state = "BULLISH"
-            self.global_label = "🟢 X/News: BULLISH (+" + str(avg_sc) + ")"
-        elif avg_sc <= -12.0:
-            self.global_state = "BEARISH"
-            self.global_label = "🟠 X/News: BEARISH (" + str(avg_sc) + ")"
-        else:
-            self.global_state = "NEUTRAL"
-            self.global_label = "🐦 X/News: NEUTRAL (" + ("+" if avg_sc > 0 else "") + str(avg_sc) + ")"
+            if not self.enabled:
+                self.global_state = "DISABLED"
+                self.global_label = "🐦 X/News: ВЫКЛ"
+            elif self.panic_active:
+                self.global_state = "PANIC"
+                self.global_label = "🔴 X/News: PANIC (" + str(avg_sc) + ")"
+            elif avg_sc >= 12.0:
+                self.global_state = "BULLISH"
+                self.global_label = "🟢 X/News: BULLISH (+" + str(avg_sc) + ")"
+            elif avg_sc <= -12.0:
+                self.global_state = "BEARISH"
+                self.global_label = "🟠 X/News: BEARISH (" + str(avg_sc) + ")"
+            else:
+                self.global_state = "NEUTRAL"
+                self.global_label = "🐦 X/News: NEUTRAL (" + ("+" if avg_sc > 0 else "") + str(avg_sc) + ")"
 
         return self.get_summary()
 
@@ -420,19 +421,22 @@ class XNewsSentimentRadar:
         return {"action": "HOLD", "reason": "OK"}
 
     def get_summary(self) -> Dict[str, Any]:
-        bull_cnt = sum(1 for x in self.items if x.get("sentiment") == "BULLISH")
-        bear_cnt = sum(1 for x in self.items if x.get("sentiment") == "BEARISH")
-        return {
-            "enabled": self.enabled,
-            "block_on_panic": self.block_on_panic,
-            "global_score": self.global_score,
-            "global_state": self.global_state,
-            "global_label": self.global_label,
-            "panic_active": self.panic_active,
-            "panic_reason": self.panic_reason,
-            "bullish_count": bull_cnt,
-            "bearish_count": bear_cnt,
-            "total_items": len(self.items),
-            "coin_sentiment": self.coin_sentiment,
-            "items": self.items[:30],
-        }
+        with self._lock:
+            items_snap = list(self.items)
+            coin_snap = dict(self.coin_sentiment)
+            bull_cnt = sum(1 for x in items_snap if x.get("sentiment") == "BULLISH")
+            bear_cnt = sum(1 for x in items_snap if x.get("sentiment") == "BEARISH")
+            return {
+                "enabled": self.enabled,
+                "block_on_panic": self.block_on_panic,
+                "global_score": self.global_score,
+                "global_state": self.global_state,
+                "global_label": self.global_label,
+                "panic_active": self.panic_active,
+                "panic_reason": self.panic_reason,
+                "bullish_count": bull_cnt,
+                "bearish_count": bear_cnt,
+                "total_items": len(items_snap),
+                "coin_sentiment": coin_snap,
+                "items": items_snap[:30],
+            }

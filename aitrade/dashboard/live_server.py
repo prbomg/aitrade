@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.51"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.52"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -489,7 +489,7 @@ class ControlCenterState:
             self.booster_bybit.spm.guard_path = BASE_DIR / "data" / "position_guard_booster.json"
             self.booster_bybit.owner = self
             self.booster_bybit.apply_credentials(b_creds["api_key"], b_creds["api_secret"], b_creds["base_url"], sync_engine_client=False)
-            self.booster_bybit.attach_chaser(SmartLimitChaser(self.booster_bybit.spm, self.ws_hub, BASE_DIR / "data"))
+            self.booster_bybit.attach_chaser(SmartLimitChaser(self.booster_bybit.spm, self.ws_hub, BASE_DIR / "data", stats_filename="chaser_stats_booster.json"))
         else:
             self.booster_bybit = self.bybit
         self.backtest_cache: Dict[str, Any] = {}
@@ -667,11 +667,13 @@ class ControlCenterState:
                 try:
                     bdir = BASE_DIR / "data" / "backups"
                     self.bybit.ledger.backup_to(bdir, keep=7)
+                    if hasattr(self, "shadow_engine") and hasattr(self.shadow_engine, "prune_old_decisions"):
+                        self.shadow_engine.prune_old_decisions(max_age_days=30)
                     if STATE_FILE.exists():
                         atomic_json(bdir / f"ui_state-{today}.json", json.loads(STATE_FILE.read_text(encoding="utf-8")))
                     last_backup_day = today
-                except Exception:
-                    pass
+                except Exception as bk_exc:
+                    self.add_log("⚠️ [Backup] Ошибка ежедневного резервного копирования: " + str(bk_exc)[:150])
             try:
                 wfa_val = self._load_wfa_validation_summary()
                 self.backtest_cache = {
@@ -2289,7 +2291,7 @@ def create_wsgi_app(state: ControlCenterState):
                             state.booster_bybit.spm.breakeven_trigger_pct = state.bybit.spm.breakeven_trigger_pct
                             state.booster_bybit.spm.trailing_step_pct = state.bybit.spm.trailing_step_pct
                             state.booster_bybit.owner = state
-                            b_chaser = SmartLimitChaser(state.booster_bybit.spm, state.ws_hub, BASE_DIR / "data")
+                            b_chaser = SmartLimitChaser(state.booster_bybit.spm, state.ws_hub, BASE_DIR / "data", stats_filename="chaser_stats_booster.json")
                             b_chaser.enabled = state.limit_chaser.enabled
                             b_chaser.strict_post_only = state.limit_chaser.strict_post_only
                             state.booster_bybit.attach_chaser(b_chaser)

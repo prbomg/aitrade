@@ -9,6 +9,8 @@ import urllib.request, uuid, threading
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
 class SmartPositionManager:
+    SPEC_HOSTS = ("https://api-demo.bybit.com", "https://api.bybit.com", "https://api.bytick.com")
+
     def __init__(self, api_key: str, api_secret: str, base_url: str = "https://api-demo.bybit.com",
                  breakeven_trigger_pct: float = 0.55, trailing_step_pct: float = 0.40, fee_buffer_pct: float = 0.0012,
                  guard_path: Any = None) -> None:
@@ -19,6 +21,7 @@ class SmartPositionManager:
         self.trailing_step_pct = trailing_step_pct
         self.fee_buffer_pct = fee_buffer_pct
         self.guard_lock = threading.RLock()
+        self._spec_lock = threading.RLock()
         self.guard_path = guard_path if guard_path is not None else (BASE_DIR / "data" / "position_guard.json")
         self.split_tp_enabled = True
         self.ledger = None
@@ -63,14 +66,32 @@ class SmartPositionManager:
         raise ExchangeError("Превышен предел пагинации")
 
     def get_spec(self, symbol):
-        if symbol in self._spec_cache:return self._spec_cache[symbol]
-        url="https://api.bybit.com/v5/market/instruments-info?"+urllib.parse.urlencode({"category":"linear","symbol":symbol})
-        with urllib.request.urlopen(url,timeout=8) as r:data=json.load(r)
-        if data.get("retCode")!=0 or not data.get("result",{}).get("list"):raise ExchangeError("Нет спецификации " + symbol)
+        with self._spec_lock:
+            if symbol in self._spec_cache:
+                return dict(self._spec_cache[symbol])
+        qs = urllib.parse.urlencode({"category": "linear", "symbol": symbol})
+        hosts = [self.base_url] + [h for h in self.SPEC_HOSTS if h != self.base_url]
+        data = None
+        last_exc = None
+        for host in hosts:
+            url = f"{host}/v5/market/instruments-info?{qs}"
+            try:
+                with urllib.request.urlopen(url, timeout=8) as r:
+                    cand = json.load(r)
+                if isinstance(cand, dict) and cand.get("retCode") == 0 and cand.get("result", {}).get("list"):
+                    data = cand
+                    break
+                last_exc = ExchangeError("Нет спецификации " + symbol)
+            except Exception as exc:
+                last_exc = exc
+        if data is None:
+            raise last_exc if isinstance(last_exc, ExchangeError) else ExchangeError(f"Нет спецификации {symbol}: {type(last_exc).__name__ if last_exc else 'error'}")
         info=data["result"]["list"][0];lot=info["lotSizeFilter"];pr=info["priceFilter"]
         if info.get("status")!="Trading":raise ExchangeError("Инструмент недоступен для торговли")
         spec={"qty_step":float(lot["qtyStep"]),"min_qty":float(lot["minOrderQty"]),"max_qty":float(lot.get("maxMktOrderQty") or lot["maxOrderQty"]),"min_notional":float(lot.get("minNotionalValue") or 5),"tick_size":float(pr["tickSize"])}
-        self._spec_cache[symbol]=spec;return spec
+        with self._spec_lock:
+            self._spec_cache[symbol] = spec
+        return dict(spec)
 
     @staticmethod
     def fmt_step(val: float, step: float, round_down: bool = True) -> str:

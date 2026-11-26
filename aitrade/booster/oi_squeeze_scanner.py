@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,6 +23,7 @@ class OISqueezeScanner:
     ENDPOINTS = ("https://api.bybit.com", "https://api-demo.bybit.com", "https://api.bytick.com")
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self.last_scan_ts = "—"
         self.cached_signals: List[Dict[str, Any]] = []
         self._active_url = self.ENDPOINTS[0]
@@ -34,8 +36,10 @@ class OISqueezeScanner:
                 break
         if path_suffix is None and url.startswith("/"):
             path_suffix = url
+        with self._lock:
+            active_ep = self._active_url
         candidates = (
-            [self._active_url + path_suffix] + [ep + path_suffix for ep in self.ENDPOINTS if ep != self._active_url]
+            [active_ep + path_suffix] + [ep + path_suffix for ep in self.ENDPOINTS if ep != active_ep]
             if path_suffix is not None
             else [url]
         )
@@ -47,7 +51,8 @@ class OISqueezeScanner:
                 if not isinstance(data, dict) or data.get("retCode") != 0:
                     raise RuntimeError("Ошибка рыночного API Bybit")
                 if path_suffix is not None:
-                    self._active_url = cand_url[:-len(path_suffix)]
+                    with self._lock:
+                        self._active_url = cand_url[:-len(path_suffix)]
                 return data
             except Exception as exc:
                 last_exc = exc
