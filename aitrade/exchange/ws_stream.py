@@ -382,10 +382,15 @@ class BybitV5WebSocketHub:
                 else:
                     sl_1m += usd
 
+        book_ts = float(self.book_timestamps.get(symbol, 0.0) or 0.0)
+        book_age_sec = round(max(0.0, now - book_ts), 1) if book_ts > 0 else None
+        has_live_book = bool(self.connected and book_ts > 0 and (now - book_ts) <= 30.0 and mid > 0)
         return {
             "symbol": symbol,
             "flow_window_complete": self.connected and now-self.stream_started_at>=self.WINDOW_MAX_SEC,
             "flow_warmup_sec": max(0,round(self.WINDOW_MAX_SEC-(now-self.stream_started_at))),
+            "book_age_sec": book_age_sec,
+            "has_live_book": has_live_book,
             "mid_price": round(mid, 4),
             "vamp_price": round(vamp, 4),
             "spread_bps": round(spread_bps, 2),
@@ -412,14 +417,17 @@ class BybitV5WebSocketHub:
             return self._get_summary_locked()
 
     def _get_summary_locked(self) -> Dict[str, Any]:
+        now = time.time()
         rows = [self.get_symbol_metrics(s) for s in self.symbols]
         rows.sort(key=lambda r: abs(r["obi_top5_pct"]) + abs(r["flow_imbalance_pct"]), reverse=True)
         return {
             "connected": self.connected,
             "symbols_total":len(self.symbols),
-            "flow_window_complete":self.connected and time.time()-self.stream_started_at>=self.WINDOW_MAX_SEC,
+            "stream_started_at": self.stream_started_at,
+            "stream_age_sec": round(max(0.0, now - self.stream_started_at), 1) if self.connected else 0.0,
+            "flow_window_complete":self.connected and now-self.stream_started_at>=self.WINDOW_MAX_SEC,
             "msg_count": self.msg_count,
-            "last_msg_age_sec": round(time.time() - self.last_msg_ts, 1) if self.last_msg_ts > 0 else -1,
+            "last_msg_age_sec": round(now - self.last_msg_ts, 1) if self.last_msg_ts > 0 else -1,
             "symbols_live": sum(1 for r in rows if r["mid_price"] > 0),
             "metrics": rows,
             "recent_liquidations": self.liquidations[:25],

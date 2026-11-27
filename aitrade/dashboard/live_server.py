@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.56"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.57"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -297,6 +297,74 @@ class BybitV5DirectController:
         resp = self.spm.signed_post("/v5/order/cancel-all", {"category": "linear", "settleCoin": "USDT"})
         return {"ok": resp.get("retCode") == 0, "retMsg": resp.get("retMsg")}
 
+    CANDLE_BOOSTER_STRATEGIES = frozenset({
+        "B1_SQUEEZE_BREAKOUT",
+        "B2_DONCHIAN_INTRADAY",
+        "B4_ORB_SESSION_BREAKOUT",
+        "B5_OI_TREND_EXPANSION",
+        "B6_EMA_PULLBACK_TREND",
+        "B7_FUNDING_SQUEEZE_MOMENTUM",
+        "S1_TREND_RETEST",
+    })
+    BOOSTER_FLOW_MIN_WARMUP_SEC = 120.0
+
+    @classmethod
+    def _verify_booster_ws_warmup(
+        cls,
+        owner: Any,
+        symbol: str,
+        strategy_id: str,
+        bbo_from_ws: bool = True,
+        demo_lab_on: bool = False,
+    ) -> None:
+        """Проверяет прогрев WS-потока по эпохе подключения и конкретному символу.
+        Свечным Booster-стратегиям достаточно свежего BBO (WS или REST в Demo Lab),
+        потоковым (CVD/ликвидации) — обязательна эпоха подключения >= 120с и данные по symbol."""
+        raw_sid = str(strategy_id or "").strip()
+        base_sid = raw_sid.split(":", 1)[1].strip() if ":" in raw_sid else raw_sid
+        if base_sid in cls.CANDLE_BOOSTER_STRATEGIES:
+            if not bbo_from_ws and not demo_lab_on:
+                raise ValueError(f"Нет свежего WebSocket BBO для {symbol}")
+            return
+
+        ws_hub = getattr(owner, "ws_hub", None)
+        ws_info = ws_hub.get_summary() if ws_hub is not None else {}
+        if "connected" in ws_info and not bool(ws_info.get("connected")):
+            raise ValueError("WebSocket поток отключён: вход по потоковой стратегии заблокирован")
+
+        now = time.time()
+        stream_age = ws_info.get("stream_age_sec")
+        if stream_age is None:
+            started_at_ws = ws_info.get("stream_started_at")
+            if started_at_ws is None and ws_hub is not None:
+                started_at_ws = getattr(ws_hub, "stream_started_at", None)
+            if started_at_ws is not None:
+                stream_age = max(0.0, now - float(started_at_ws))
+
+        flow_complete = bool(ws_info.get("flow_window_complete", False))
+        epoch_warm = flow_complete or (stream_age is not None and float(stream_age) >= cls.BOOSTER_FLOW_MIN_WARMUP_SEC)
+        if not epoch_warm:
+            raise ValueError("Поток CVD/ликвидаций прогревается после подключения (2 мин)")
+
+        sym_metrics = None
+        metrics_rows = ws_info.get("metrics")
+        if isinstance(metrics_rows, list):
+            sym_metrics = next((m for m in metrics_rows if str(m.get("symbol") or "") == symbol), None)
+        elif ws_hub is not None and hasattr(ws_hub, "get_symbol_metrics"):
+            try:
+                sym_metrics = ws_hub.get_symbol_metrics(symbol)
+            except Exception:
+                sym_metrics = None
+
+        if sym_metrics is not None:
+            has_live = sym_metrics.get("has_live_book")
+            mid_px = float(sym_metrics.get("mid_price", 0.0) or 0.0)
+            trades_cnt = int(sym_metrics.get("trades_count", 0) or 0)
+            if (has_live is False) or mid_px <= 0.0:
+                raise ValueError(f"Нет свежего WS-стакана по {symbol} для потокового входа")
+            if trades_cnt <= 0:
+                raise ValueError(f"Недостаточно истории сделок CVD по {symbol} после подключения")
+
     def _place_checked(self,symbol,side,order_type,qty,price,tp,sl,leverage,split_tp,strategy_id,signal_context=None):
         intent_id=None
         submitted=False
@@ -352,9 +420,11 @@ class BybitV5DirectController:
             if not training_mode and daily+min(upnl,0)<=-capital*daily_cap_frac:raise ValueError(f'Дневной лимит -{int(daily_cap_frac*100)}%: новые входы заблокированы')
             if owner:
                 bbo_age=30 if (is_t1_core or demo_lab_on) else 15
+                bbo_from_ws=True
                 try:
                     bid,ask=owner.ws_hub.get_bbo(symbol,bbo_age)
                 except Exception:
+                    bbo_from_ws=False
                     if not (is_t1_core or demo_lab_on):raise
                     ob_rest=self.engine.client.get_orderbook(symbol,limit=5)
                     if not ob_rest.best_bid or not ob_rest.best_ask:raise ValueError('Нет свежего стакана '+symbol)
@@ -371,9 +441,8 @@ class BybitV5DirectController:
                 fr_val=float(fr_map[symbol])
                 if (side=='Buy' and fr_val>0.0005) or (side=='Sell' and fr_val<-0.0005):
                     raise ValueError('Экстремальный фандинг против стороны входа > 0.05%')
-                ws_info=owner.ws_hub.get_summary()
-                ws_warm=bool(ws_info.get('flow_window_complete',False)) or training_mode or (time.time()-getattr(owner,'started_at',0)>=120 and int(ws_info.get('symbols_live',0) or 0)>0)
-                if strategy_id.startswith('BOOSTER') and not ws_warm:raise ValueError('Поток CVD/ликвидаций прогревается после подключения (2 мин)')
+                if strategy_id.startswith('BOOSTER'):
+                    self._verify_booster_ws_warmup(owner, symbol, strategy_id, bbo_from_ws=bbo_from_ws, demo_lab_on=demo_lab_on)
                 try:
                     permitted,reason=owner.regime_guard.can_open_position(symbol,side,positions,owner.ws_hub.get_summary(),strategy_id=strategy_id)
                 except TypeError:
@@ -902,25 +971,56 @@ class ControlCenterState:
             return 0.5, False
         return 1.0, False
 
-    def _check_dead_mans_switch(self) -> int:
-        """Dead-man's switch: при потере WS-связи > 30с отменяет все входные лимитные ордера на всех контурах."""
+    def _check_dead_mans_switch(self, errors: Optional[List[str]] = None) -> int:
+        """Dead-man's switch: при потере WS-связи > 30с отменяет все входные ордера на всех контурах.
+        Ошибки чтения/отмены изолируются по контурам и заявкам и не прерывают защиту позиций."""
         if time.time() - getattr(self, "started_at", 0.0) < 30.0:
             return 0
-        ws_sum = self.ws_hub.get_summary()
+        try:
+            ws_sum = self.ws_hub.get_summary()
+        except Exception as ws_exc:
+            msg = f"Ошибка Dead-Man Switch (WS): {str(ws_exc)[:140]}"
+            if errors is not None:
+                errors.append(msg)
+            self.add_log("⚠️ " + msg)
+            return 0
         age = float(ws_sum.get("last_msg_age_sec", -1) or -1)
         disconnected = (not bool(ws_sum.get("connected", False))) or (age > 30.0)
         if not disconnected:
             return 0
         cancelled = 0
-        for ctrl in self._active_controllers():
-            for o in ctrl.get_open_orders():
-                if bool(o.get("reduceOnly")):
+        for idx, ctrl in enumerate(self._active_controllers()):
+            acc_lbl = "autotrade" if ctrl is self.bybit else f"booster_{idx}"
+            try:
+                open_orders = ctrl.get_open_orders()
+            except Exception as ord_exc:
+                msg = f"Ошибка Dead-Man Switch ({acc_lbl} чтение ордеров): {str(ord_exc)[:120]}"
+                if errors is not None:
+                    errors.append(msg)
+                self.add_log("⚠️ " + msg)
+                continue
+            for o in (open_orders or []):
+                if is_protective_order(o):
                     continue
-                res = ctrl.cancel_order(str(o.get("symbol", "")), str(o.get("orderId", "")))
-                if res.get("ok"):
-                    cancelled += 1
+                sym = str(o.get("symbol", ""))
+                oid = str(o.get("orderId", ""))
+                try:
+                    res = ctrl.cancel_order(sym, oid)
+                    if isinstance(res, dict) and res.get("ok"):
+                        cancelled += 1
+                    else:
+                        ret_m = res.get("retMsg", "error") if isinstance(res, dict) else "error"
+                        msg = f"Ошибка Dead-Man Switch ({acc_lbl} отмена {sym}): {str(ret_m)[:100]}"
+                        if errors is not None:
+                            errors.append(msg)
+                        self.add_log("⚠️ " + msg)
+                except Exception as c_exc:
+                    msg = f"Ошибка Dead-Man Switch ({acc_lbl} отмена {sym}): {str(c_exc)[:120]}"
+                    if errors is not None:
+                        errors.append(msg)
+                    self.add_log("⚠️ " + msg)
         if cancelled > 0:
-            self.add_log(f"🚨 [Dead-Man Switch] Потеря WS ({age:.0f}с) — отменено {cancelled} входных лимитных ордеров!")
+            self.add_log(f"🚨 [Dead-Man Switch] Потеря WS ({age:.0f}с) — отменено {cancelled} входных ордеров!")
         return cancelled
 
     @staticmethod
@@ -1222,10 +1322,10 @@ class ControlCenterState:
         if not self.smart_guard_enabled:
             return
         try:
-            self._check_dead_mans_switch()
             active_syms: set = set()
             transient_errors: List[str] = []
             critical_errors: List[str] = []
+            self._check_dead_mans_switch(errors=transient_errors)
             for ctrl in self._active_controllers():
                 try:
                     active_syms |= self._run_guard_cycle_for_controller(

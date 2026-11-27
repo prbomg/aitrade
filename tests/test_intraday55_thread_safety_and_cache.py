@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from aitrade.config import BASE_DIR
 from aitrade.booster.env_manager import BybitEnvManager
 from aitrade.engine import AITradeCombineEngine
 from aitrade.exchange.bybit_v5 import BybitV5Client
@@ -136,7 +137,7 @@ class TestIntraday55Fixes(unittest.TestCase):
         self.assertEqual(len(res_fetch["live_open_positions"]), 1)
 
     def test_dashboard_js_displays_subaccount_scope_in_checklist_header(self):
-        js_text = Path("/Users/sergejrubcov/AItrade/dashboard_app.js").read_text(encoding="utf-8")
+        js_text = (BASE_DIR / "dashboard_app.js").read_text(encoding="utf-8")
         self.assertIn('chk.account && chk.account !== "shared"', js_text)
         self.assertIn('document.getElementById("env-chk-time").textContent = "Проверка: " + (chk.checked_at || "—") + " [" + chkScope + "]";', js_text)
 

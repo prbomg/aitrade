@@ -51,20 +51,35 @@ class Ledger:
         with self._cache_lock:
             self._cache_version += 1
             self._lifecycle_cache = None
+
+    @staticmethod
+    def _bump_db_revision(c):
+        cur_ver = int(c.execute('PRAGMA user_version').fetchone()[0] or 0) + 1
+        c.execute(f'PRAGMA user_version = {cur_ver}')
+        return cur_ver
+
+    @staticmethod
+    def _read_db_revision(c):
+        return int(c.execute('PRAGMA user_version').fetchone()[0] or 0)
+
     def put_records(self, kind, rows, key):
         with self.connect() as c:
             c.executemany('INSERT OR REPLACE INTO exchange_records VALUES(?,?,?,?)',[(self.environment,kind,str(r[key]),json.dumps(r,ensure_ascii=False)) for r in rows])
+            self._bump_db_revision(c)
         self._invalidate_cache()
     def records(self, kind):
         with self.connect() as c:return [json.loads(r[0]) for r in c.execute('SELECT payload FROM exchange_records WHERE environment=? AND kind=?',(self.environment,kind))]
     def intent(self, id, symbol, strategy, risk, payload):
-        with self.connect() as c:c.execute('INSERT INTO intents VALUES(?,?,?,?,?,?,?,?)',(id,self.environment,time.time(),symbol,strategy,risk,'SUBMITTING',json.dumps(payload)))
+        with self.connect() as c:
+            c.execute('INSERT INTO intents VALUES(?,?,?,?,?,?,?,?)',(id,self.environment,time.time(),symbol,strategy,risk,'SUBMITTING',json.dumps(payload)))
+            self._bump_db_revision(c)
         self._invalidate_cache()
     def finish(self, id, status, result):
         with self.connect() as c:
             row=c.execute('SELECT payload FROM intents WHERE id=?',(id,)).fetchone()
             payload=json.loads(row[0]) if row else {};payload.update(result)
             c.execute('UPDATE intents SET status=?,payload=? WHERE id=?',(status,json.dumps(payload),id))
+            self._bump_db_revision(c)
         self._invalidate_cache()
     def unresolved(self, symbol=None):
         with self.connect() as c:
@@ -72,7 +87,9 @@ class Ledger:
                 return c.execute("SELECT id FROM intents WHERE environment=? AND (status IN ('SUBMITTING','UNCERTAIN') OR (status='PENDING' AND symbol=?))",(self.environment,symbol)).fetchall()
             return c.execute("SELECT id FROM intents WHERE environment=? AND status IN ('SUBMITTING','UNCERTAIN','PENDING')",(self.environment,)).fetchall()
     def clear_unresolved(self):
-        with self.connect() as c:c.execute("UPDATE intents SET status='RESET_CLEARED' WHERE environment=? AND status IN ('SUBMITTING','UNCERTAIN','PENDING')",(self.environment,))
+        with self.connect() as c:
+            c.execute("UPDATE intents SET status='RESET_CLEARED' WHERE environment=? AND status IN ('SUBMITTING','UNCERTAIN','PENDING')",(self.environment,))
+            self._bump_db_revision(c)
         self._invalidate_cache()
     def today_count(self, since_ts=None):
         import datetime
@@ -88,6 +105,7 @@ class Ledger:
                 intent_id=row[0] if row else ''
             c.execute('INSERT OR IGNORE INTO orders VALUES(?,?,?,?,?,?)',
                       (self.environment,link,intent_id,payload['symbol'],'SUBMITTING',json.dumps(payload)))
+            self._bump_db_revision(c)
         self._invalidate_cache()
     def order_result(self, link, status, result):
         with self.connect() as c:
@@ -96,6 +114,7 @@ class Ledger:
                 p=json.loads(row[0]);p.update(result)
                 c.execute('UPDATE orders SET status=?,payload=? WHERE environment=? AND link=?',
                           (status,json.dumps(p),self.environment,link))
+                self._bump_db_revision(c)
         self._invalidate_cache()
     def orders_for(self, intent_id):
         with self.connect() as c:
@@ -118,14 +137,17 @@ class Ledger:
         """Replay confirmed fills, including external fills, in exchange time order.
         Quantity conservation replaces symbol/time heuristics. Mixed ownership stays explicit.
         """
-        with self._cache_lock:
-            ver = self._cache_version
-            if self._lifecycle_cache is not None and self._lifecycle_cache[0] == (self.environment, ver):
-                return self._lifecycle_cache[1]
         with self.connect() as c:
+            db_ver = self._read_db_revision(c)
+            with self._cache_lock:
+                ver = self._cache_version
+                if self._lifecycle_cache is not None and self._lifecycle_cache[0] == (self.environment, ver, db_ver):
+                    return self._lifecycle_cache[1]
             intents={r[0]:dict(json.loads(r[4]),strategy_id=r[2],symbol=r[3],created=r[1],intent_id=r[0]) for r in c.execute(
                 'SELECT id,created,strategy,symbol,payload FROM intents WHERE environment=?',(self.environment,))}
             orders=list(c.execute('SELECT link,intent_id,payload FROM orders WHERE environment=?',(self.environment,)))
+            exec_rows=[json.loads(r[0]) for r in c.execute(
+                'SELECT payload FROM exchange_records WHERE environment=? AND kind=?',(self.environment,'executions'))]
         links={i:i for i in intents};ids={}
         for i,p in intents.items():
             for oid in list(p.get('orderIds') or [])+[p.get('orderId')]:
@@ -135,7 +157,7 @@ class Ledger:
             oid=json.loads(raw).get('orderId')
             if oid:ids[str(oid)]=i
         lots={};closes={};seen=set()
-        for e in sorted(self.records('executions'),key=lambda e:(int(e.get('execTime') or 0),int(e.get('seq') or 0),str(e.get('execId') or ''))):
+        for e in sorted(exec_rows,key=lambda e:(int(e.get('execTime') or 0),int(e.get('seq') or 0),str(e.get('execId') or ''))):
             eid=e.get('execId')
             if not eid or eid in seen or e.get('execType','Trade')!='Trade':continue
             seen.add(eid)
@@ -161,7 +183,7 @@ class Ledger:
         result = (intents, lots, closes)
         with self._cache_lock:
             if self._cache_version == ver:
-                self._lifecycle_cache = ((self.environment, ver), result)
+                self._lifecycle_cache = ((self.environment, ver, db_ver), result)
         return result
     def attribute(self, rows):
         intents,_,closes=self._execution_lifecycles();result=[]
@@ -214,6 +236,7 @@ class Ledger:
                 "UPDATE intents SET status='RESET_CLEARED' WHERE environment=? AND id=? AND status IN ('SUBMITTING','UNCERTAIN')",
                 (self.environment, intent_id),
             )
+            self._bump_db_revision(c)
         self._invalidate_cache()
 
     def pending(self):

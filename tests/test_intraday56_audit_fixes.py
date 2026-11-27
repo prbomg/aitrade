@@ -3,6 +3,7 @@ import threading
 import unittest
 from pathlib import Path
 
+from aitrade.config import BASE_DIR
 from aitrade.booster.x_news_radar import XNewsSentimentRadar
 from aitrade.exchange.ws_stream import BybitV5WebSocketHub
 from aitrade.execution.audit_metrics import build_shadow_demo_reconciliation
@@ -156,7 +157,7 @@ class TestIntraday56AuditFixes(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_ws_stream_reconnect_state_is_lock_guarded(self):
-        src = Path("/Users/sergejrubcov/AItrade/aitrade/exchange/ws_stream.py").read_text(encoding="utf-8")
+        src = (BASE_DIR / "aitrade" / "exchange" / "ws_stream.py").read_text(encoding="utf-8")
         self.assertIn("with self._lock:\n                    self.book_timestamps.clear()", src)
         self.assertIn("with self._lock:\n                    self.connected = False", src)
         hub = BybitV5WebSocketHub(["BTCUSDT"])

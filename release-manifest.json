@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.26-intraday.56",
+  "version": "2026.11.26-intraday.57",
   "built_at": "2026-11-26T13:02:32.106286+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
@@ -17,14 +17,14 @@
     "aitrade/booster/x_news_radar.py": "c9554bf79574445a9a245210391db183e5334e965e6c0c31be8ea7e3ec69d6d1",
     "aitrade/config.py": "babd1974cf673e654c59cdf0e04567f5b33b2ca88bd737edd9e9c1532e736417",
     "aitrade/dashboard/__init__.py": "37a1c4c9d956b0aaf3af30834eb697e360d6e72327b88054fa418d01a774611c",
-    "aitrade/dashboard/live_server.py": "ab717f8d5ef1ed2ae412ae077b0efe24192a60c633a03852a1b079f4b41401e9",
+    "aitrade/dashboard/live_server.py": "7b9e49c6fd69229cb8d5d22f68b5b8a5c094207b970fe7e3b02b0398d727973b",
     "aitrade/dashboard/report_generator.py": "113f998d2c484ea9abd41da6af8f8020543a70309cf5ef50e0c94c0277806be7",
     "aitrade/engine.py": "5d700d29ea195f90b0a04549c72ed7358bd5faa00bd9e03fb226a4bc3c09dba3",
     "aitrade/exchange/__init__.py": "619cd760e7300c5e3b50fd67f57d975ba98c5db68fa596a8847782614a3c9a6f",
     "aitrade/exchange/bybit_v5.py": "b8c136741656e49c98242e8f55b9eb36ad227bb4fc18289935a158494f747c22",
     "aitrade/exchange/coinalyze.py": "10eab8a712b84507c7f68e4a1ed9ad065eaad016d032550e20a692a651ebead1",
     "aitrade/exchange/transport.py": "590e9744f40a844bbb473890fa41fad9459ce9dd1983396ab4cd1f80f379cec2",
-    "aitrade/exchange/ws_stream.py": "67e89dfe943900cf1cf41df256fe44d82f2c14dd46cc621e2be5c5d55b3558cc",
+    "aitrade/exchange/ws_stream.py": "3f6a4720f1faf0cc141f1e40892c4aa6dcebf647143659f3427e2e237ba10367",
     "aitrade/execution/__init__.py": "ce286a0e937c56596527d07791d1bc49ca480e9720129bf82bf1e44539d2ba59",
     "aitrade/execution/audit_metrics.py": "8a65dfc39904f6f291fa576740c294d6c46862ca59b66ec74f36ed9f5dff3c24",
     "aitrade/execution/demo_trader.py": "7fc8a20e609400366c8783b318c3f0f5809cb0af5d77bbb004b33ca8d67a7bd9",
@@ -42,7 +42,7 @@
     "aitrade/risk/risk_engine.py": "dc627b54cb18651931e6d52618191c560d183b0866b7a8f42439da8606ed18a8",
     "aitrade/screener/__init__.py": "1dff622deac2a47adc299e20de35a99a2287faf6be08f912ae414112f6146d26",
     "aitrade/screener/coins_in_play.py": "10ce754cc7fbc5acaafe185e003196798d44a4c2dca0de85c16fd35482f3b9c8",
-    "aitrade/storage.py": "b28b2c53ecae6a3aaf97846de7ed5ca7698138836ae1cb4d49245b196835c9ab",
+    "aitrade/storage.py": "c49d0089f57a5f587eb7f1c2247caa4ee22f93f74bcebbec3d54a733e41c1c70",
     "aitrade/strategies/__init__.py": "2eaefc953f5494a5f5b21ac7c2c4ccf19d4b05268806ea5d1024807baf7bc8bd",
     "aitrade/strategies/base.py": "7d0bdce5026963a69f4f51a636ac40537808f1563f7b0e165f4ecf743aa99c32",
     "aitrade/strategies/booster_breakout.py": "f1bd85069a46eac334cee975ba05d1dc9eab69321d21023c7115d4792fd43481",
@@ -113,8 +113,9 @@
     "tests/test_intraday52_execution_concurrency.py": "784051e07eb185c011b35957ccbfed8c40a790b3b525747349fe96ba09e1d27b",
     "tests/test_intraday53_reconciliation_risk_ui.py": "6a7d694be75c9c1d54fd780f7c921d17112f6b4e72edda91a6cae29ab126b85a",
     "tests/test_intraday54_audit_hardening.py": "93a15b85c92758584cbb4e02229eeb3309be2fc71f660cc01056ad01c24e6cb5",
-    "tests/test_intraday55_thread_safety_and_cache.py": "e6e30fb1daf672df5a7b6624e971fa60056972a673ae27e7bfe0e370b06103e7",
-    "tests/test_intraday56_audit_fixes.py": "d1cdd7dd53891c4865a274bb380b3e411cc8f23e590335dbc7b59856748dc3d7",
+    "tests/test_intraday55_thread_safety_and_cache.py": "738e0d7041ca438dec65f1735f82382d6643462a8406e089b14309a67319ed28",
+    "tests/test_intraday56_audit_fixes.py": "f322316b481d8fa7173b45bd91e821c7192bb2f0074ffe5c17b096268501a73c",
+    "tests/test_intraday57_audit_fixes.py": "fbf0994cc926ad18c36d700e01854ab28f9805d83767b0fc4ef7a0fdce006027",
     "tests/test_intraday6_audit.py": "a2baf5229538ce19447032566e59404c58cebea4b63b0112f5feb3416b47b683",
     "tests/test_intraday7_p0_fixes.py": "cd072f1648d57b74d414d4d283ee94b5f02cfeec26984f03a304e38f400a88df",
     "tests/test_intraday8_infra.py": "ad25951092b6980f98325b04529b314d10e70f9a64052fc3c1c3e3d4ed25e244",
@@ -128,9 +129,9 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "07d92c51905b5c3ec29c09904cb71537f9ea77b4e0cb364b1a7d7f0ee8373d64",
+  "build_sha256": "a8d1456c6283db8b95afbd55cacd899d208f1e872d6143623212cf2295faf330",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation",
-  "generated_at_utc": "2026-11-27T08:47:46Z"
+  "generated_at_utc": "2026-11-27T09:39:40Z"
 }
