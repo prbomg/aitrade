@@ -31,7 +31,7 @@ from aitrade.execution.limit_chaser import SmartLimitChaser
 
 
 STATE_FILE = BASE_DIR / "data" / "ui_state.json"
-DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.57"
+DEFAULT_RELEASE_VERSION = "2026.11.26-intraday.58"
 
 
 def is_protective_order(order: Dict[str, Any]) -> bool:
@@ -356,14 +356,15 @@ class BybitV5DirectController:
             except Exception:
                 sym_metrics = None
 
-        if sym_metrics is not None:
-            has_live = sym_metrics.get("has_live_book")
-            mid_px = float(sym_metrics.get("mid_price", 0.0) or 0.0)
-            trades_cnt = int(sym_metrics.get("trades_count", 0) or 0)
-            if (has_live is False) or mid_px <= 0.0:
-                raise ValueError(f"Нет свежего WS-стакана по {symbol} для потокового входа")
-            if trades_cnt <= 0:
-                raise ValueError(f"Недостаточно истории сделок CVD по {symbol} после подключения")
+        if not isinstance(sym_metrics, dict):
+            raise ValueError(f"Нет WS-метрик потока по {symbol}: вход по потоковой стратегии заблокирован")
+        has_live = sym_metrics.get("has_live_book")
+        mid_px = float(sym_metrics.get("mid_price", 0.0) or 0.0)
+        trades_cnt = int(sym_metrics.get("trades_count", 0) or 0)
+        if (has_live is False) or mid_px <= 0.0:
+            raise ValueError(f"Нет свежего WS-стакана по {symbol} для потокового входа")
+        if trades_cnt <= 0:
+            raise ValueError(f"Недостаточно истории сделок CVD по {symbol} после подключения")
 
     def _place_checked(self,symbol,side,order_type,qty,price,tp,sl,leverage,split_tp,strategy_id,signal_context=None):
         intent_id=None

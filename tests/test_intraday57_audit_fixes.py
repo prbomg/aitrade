@@ -187,6 +187,46 @@ class TestIntraday57AuditFixes(unittest.TestCase):
                 owner, "SOLUSDT", "BOOSTER:OI_SQUEEZE", bbo_from_ws=True, demo_lab_on=False
             )
 
+    def test_ws_warmup_blocks_flow_strategy_when_symbol_metrics_missing(self):
+        # 1. Empty metrics=[]
+        owner_empty = SimpleNamespace(
+            ws_hub=SimpleNamespace(
+                get_summary=lambda: {"connected": True, "stream_age_sec": 180.0, "metrics": []}
+            )
+        )
+        with self.assertRaises(ValueError):
+            BybitV5DirectController._verify_booster_ws_warmup(
+                owner_empty, "BTCUSDT", "BOOSTER:OI_CVD_SQUEEZE", bbo_from_ws=True, demo_lab_on=False
+            )
+
+        # 2. Only another symbol (ETHUSDT) present in metrics
+        owner_other = SimpleNamespace(
+            ws_hub=SimpleNamespace(
+                get_summary=lambda: {
+                    "connected": True,
+                    "stream_age_sec": 180.0,
+                    "metrics": [
+                        {"symbol": "ETHUSDT", "has_live_book": True, "mid_price": 3000.0, "trades_count": 25}
+                    ],
+                }
+            )
+        )
+        with self.assertRaises(ValueError):
+            BybitV5DirectController._verify_booster_ws_warmup(
+                owner_other, "BTCUSDT", "BOOSTER:OI_CVD_SQUEEZE", bbo_from_ws=True, demo_lab_on=False
+            )
+
+        # 3. No metrics list in summary and no get_symbol_metrics method on ws_hub
+        owner_no_method = SimpleNamespace(
+            ws_hub=SimpleNamespace(
+                get_summary=lambda: {"connected": True, "stream_age_sec": 180.0, "flow_window_complete": True}
+            )
+        )
+        with self.assertRaises(ValueError):
+            BybitV5DirectController._verify_booster_ws_warmup(
+                owner_no_method, "BTCUSDT", "BOOSTER:OI_CVD_SQUEEZE", bbo_from_ws=True, demo_lab_on=False
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
