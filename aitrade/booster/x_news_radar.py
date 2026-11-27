@@ -327,20 +327,26 @@ class XNewsSentimentRadar:
         return self.get_summary()
 
     def get_coin_modifier(self, symbol: str, direction: str) -> Dict[str, Any]:
-        if not self.enabled:
+        with self._lock:
+            enabled = self.enabled
+            panic_active = self.panic_active
+            block_on_panic = self.block_on_panic
+            panic_reason = self.panic_reason
+            raw_info = self.coin_sentiment.get(symbol)
+            c_info = dict(raw_info) if isinstance(raw_info, dict) else None
+        if not enabled:
             return {"score_bonus": 0.0, "allowed": True, "tag": "", "reason": "OK"}
 
         norm_dir = "LONG" if str(direction).upper() in ("LONG", "BUY") else "SHORT"
 
-        if self.panic_active and self.block_on_panic and norm_dir == "LONG":
+        if panic_active and block_on_panic and norm_dir == "LONG":
             return {
                 "score_bonus": -25.0,
                 "allowed": False,
                 "tag": "🔴 NEWS PANIC",
-                "reason": "Экстренный негатив в X/News: " + self.panic_reason,
+                "reason": "Экстренный негатив в X/News: " + panic_reason,
             }
 
-        c_info = self.coin_sentiment.get(symbol)
         if not c_info:
             return {"score_bonus": 0.0, "allowed": True, "tag": "", "reason": "OK"}
 
@@ -380,28 +386,35 @@ class XNewsSentimentRadar:
 
     def evaluate_open_position(self, symbol: str, side: str) -> Dict[str, Any]:
         """Оценивает открытую позицию (Buy/Sell) против живого потока X/News для защиты или экстренного выхода."""
-        if not self.enabled:
+        with self._lock:
+            enabled = self.enabled
+            allow_emergency_close = self.allow_emergency_close
+            panic_active = self.panic_active
+            block_on_panic = self.block_on_panic
+            panic_reason = self.panic_reason
+            global_score = self.global_score
+            c_info = dict(self.coin_sentiment.get(symbol) or {})
+        if not enabled:
             return {"action": "HOLD", "reason": "OK"}
 
         is_long = str(side).upper() in ("BUY", "LONG")
-        c_info = self.coin_sentiment.get(symbol) or {}
         sc = int(c_info.get("score", 0) or 0)
         trig = str(c_info.get("triggers", "") or "")
-        headline = str(c_info.get("last_headline", "") or self.panic_reason or "")[:90]
+        headline = str(c_info.get("last_headline", "") or panic_reason or "")[:90]
 
-        close_act = "CLOSE_FULL" if self.allow_emergency_close else "HOLD"
+        close_act = "CLOSE_FULL" if allow_emergency_close else "HOLD"
         if is_long:
-            if self.panic_active and self.block_on_panic:
+            if panic_active and block_on_panic:
                 return {
                     "action": close_act,
-                    "reason": "Наблюдение PANIC (автозакрытие отключено): " + (self.panic_reason or "экстренный негатив"),
+                    "reason": "Наблюдение PANIC (автозакрытие отключено): " + (panic_reason or "экстренный негатив"),
                 }
             if sc <= -40:
                 return {
                     "action": close_act,
                     "reason": f"Наблюдение негатива по {symbol} ({sc}: {trig}) — {headline}",
                 }
-            if sc <= -25 or self.global_score <= -20.0:
+            if sc <= -25 or global_score <= -20.0:
                 return {
                     "action": "PROTECT",
                     "reason": f"Ухудшение новостного фона для LONG {symbol} (балл {sc})",
@@ -412,7 +425,7 @@ class XNewsSentimentRadar:
                     "action": close_act,
                     "reason": f"Наблюдение бычьего фона против SHORT {symbol} (+{sc}: {trig}) — {headline}",
                 }
-            if sc >= 25 or self.global_score >= 20.0:
+            if sc >= 25 or global_score >= 20.0:
                 return {
                     "action": "PROTECT",
                     "reason": f"Бычий новостной фон против SHORT {symbol} (+{sc})",

@@ -293,7 +293,7 @@ class LiveShadowEngine:
             return self._closed_cache
         rows = conn.execute(
             "SELECT id, strategy_id, symbol, side, opened_ts, closed_ts, entry_px, exit_px, pnl_usd, realized_r, exit_reason, signal_id, signal_created_ms "
-            "FROM shadow_trades WHERE status='CLOSED' ORDER BY opened_ts ASC"
+            "FROM shadow_trades WHERE status='CLOSED' ORDER BY closed_ts ASC, opened_ts ASC"
         ).fetchall()
         by_strat: Dict[str, Dict[str, Any]] = {}
         closed_list: List[Dict[str, Any]] = []
@@ -467,7 +467,12 @@ class LiveShadowEngine:
         gp = gl = net_pnl = upnl_sum = r_sum = hold_h_sum = fees_sum = 0.0
         eq_cur = eq_peak = max_dd = 0.0
 
-        for r in rows:
+        open_rows = [r for r in rows if r[3] == "OPEN"]
+        closed_rows = sorted(
+            (r for r in rows if r[3] != "OPEN"),
+            key=lambda r: (float(r[5] or 0.0), float(r[4] or 0.0)),
+        )
+        for r in open_rows + closed_rows:
             tid, sym, side, status, o_ts, c_ts, e_px, sl_px, tp_px, x_px, qty, notional, risk_usd, fees, pnl, r_mult, reason, sig_id, sig_c_ms = r
             if status == "OPEN":
                 bid, ask = bbo.get(sym, (0.0, 0.0))

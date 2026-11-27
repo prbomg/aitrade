@@ -141,9 +141,10 @@ class BybitV5WebSocketHub:
                 if b"101" not in resp.split(b"\r\n")[0]:
                     raise ConnectionError("Handshake failed")
 
-                self.book_timestamps.clear()
-                self.stream_started_at=time.time()
-                self.connected = True
+                with self._lock:
+                    self.book_timestamps.clear()
+                    self.stream_started_at = time.time()
+                    self.connected = True
                 topics: List[str] = []
                 for s in self.symbols:
                     topics.append(f"orderbook.50.{s}")
@@ -171,7 +172,8 @@ class BybitV5WebSocketHub:
                     except socket.timeout:
                         continue
             except Exception:
-                self.connected = False
+                with self._lock:
+                    self.connected = False
                 time.sleep(3.0)
             finally:
                 if sock:

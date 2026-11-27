@@ -245,7 +245,7 @@ def _compute_max_drawdown(pnls_chronological: List[float]) -> float:
 
 def compute_live_strategy_metrics(
     ledgers: Iterable[Tuple[str, Ledger]],
-    target_strategies: Tuple[str, ...] = LIVE_ACTIVE_STRATEGIES,
+    target_strategies: Optional[Tuple[str, ...]] = LIVE_ACTIVE_STRATEGIES,
     now_ts: Optional[float] = None,
     trace_limit: Optional[int] = 50,
 ) -> Dict[str, Any]:
@@ -257,8 +257,8 @@ def compute_live_strategy_metrics(
     now_s = float(now_ts if now_ts is not None else time.time())
     cutoff_24h_ms = int((now_s - 86400.0) * 1000)
 
-    target_set = set(target_strategies)
-    closed_by_strat: Dict[str, List[Dict[str, Any]]] = {s: [] for s in target_strategies}
+    target_set = set(target_strategies) if target_strategies is not None else None
+    closed_by_strat: Dict[str, List[Dict[str, Any]]] = {s: [] for s in (target_strategies or ())}
     filled_24h_by_strat: Dict[str, int] = {}
     traces: List[Dict[str, Any]] = []
     legacy_trades = 0
@@ -317,12 +317,12 @@ def compute_live_strategy_metrics(
             if iid:
                 closed_by_intent.setdefault(iid, []).append(r)
 
-            if clean_s not in target_set:
+            if target_set is not None and clean_s not in target_set:
                 if abs(pnl) > 1e-9:
                     legacy_trades += 1
                     legacy_net_usd += pnl
             else:
-                closed_by_strat[clean_s].append(r)
+                closed_by_strat.setdefault(clean_s, []).append(r)
 
         # Собираем активные (открытые) лоты по intent_id
         open_intent_ids = set()
@@ -377,7 +377,7 @@ def compute_live_strategy_metrics(
                 opened_ms = created_ms
                 entry_fees = 0.0
 
-            if clean_s not in target_set:
+            if target_set is not None and clean_s not in target_set:
                 continue
 
             # Если есть закрытия по этому intent, агрегируем PnL, выход, комиссии и время удержания
@@ -472,7 +472,12 @@ def compute_live_strategy_metrics(
 
     # Агрегируем раздельные метрики по каждой целевой стратегии
     by_strategy: Dict[str, Dict[str, Any]] = {}
-    for s_id in target_strategies:
+    agg_strategies = (
+        list(target_strategies)
+        if target_strategies is not None
+        else sorted(set(closed_by_strat.keys()) | {str(t.get("strategy_id") or "") for t in traces if t.get("strategy_id")})
+    )
+    for s_id in agg_strategies:
         c_rows = sorted(closed_by_strat.get(s_id, []), key=lambda r: int(r.get("updatedTime") or 0))
         pnls = [float(r.get("closedPnl") or 0.0) for r in c_rows if abs(float(r.get("closedPnl") or 0.0)) > 1e-9]
         wins = [p for p in pnls if p > 0]
@@ -648,7 +653,11 @@ def build_shadow_demo_reconciliation(
         demo_source["complete"] = False
         demo_source["error"] = "Журналы Demo не подключены"
 
-    live_metrics = compute_live_strategy_metrics(ledger_list, trace_limit=None)
+    live_metrics = compute_live_strategy_metrics(
+        ledger_list,
+        target_strategies=(target_strat,) if target_strat else None,
+        trace_limit=None,
+    )
     if live_metrics.get("ledger_errors"):
         demo_errors.extend(live_metrics["ledger_errors"])
 
