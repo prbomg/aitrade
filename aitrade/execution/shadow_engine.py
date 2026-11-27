@@ -55,7 +55,7 @@ class LiveShadowEngine:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._closed_cache_ver: int = -1
+        self._closed_cache_ver: Optional[Tuple[int, int]] = None
         self._closed_ver: int = 0
         self._closed_cache: Optional[Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]] = None
         with self._connect() as conn:
@@ -264,8 +264,19 @@ class LiveShadowEngine:
                 )
                 closed_count += 1
             if closed_count > 0:
+                self._bump_db_revision(conn)
                 self._closed_ver += 1
         return closed_count
+
+    @staticmethod
+    def _bump_db_revision(conn: sqlite3.Connection) -> int:
+        cur_ver = int(conn.execute("PRAGMA user_version").fetchone()[0] or 0) + 1
+        conn.execute(f"PRAGMA user_version = {cur_ver}")
+        return cur_ver
+
+    @staticmethod
+    def _read_db_revision(conn: sqlite3.Connection) -> int:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0] or 0)
 
     def prune_old_decisions(self, max_age_days: int = 30) -> int:
         """Удаляет устаревшие записи из shadow_signal_decisions для контроля размера SQLite."""
@@ -289,7 +300,8 @@ class LiveShadowEngine:
         return dest
 
     def _load_closed_agg_locked(self, conn: sqlite3.Connection) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
-        if self._closed_cache is not None and self._closed_cache_ver == self._closed_ver:
+        cache_key = (self._closed_ver, self._read_db_revision(conn))
+        if self._closed_cache is not None and self._closed_cache_ver == cache_key:
             return self._closed_cache
         rows = conn.execute(
             "SELECT id, strategy_id, symbol, side, opened_ts, closed_ts, entry_px, exit_px, pnl_usd, realized_r, exit_reason, signal_id, signal_created_ms "
@@ -350,7 +362,7 @@ class LiveShadowEngine:
                 }
             )
         self._closed_cache = (by_strat, closed_list)
-        self._closed_cache_ver = self._closed_ver
+        self._closed_cache_ver = cache_key
         return self._closed_cache
 
     def get_summary(self, bbo_map: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, Any]:

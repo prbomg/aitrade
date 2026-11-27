@@ -140,9 +140,11 @@ class AITradeCombineEngine:
         all_tickers = self.client.get_tickers()
         ticker_map = {t["symbol"]: t for t in all_tickers if "symbol" in t}
         btc_15m = self.client.get_klines("BTCUSDT", interval="15", limit=120)
-        equity_usd = min(
-            self.demo_executor.get_account_equity_usdt(),
-            float(self.settings.get("risk", {}).get("allocated_equity_usdt", 1000.0)),
+        alloc_equity = float(self.settings.get("risk", {}).get("allocated_equity_usdt", 1000.0))
+        equity_usd = (
+            min(self.demo_executor.get_account_equity_usdt(), alloc_equity)
+            if fetch_live_account_state
+            else alloc_equity
         )
 
         screener_results: List[ScreenerResult] = []

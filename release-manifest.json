@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.26-intraday.58",
+  "version": "2026.11.26-intraday.59",
   "built_at": "2026-11-26T13:02:32.106286+00:00",
   "files": {
     "aitrade/__init__.py": "fee909178b25be7cbd949aadf0a5c670fd4964251064e5f87c682ba459d49ce2",
@@ -13,13 +13,13 @@
     "aitrade/booster/env_manager.py": "f3a4be525650ac6c152b75a57387f3d79eec4553aa7e9b22792a1976678b81b2",
     "aitrade/booster/ml_calibrator.py": "49c9dc2d8146955f1c2beda8a5cfda8e249dec648c14bd8e07142029e176d400",
     "aitrade/booster/oi_squeeze_scanner.py": "e0d31d5f3b9a8ab2e25676a2924071c9750f97c9d125ea326ea8ee7bcfdbb26b",
-    "aitrade/booster/regime_correlation_guard.py": "d127b27043ae4d195b97585a69d5544391136dd278d0d27e215b367bbcd67bc2",
+    "aitrade/booster/regime_correlation_guard.py": "08114986374bfade5822f017b25beab342cd821467102bf2bb061427e22140b9",
     "aitrade/booster/x_news_radar.py": "c9554bf79574445a9a245210391db183e5334e965e6c0c31be8ea7e3ec69d6d1",
     "aitrade/config.py": "babd1974cf673e654c59cdf0e04567f5b33b2ca88bd737edd9e9c1532e736417",
     "aitrade/dashboard/__init__.py": "37a1c4c9d956b0aaf3af30834eb697e360d6e72327b88054fa418d01a774611c",
-    "aitrade/dashboard/live_server.py": "c9ab4b30fdfaca17a6a2081ffe10b9528e354614a2f402dadb32bffc3f7a7a5a",
+    "aitrade/dashboard/live_server.py": "67fc869945b1595e4366b973f06429f18b12ed80cec44431312adbd313a6a325",
     "aitrade/dashboard/report_generator.py": "113f998d2c484ea9abd41da6af8f8020543a70309cf5ef50e0c94c0277806be7",
-    "aitrade/engine.py": "5d700d29ea195f90b0a04549c72ed7358bd5faa00bd9e03fb226a4bc3c09dba3",
+    "aitrade/engine.py": "3ba464cec620173955289cffe7b602c10e97a427a96df340b404edb9a5f068c2",
     "aitrade/exchange/__init__.py": "619cd760e7300c5e3b50fd67f57d975ba98c5db68fa596a8847782614a3c9a6f",
     "aitrade/exchange/bybit_v5.py": "b8c136741656e49c98242e8f55b9eb36ad227bb4fc18289935a158494f747c22",
     "aitrade/exchange/coinalyze.py": "10eab8a712b84507c7f68e4a1ed9ad065eaad016d032550e20a692a651ebead1",
@@ -30,7 +30,7 @@
     "aitrade/execution/demo_trader.py": "7fc8a20e609400366c8783b318c3f0f5809cb0af5d77bbb004b33ca8d67a7bd9",
     "aitrade/execution/freqai_strategy.py": "ce3265ed0ee4fa9073b32e4cd699015da42d6770d4d9845f4aa7952426ea35d3",
     "aitrade/execution/limit_chaser.py": "87e5b5e909d915561c419b9b9399baff8553791392bc5b667a8a336a15a588be",
-    "aitrade/execution/shadow_engine.py": "9a33d2efcb10212dd9426dec3ee983ed79157416dcc118e4940e903ab2359cec",
+    "aitrade/execution/shadow_engine.py": "dfa2dd65b57b62a2acb62be660941fc05e68f0c707dc4c456e287c94e46105d6",
     "aitrade/execution/smart_position_manager.py": "7332e339c00dda554d892f1cf50058a95af286ca73692d4f778956a3b5c225c1",
     "aitrade/features/__init__.py": "82248d4ebada38bd209b6363564293f8d8e691e04a3da39292fc8b15af474793",
     "aitrade/features/indicators.py": "eb7304091e1ce7eddd6526a07146d16809ff3f3b5da90845be33db9cfd3c004d",
@@ -105,6 +105,8 @@
     "tests/test_intraday41_audit_resilience_fixes.py": "f699f368b4c99703fe89a7504bfe21a0014ed22a46ff346ff7f715b4ced0b469",
     "tests/test_intraday42_audit2_resilience_fixes.py": "ccf42b1ac6fd8be434fb1dacfa1411f6d8d912653bc22cd7eb15b221831b13e6",
     "tests/test_intraday43_audit3_resilience_fixes.py": "982722d1752724389763af922d7424b5e8ef382e9d8102d2c59408ba2bf6233c",
+    "tests/test_intraday45_audit4_fixes.py": "34d939169160949294635ac798ef6f06d9d14720ea233f57a534d86a42bfd264",
+    "tests/test_intraday46_signal_id_reconciliation.py": "ac73db5a083d13cad1f663c74b6fc72f9f1f41b2f8b4ef09770f903f8b6cb602",
     "tests/test_intraday47_disable_b3.py": "d110db523be39ac9a949a674755d580653756a48fb35fc2b5c7304922320056a",
     "tests/test_intraday48_ux_and_toggle.py": "fb341097a09ccfe7c4ca2813908279dd6f1064363118d3f1f7556644966e2c14",
     "tests/test_intraday49_validation_gates.py": "2e8d8a71fb096e0f70a636d96a0d3e0fdaaeee6e7308b10fb969286afc9fd348",
@@ -116,6 +118,7 @@
     "tests/test_intraday55_thread_safety_and_cache.py": "738e0d7041ca438dec65f1735f82382d6643462a8406e089b14309a67319ed28",
     "tests/test_intraday56_audit_fixes.py": "f322316b481d8fa7173b45bd91e821c7192bb2f0074ffe5c17b096268501a73c",
     "tests/test_intraday57_audit_fixes.py": "8ce02ba86705d7dd3a820c12e8df6a4be297e3819a0524b9ab56afcd10ae8cf9",
+    "tests/test_intraday59_audit_fixes.py": "11e784bc5e34e8ea85e60c18024b9f8355b23ac0d0cf1e274d7599ccf890c015",
     "tests/test_intraday6_audit.py": "a2baf5229538ce19447032566e59404c58cebea4b63b0112f5feb3416b47b683",
     "tests/test_intraday7_p0_fixes.py": "cd072f1648d57b74d414d4d283ee94b5f02cfeec26984f03a304e38f400a88df",
     "tests/test_intraday8_infra.py": "ad25951092b6980f98325b04529b314d10e70f9a64052fc3c1c3e3d4ed25e244",
@@ -129,9 +132,9 @@
     "tests/test_stage4_isolation_vault.py": "95397db7d795d55de3b2bec60b21fe374ec7133dd0e7cb64b8cd56dd0bba810e",
     "tests/test_stage5_config_ui.py": "ae408b740346855f3c252e6ffbb1b03aefd29a6fc8d0f94fff429899284a2a8e"
   },
-  "build_sha256": "2a68fedcfccd7bffa5e5d94ef174082f5009994606550d4c0841e77dd15a27d0",
+  "build_sha256": "203bba5b335932fdabf898a01b97efcf4a512bda2c3f65e9c5fedc958a841c5c",
   "mainnet_enabled": false,
   "daily_reset_preserved": true,
   "validation_status": "engineering_tests_not_profit_validation",
-  "generated_at_utc": "2026-11-27T09:59:58Z"
+  "generated_at_utc": "2026-11-27T10:13:16Z"
 }

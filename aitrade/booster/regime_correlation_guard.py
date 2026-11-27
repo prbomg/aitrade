@@ -73,6 +73,7 @@ class RegimeAndCorrelationGuard:
         try:
             res = self._update_btc_regime_live(ws_summary)
             with self._lock:
+                self.last_regime = res
                 self._last_ok_ts = now
                 return dict(res)
         except Exception:
@@ -165,7 +166,7 @@ class RegimeAndCorrelationGuard:
             state = "NEUTRAL"
             label = "⚖️ BTC: NEUTRAL ({:+.2f}% 5м)".format(chg_5m)
 
-        self.last_regime = {
+        return {
             "state": state,
             "label": label,
             "btc_price": round(btc_px, 2),
@@ -177,7 +178,6 @@ class RegimeAndCorrelationGuard:
             "allow_short": allow_short,
             "reason": reason,
         }
-        return self.last_regime
 
     def can_open_position(
         self,
